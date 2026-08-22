@@ -22,9 +22,12 @@
   behavior may be an explicit convenience, never an unexpected prompt during
   an ordinary call.
 - Keep human, agent, script, and CI invocation on the same public contract.
-- A daemon must remain optional and behavior-preserving. It may accelerate or
-  broker lifecycle-sensitive work, but ordinary calls must not require it
-  unless a capability intrinsically requires long-lived state.
+- Normal operation is daemon-backed and must fail clearly when the daemon is
+  unavailable. `--direct` is the explicit daemonless path for testing,
+  diagnostics, and deliberate one-shot use; never fall back to it silently.
+- The CLI contract should remain behaviorally consistent across daemon-backed
+  and direct execution where continuity does not change the operation's
+  semantics.
 - Validate the daemon path early because currently deployed MCP servers often
   depend on initialized sessions or persistent processes. Keep the first daemon
   narrow: connection/process reuse and the minimum lifecycle needed to exercise
@@ -46,6 +49,11 @@
   discover and compose capabilities effectively.
 - Keep exploratory material in `docs/notes/` until evidence and an explicit
   decision justify promotion.
+- If an accepted direction proves difficult, unsupported, or in tension with
+  another project goal, preserve the evidence and ask the user before changing,
+  weakening, bypassing, or substituting that direction. Difficulty is not
+  authorization to choose a different product contract, dependency, format,
+  workflow, or architecture.
 
 ## Architecture and implementation
 
@@ -54,15 +62,40 @@
 - Prefer the official Go MCP SDK for protocol behavior. Do not duplicate
   negotiation, transport, authorization, or revision behavior it already
   implements correctly.
+- When MCP behavior is needed, first assume the pinned official SDK supports it
+  and verify that assumption against its documentation, source, examples, and
+  tests. Use the highest-level supported API. Add a local MCP-specific shim only
+  for a confirmed SDK gap, keep it narrow, and record the exact limitation.
+- Do not turn conceptual protocol eras into parallel local protocol stacks. The
+  full MVP targets modern `2026-07-28`, legacy initialized stdio/Streamable
+  HTTP, and legacy HTTP+SSE by exercising the official SDK from newest to
+  oldest.
 - Keep upstream adapters behind a narrow semantic boundary, but do not build
   unused adapters or a speculative extension framework.
 - Preserve a lossless structured invocation path even when ergonomic flags are
   projected from schemas.
+- Preserve structural argument ownership: client flags precede the
+  `<server> <tool>` pair, while arguments after the tool name belong to that
+  tool. Handle rare projected-name collisions with warnings and a structurally
+  distinct exact-JSON invocation path rather than a global reserved-name list.
 - Keep stdout machine-composable. Send diagnostics to stderr and never print
   secrets, tokens, credentials, or unredacted secret-bearing URLs.
 - Structured errors must distinguish user action, authentication, invocation,
   upstream protocol, transport, configuration, and internal failures where an
   agent would recover differently.
+- KDL 2 is the current preferred configuration direction, subject to deliberate
+  parser and usability qualification. Do not introduce another user-facing
+  configuration format, including as a supposedly temporary shortcut, without
+  first presenting the evidence and alternatives to the user and obtaining a
+  decision. Internal test construction that does not create a public or
+  persisted configuration contract is allowed.
+- Adding or removing a library requires a user decision. Before proposing it,
+  briefly inspect the current ecosystem and primary sources, then present the
+  concrete need, credible candidates, relevant maintenance and compatibility
+  evidence, and the smallest reasonable recommendation. Keep the query
+  proportional; dependencies are valid implementation choices, not presumed
+  failures of YAGNI. Do not edit dependency manifests or lockfiles to add or
+  remove a library until the user accepts the choice.
 
 ## Verification
 

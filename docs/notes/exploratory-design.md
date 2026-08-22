@@ -109,6 +109,37 @@ claims must be checked against current primary sources before implementation.
 - Optional compatibility mode exposing aggregated capabilities as an MCP
   server.
 
+### Future MCP frontend and revision translation
+
+One later possibility is an MCP-server frontend beside the shell CLI. It could
+expose the daemon's already-normalized capabilities to consumers that still
+prefer native MCP, initially using only the latest protocol revision. Because
+the daemon may connect to older initialized or HTTP+SSE upstream servers, this
+would also act as a compatibility bridge from unmaintained older servers to a
+modern frontend.
+
+This remains explicitly non-authoritative future scope. The official Go SDK
+should own both client- and server-side MCP mechanics, and the possibility does
+not justify building a proxy, aggregation namespace, revision translator, or
+generic frontend framework during the shell-client MVP.
+
+### Competitive landscape snapshot
+
+Current projects already validate much of the category: MCPorter covers broad
+protocol compatibility and connection reuse; avelino/mcp provides a compiled
+positional shell client with retained backends; philschmid/mcp-cli explicitly
+demonstrates agent Skills, daemon-backed calls, stdin/JSON, and multi-call shell
+pipelines; MCPShim combines a daemon, CLI, lazy discovery, auth, and Skills for
+remote MCP and HTTP services.
+
+The project is therefore not differentiated merely by shell access, lazy
+schemas, JSON/stdin, pipelines, a daemon, or Skills. The hypothesis is that the
+combined contract remains valuable: complete SDK-backed MCP client behavior,
+retained local stdio state, fail-closed daemon-backed operation, compact
+positional namespaces, lossless invocation, KDL 2 hierarchy/root/provenance,
+and deterministic recovery for one-shell-call programs. This must be validated
+comparatively rather than treated as a proven moat.
+
 ## Anti-overengineering reminders from the discussion
 
 - Do not add a configuration trust database or approval framework without a

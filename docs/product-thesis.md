@@ -56,6 +56,13 @@ Results must be usable with normal shell tooling. Structured input and output
 are authoritative; ergonomic projections such as generated flags may improve
 common calls but cannot make a valid upstream invocation unrepresentable.
 
+The important unit of composition is an entire shell program submitted through
+one harness shell call, not merely one MCP call presented as a command. An agent
+should be able to combine repository search, logs, files, Git, language tools,
+ordinary filters and transforms, and multiple remote capabilities without a
+model round trip between every operation. The shell remains the workflow
+language; this project must not grow a competing workflow engine.
+
 ### One public contract
 
 Agents and humans should not use separate semantic interfaces. Scripts and CI
@@ -69,13 +76,19 @@ browser. When authentication or user action is required, the runtime returns a
 structured, actionable condition. Explicit interactive commands may perform or
 wait for those actions.
 
-### Optional daemon
+### Daemon-backed normal operation
 
 A local daemon may retain upstream connections, own long-lived authentication
 transactions, manage local processes, cache discovery, and reap idle resources.
 It is an optimization and lifecycle broker, not the agent-facing protocol.
 Equivalent invocations should retain their observable contract with or without
 the daemon, except where an upstream operation genuinely requires continuity.
+
+Normal invocation is daemon-backed and fails clearly when the daemon is
+unavailable. An explicit `--direct` mode provides deliberate one-shot execution
+for testing and diagnostics. The CLI must not silently fall back to direct mode
+because doing so could discard expected server or application state while
+appearing successful.
 
 The daemon path should be validated early rather than postponed until after a
 pure one-shot client is complete. Many currently deployed MCP servers use
@@ -98,6 +111,39 @@ value is the combination of:
 Existing MCP clients are comparison points. Their breadth is not a target by
 itself.
 
+## MCP implementation constraint
+
+The official Go SDK owns MCP behavior by default. Before adding MCP-specific
+code, assume the pinned SDK already supports the required feature and verify it
+against current SDK documentation, source, examples, and tests. Prefer its
+highest-level client, session, transport, authorization, capability, and
+request APIs.
+
+Project code should primarily implement the product outside MCP: shell UX,
+configuration and provenance, normalized output and recovery, local daemon IPC,
+managed process lifecycle, instance scope, caching policy, diagnostics, and
+Skills. It must not reimplement protocol negotiation, wire codecs, transports,
+revision gates, or authorization mechanics that the SDK handles.
+
+If a required feature exposes a confirmed SDK gap, add the smallest isolated
+shim and document the exact upstream limitation. A conceptual difference
+between protocol eras does not by itself justify a local adapter or abstraction.
+
+## MVP compatibility direction
+
+The first full MVP should support three deployed MCP compatibility layers:
+
+1. modern stateless MCP beginning with `2026-07-28`;
+2. legacy initialized MCP over stdio and Streamable HTTP; and
+3. legacy HTTP+SSE.
+
+Implementation and validation proceed newest to oldest. Establish the public
+shell contract and daemon boundary against modern MCP first, then exercise the
+SDK's legacy initialized behavior, and finally add the isolated legacy SSE
+transport path. The public command and result contract must not branch by era;
+differences remain within the SDK and diagnostics unless they change an actual
+capability available to the caller.
+
 ## Current non-goals
 
 - Acting primarily as an MCP server, aggregator, or proxy.
@@ -110,6 +156,13 @@ itself.
   subsystems.
 - Supporting every MCP primitive before validating the agent-facing contract.
 - Designing future non-MCP adapters without a demonstrated consumer.
+
+An optional future MCP-server frontend is not part of the current product
+contract. If later justified, it may expose the daemon's aggregated semantic
+capabilities over the latest MCP revision and could translate older upstream
+servers into that newer frontend. This possibility should influence only the
+existing separation between CLI rendering, daemon semantics, and SDK sessions;
+it does not justify a generic frontend framework or proxy implementation now.
 
 ## Decision test
 

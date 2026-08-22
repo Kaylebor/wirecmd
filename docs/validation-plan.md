@@ -36,8 +36,19 @@ Implement only enough product surface to exercise:
 - equivalent public command, output, error, and exit behavior for one-shot and
   daemon-backed calls where both modes are valid.
 
+Normal test invocations use the daemon and must fail clearly when it is absent.
+Tests request direct execution explicitly with `--direct`; an automatic direct
+fallback is a contract violation.
+
 Use the official Go MCP SDK for the supported protocol paths. Select exact
 dependency versions from current upstream evidence when implementation begins.
+Assume the SDK owns MCP negotiation, lifecycle, transport, capability, and
+request semantics; verify its support before adding any MCP-specific code.
+
+The first slice targets modern `2026-07-28` behavior. Later slices walk backward
+through legacy initialized stdio/Streamable HTTP and then legacy HTTP+SSE. This
+milestone need not complete that compatibility sequence, but its public shell
+and daemon boundaries must not obstruct the full-MVP target.
 
 ## Explicitly deferred
 
@@ -47,7 +58,8 @@ dependency versions from current upstream evidence when implementation begins.
 - OAuth browser flows.
 - Hierarchical KDL configuration beyond the minimum needed for the fixtures.
 - Schema-derived ergonomic flags.
-- Legacy HTTP+SSE unless required by a selected comparison fixture.
+- Legacy initialized protocol qualification and HTTP+SSE implementation; these
+  are sequenced after the modern slice, not excluded from the full MVP.
 - Resources, prompts, subscriptions, Tasks, sampling, and rich elicitation.
 - Pool widths greater than one.
 - Runtime templates and secret providers beyond minimal safe fixture needs.
@@ -70,7 +82,10 @@ registration of the test MCP servers. Require it to:
 7. repeat a stateful operation across separate CLI invocations through the
    daemon; and
 8. perform an operation valid in both modes without changing its public command
-   or interpreting different result semantics.
+   or interpreting different result semantics; and
+9. complete one composed shell program that combines local search or
+   transformation with more than one MCP-backed operation in a single harness
+   shell call.
 
 Run comparable scenarios with:
 
@@ -94,6 +109,8 @@ feature checklist.
 - Process identity or fixture state proving that daemon-backed calls reused the
   same initialized server instance across separate CLI processes.
 - Contract differences, if any, between one-shot and daemon-backed execution.
+- Model round trips, subprocess calls, and intermediate serialization required
+  by the composed scenario.
 - Qualitative confusion caused by naming, output, help, or configuration.
 
 ## Acceptance criteria
@@ -122,7 +139,8 @@ too small to justify a new runtime.
 ## After the milestone
 
 Only after reviewing the evidence should the project commit to production
-daemon behavior, configuration format and merging, broader revision and
-transport support, OAuth, schema-derived flags, or packaging. Promote accepted
-decisions into the authoritative documents; retain rejected and unresolved
-alternatives in `docs/notes/`.
+daemon behavior, configuration format and merging, OAuth, schema-derived flags,
+or packaging. If the interaction model remains viable, compatibility work then
+continues backward through the two legacy layers required for the full MVP.
+Promote accepted decisions into the authoritative documents; retain rejected
+and unresolved alternatives in `docs/notes/`.
