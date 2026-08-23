@@ -50,6 +50,70 @@ through legacy initialized stdio/Streamable HTTP and then legacy HTTP+SSE. This
 milestone need not complete that compatibility sequence, but its public shell
 and daemon boundaries must not obstruct the full-MVP target.
 
+## First implementation slice
+
+Build one narrow vertical path before completing the rest of the milestone:
+
+```text
+explicit KDL configuration
+-> daemon-backed CLI request
+-> retained official stdio MCP server
+-> tool listing and lossless invocation
+-> deterministic structured output
+```
+
+Use the official Go SDK memory example without durable file storage to prove
+continuity. Create fixture state through one CLI process, observe it through a
+separate daemon-backed CLI process, and confirm that a fresh `--direct` process
+does not inherit that process-local state.
+
+The first slice exposes only the minimum development surface:
+
+- foreground `daemon run`, status, and explicit config reload;
+- normal daemon-required calls plus explicit `--direct` calls;
+- listing configured servers and a selected server's tools;
+- calling a selected tool through exact JSON argument or stdin input; and
+- stable stdout, stderr, structured errors, and exit behavior.
+
+Require one or more explicit `--config` files. Merge repeated files in command
+line order with the last file most specific; automatic global/project discovery
+comes later. The initial KDL schema covers a root, named server, workspace scope,
+stdio executable, ordered arguments, environment entries, literal values, and
+`(secret)"env://..."` references. Parse into a source-syntax-independent model
+that retains source file and semantic-path provenance.
+
+The first daemon is a private per-user local broker with a compatibility
+handshake, per-context configuration cache, and one retained stdio instance per
+effective workspace/server/configuration/authentication identity. Pool width is
+fixed at one. It does not yet need detached startup, service-manager packaging,
+idle cleanup, recovery policies, config watching, generated files, templates,
+HTTP, OAuth, or a stable public daemon API.
+
+For sensitive values injected when an instance starts, derive an internal
+authentication/input identity with a daemon-local keyed digest over canonical
+destinations and resolved values. Never expose that digest as a public config
+fingerprint or persist its key. Different resolved instance-start credentials
+must not reuse one retained process; invocation-time credentials do not split
+the instance when they can safely be applied per request.
+
+Validate repeatable config overlay behavior, workspace isolation, missing versus
+empty environment values, secret redaction, clean separation of upstream stderr
+from result stdout, JSON/stdin equivalence, daemon-offline failure without
+fallback, daemon/direct contract equivalence where applicable, and retained
+state across separate CLI processes.
+
+This slice deliberately tests direct typed secret values through a child
+environment entry. Header/query injection, generated secret artifacts, and
+template materialization follow only after the central daemon-backed stdio path
+works; their internal representation must remain possible without implementing
+them here.
+
+Focused schema-derived tool help and the universal Agent Skill are immediate
+follow-on work required before agent-facing milestone evaluation. Their absence
+does not block qualification of this infrastructure slice and does not count as
+completion of the overall milestone. The controlled HTTP fixture likewise
+remains required for the milestone after the stdio slice succeeds.
+
 ## Explicitly deferred
 
 - Production-grade daemonization and service-manager integration.
