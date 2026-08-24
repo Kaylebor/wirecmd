@@ -1,0 +1,12 @@
+wirecmd {
+    root "/workspace"
+    server "memory" {
+        scope "workspace"
+        stdio "go" {
+            arg "run"
+            arg "./cmd/memory"
+            env PLAIN="literal"
+            env TOKEN=(secret)"env://MEMORY_TOKEN"
+        }
+    }
+}
