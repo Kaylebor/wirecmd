@@ -90,6 +90,200 @@ func TestDaemonFocusedHelpAndProjectedCall(t *testing.T) {
 	}
 }
 
+func TestDaemonStreamableHTTPContracts(t *testing.T) {
+	runtime := t.TempDir()
+	if err := os.Chmod(runtime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	startTestDaemon(t)
+	fixture := newHTTPFixture(t)
+	config := httpConfig(t, fixture.URL)
+
+	directCode, directOutput, directStderr := invoke(t, []string{"--direct", "--config", config, "--help", "remote", "projected"})
+	if directCode != exitOK || directStderr != "" {
+		t.Fatalf("direct HTTP help: code=%d stderr=%q output=%s", directCode, directStderr, directOutput)
+	}
+	code, output, stderr := invoke(t, []string{"--config", config, "--help", "remote", "projected"})
+	if code != exitOK || stderr != "" || output != directOutput {
+		t.Fatalf("daemon HTTP help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	code, output, stderr = invoke(t, []string{"--config", config, "remote", "projected", "--query", "daemon", "--enabled=false", "--", `{"tool_name":"one","toolName":"two"}`})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("daemon HTTP projected call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	data := decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)
+	if data["query"] != "daemon" || data["enabled"] != false || data["tool_name"] != "one" || data["toolName"] != "two" {
+		t.Fatalf("daemon HTTP data = %#v", data)
+	}
+
+	code, output, stderr = invoke(t, []string{"--config", config, "remote", `{"tool":"a_tool","arguments":{"name":"Ada"}}`})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)["name"] != "Ada" {
+		t.Fatalf("daemon HTTP exact call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, stderr = invoke(t, []string{"daemon", "status"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["daemon"].(map[string]any)["active_instances"].(json.Number).String() != "1" {
+		t.Fatalf("HTTP daemon status: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+}
+
+func TestDaemonMarksClosedHTTPInstanceBroken(t *testing.T) {
+	runtime := t.TempDir()
+	if err := os.Chmod(runtime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	startTestDaemon(t)
+	fixture := newHTTPFixture(t)
+	config := httpConfig(t, fixture.URL)
+	code, output, _ := invoke(t, []string{"--config", config, "remote", "a_tool"})
+	if code != exitOK {
+		t.Fatalf("initial HTTP call: code=%d output=%s", code, output)
+	}
+	fixture.Close()
+	code, output, _ = invoke(t, []string{"--config", config, "remote", "a_tool"})
+	if code != exitTransport || decodeOutput(t, output)["error"].(map[string]any)["code"] != "connection_closed" {
+		t.Fatalf("closed HTTP call: code=%d output=%s", code, output)
+	}
+	code, output, _ = invoke(t, []string{"--config", config, "remote", "a_tool"})
+	if code != exitTransport || decodeOutput(t, output)["error"].(map[string]any)["code"] != "instance_unavailable" {
+		t.Fatalf("broken HTTP instance: code=%d output=%s", code, output)
+	}
+}
+
+func TestDaemonCancellationReleasesHTTPInstance(t *testing.T) {
+	runtime := t.TempDir()
+	if err := os.Chmod(runtime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	startTestDaemon(t)
+	fixture := newHTTPFixture(t)
+	config := httpConfig(t, fixture.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int, 1)
+	go func() {
+		var stdout, stderr bytes.Buffer
+		done <- Run(ctx, []string{"--config", config, "remote", "block"}, strings.NewReader(""), &stdout, &stderr)
+	}()
+	select {
+	case <-fixture.blockStarted:
+	case <-time.After(time.Second):
+		t.Fatal("HTTP block tool did not start")
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != exitTransport {
+			t.Fatalf("canceled HTTP daemon caller code=%d, want transport failure", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled HTTP daemon client remained blocked")
+	}
+	waitForBrokenInstance(t)
+	code, output, _ := invoke(t, []string{"--config", config, "remote", "a_tool"})
+	if code != exitTransport || decodeOutput(t, output)["error"].(map[string]any)["code"] != "instance_unavailable" {
+		t.Fatalf("canceled HTTP session must remain honestly unavailable: code=%d output=%s", code, output)
+	}
+}
+
+func TestDaemonCanceledQueuedHTTPRequestDoesNotBreakInstance(t *testing.T) {
+	runtime := t.TempDir()
+	if err := os.Chmod(runtime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	startTestDaemon(t)
+	fixture := newHTTPFixture(t)
+	config := httpConfig(t, fixture.URL)
+	activeDone := make(chan int, 1)
+	go func() {
+		var stdout, stderr bytes.Buffer
+		activeDone <- Run(context.Background(), []string{"--config", config, "remote", "hold"}, strings.NewReader(""), &stdout, &stderr)
+	}()
+	select {
+	case <-fixture.holdStarted:
+	case <-time.After(time.Second):
+		t.Fatal("HTTP hold tool did not start")
+	}
+	queuedCtx, cancel := context.WithCancel(context.Background())
+	queuedDone := make(chan int, 1)
+	go func() {
+		var stdout, stderr bytes.Buffer
+		queuedDone <- Run(queuedCtx, []string{"--config", config, "remote", "a_tool"}, strings.NewReader(""), &stdout, &stderr)
+	}()
+	cancel()
+	select {
+	case code := <-queuedDone:
+		if code != exitTransport {
+			t.Fatalf("queued canceled caller code=%d, want transport failure", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("queued canceled caller remained blocked on IPC")
+	}
+	fixture.releaseHold()
+	select {
+	case code := <-activeDone:
+		if code != exitOK {
+			t.Fatalf("active HTTP hold code=%d", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("active HTTP hold did not complete")
+	}
+	code, output, _ := invoke(t, []string{"daemon", "status"})
+	if code != exitOK || decodeOutput(t, output)["daemon"].(map[string]any)["broken_instances"].(json.Number).String() != "0" {
+		t.Fatalf("queued cancellation broke healthy instance: code=%d output=%s", code, output)
+	}
+	code, output, _ = invoke(t, []string{"--config", config, "remote", "a_tool"})
+	if code != exitOK || !strings.Contains(output, `"tool":"a_tool"`) {
+		t.Fatalf("healthy instance was not reusable after queued cancellation: code=%d output=%s", code, output)
+	}
+}
+
+func TestDaemonRedactsHTTPQueryInConnectionDiagnostics(t *testing.T) {
+	runtime := t.TempDir()
+	if err := os.Chmod(runtime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	startTestDaemon(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := "http://" + listener.Addr().String() + "/mcp?access_token=daemon-query-secret"
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	config := httpConfig(t, endpoint)
+	code, output, stderr := invoke(t, []string{"--config", config, "remote"})
+	if code != exitTransport || strings.Contains(output, "access_token") || strings.Contains(output, "daemon-query-secret") || strings.Contains(stderr, "access_token") || strings.Contains(stderr, "daemon-query-secret") {
+		t.Fatalf("daemon HTTP query disclosure: code=%d stdout=%q stderr=%q", code, output, stderr)
+	}
+	if !strings.Contains(output, "?[REDACTED]") {
+		t.Fatalf("daemon HTTP endpoint was not usefully sanitized: %s", output)
+	}
+}
+
+func waitForBrokenInstance(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		code, output, _ := invoke(t, []string{"daemon", "status"})
+		if code == exitOK {
+			daemon := decodeOutput(t, output)["daemon"].(map[string]any)
+			if daemon["broken_instances"].(json.Number).String() == "1" {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("daemon did not mark canceled HTTP session broken: code=%d output=%s", code, output)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestDaemonProjectedErrorsRedactSecretsAndUsePrivateSchema(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
 	const secret = "daemon-projected-secret"

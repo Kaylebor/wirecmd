@@ -67,6 +67,22 @@ wirecmd --config ./wirecmd.kdl server tool --simple value -- '{"tool_name":"one"
 every tool input. Wirecmd does not locally validate the full JSON Schema; the
 upstream tool remains responsible for semantic validation.
 
+Servers may use either a local stdio command or a modern Streamable HTTP
+endpoint. They are mutually exclusive in an effective server definition:
+
+```kdl
+wirecmd {
+    server "remote" {
+        scope "workspace"
+        http "https://example.test/mcp"
+    }
+}
+```
+
+The initial HTTP slice accepts absolute `http` or `https` endpoints only.
+Typed query/header entries, credential injection, and OAuth are deliberately
+not implemented yet.
+
 ## Project documents
 
 - [Product thesis](docs/product-thesis.md) defines the authoritative product

@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -90,8 +88,8 @@ func parseProjectedSuffix(tokens []string) ([]projectedArgument, map[string]any,
 	return projected, nil, nil
 }
 
-func directToolDescription(ctx context.Context, command *exec.Cmd, tool string, redactor *redactor) (toolDescription, *appError) {
-	session, appErr := connect(ctx, command, redactor)
+func directToolDescription(ctx context.Context, target connectionTarget, tool string, redactor *redactor) (toolDescription, *appError) {
+	session, appErr := connectTarget(ctx, target, redactor)
 	if appErr != nil {
 		return toolDescription{}, appErr
 	}
@@ -99,8 +97,8 @@ func directToolDescription(ctx context.Context, command *exec.Cmd, tool string, 
 	return sessionToolDescription(ctx, session, tool, redactor)
 }
 
-func directProjectedCall(ctx context.Context, command *exec.Cmd, tool string, projected []projectedArgument, overlay map[string]any, redactor *redactor) (toolResult, *appError) {
-	session, appErr := connect(ctx, command, redactor)
+func directProjectedCall(ctx context.Context, target connectionTarget, tool string, projected []projectedArgument, overlay map[string]any, redactor *redactor) (toolResult, *appError) {
+	session, appErr := connectTarget(ctx, target, redactor)
 	if appErr != nil {
 		return toolResult{}, appErr
 	}
@@ -121,7 +119,7 @@ func directProjectedCall(ctx context.Context, command *exec.Cmd, tool string, pr
 func sessionToolProjection(ctx context.Context, session *mcp.ClientSession, name string) (toolDescription, *appError) {
 	for tool, err := range session.Tools(ctx, nil) {
 		if err != nil {
-			if errors.Is(err, mcp.ErrConnectionClosed) {
+			if isTransportFailure(err) {
 				return toolDescription{}, transportError("connection_closed", err.Error(), "check the upstream MCP server diagnostics")
 			}
 			return toolDescription{}, protocolError("tool_list_failed", err.Error(), "check the upstream MCP server diagnostics")
@@ -141,7 +139,7 @@ func sessionToolProjection(ctx context.Context, session *mcp.ClientSession, name
 func sessionToolDescription(ctx context.Context, session *mcp.ClientSession, name string, redactor *redactor) (toolDescription, *appError) {
 	for tool, err := range session.Tools(ctx, nil) {
 		if err != nil {
-			if errors.Is(err, mcp.ErrConnectionClosed) {
+			if isTransportFailure(err) {
 				return toolDescription{}, transportError("connection_closed", err.Error(), "check the upstream MCP server diagnostics")
 			}
 			return toolDescription{}, protocolError("tool_list_failed", err.Error(), "check the upstream MCP server diagnostics")

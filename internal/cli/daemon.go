@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/Kaylebor/wirecmd/internal/config"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -143,6 +144,9 @@ func daemonRequestFromConfig(req request, cfg *config.Config, cwd string, paths 
 
 func selectedSecretInputs(server config.Server, lookup func(string) (string, bool)) map[string]secretInput {
 	result := map[string]secretInput{}
+	if server.HTTP != nil {
+		return result
+	}
 	add := func(value config.Value) {
 		if !value.IsSecret() {
 			return
@@ -187,6 +191,9 @@ func executionFingerprint(server config.Server, root *config.Root, cwd string) s
 }
 
 func semanticServer(server config.Server) any {
+	if server.HTTP != nil {
+		return map[string]any{"name": server.Name, "scope": server.Scope, "transport": "http", "endpoint": server.HTTP.Endpoint}
+	}
 	args := make([]any, 0, len(server.Stdio.Args))
 	for _, arg := range server.Stdio.Args {
 		args = append(args, []any{arg.Kind, arg.Text})
@@ -195,7 +202,7 @@ func semanticServer(server config.Server) any {
 	for _, entry := range server.Stdio.Env {
 		env = append(env, []any{entry.Name, entry.Value.Kind, entry.Value.Text})
 	}
-	return map[string]any{"name": server.Name, "scope": server.Scope, "command": server.Stdio.Command, "args": args, "env": env}
+	return map[string]any{"name": server.Name, "scope": server.Scope, "transport": "stdio", "command": server.Stdio.Command, "args": args, "env": env}
 }
 
 func fingerprint(value any) string {
@@ -274,13 +281,14 @@ type poolEntry struct {
 }
 
 type retainedInstance struct {
-	mu       sync.Mutex
-	session  *mcp.ClientSession
-	redactor *redactor
-	active   int
-	retiring bool
-	broken   bool
-	closed   bool
+	mu                   sync.Mutex
+	session              *mcp.ClientSession
+	redactor             *redactor
+	breakOnRequestCancel bool
+	active               int
+	retiring             bool
+	broken               bool
+	closed               bool
 }
 
 func newDaemon(stderr io.Writer) (*daemon, *appError) {
@@ -418,11 +426,10 @@ func (d *daemon) serve(ctx context.Context) error {
 }
 
 func (d *daemon) handle(connection net.Conn) {
-	decoder := json.NewDecoder(bufio.NewReader(connection))
-	decoder.UseNumber()
+	reader := bufio.NewReader(connection)
 	encoder := json.NewEncoder(connection)
 	var hello daemonHello
-	if err := decoder.Decode(&hello); err != nil || hello.Type != "hello" {
+	if err := readDaemonFrame(reader, &hello); err != nil || hello.Type != "hello" {
 		_ = encoder.Encode(daemonHelloReply{Type: "hello_error", Error: &errorBody{Category: "transport", Code: "daemon_protocol_invalid", Message: "expected daemon hello", Action: "use a compatible Wirecmd client"}})
 		return
 	}
@@ -434,11 +441,11 @@ func (d *daemon) handle(connection net.Conn) {
 		return
 	}
 	var request daemonRequest
-	if err := decoder.Decode(&request); err != nil {
+	if err := readDaemonFrame(reader, &request); err != nil {
 		_ = encoder.Encode(daemonReply{Error: &errorBody{Category: "invocation", Code: "daemon_request_invalid", Message: "invalid daemon request", Action: "use a compatible Wirecmd client"}, ExitCode: exitInvocation})
 		return
 	}
-	requestCtx, cancel := d.requestContext(connection)
+	requestCtx, cancel := d.requestContext(reader)
 	reply := d.execute(requestCtx, request)
 	// Once the operation has completed, do not let the connection watcher's
 	// eventual EOF affect the completed response. Closing the connection on
@@ -447,16 +454,29 @@ func (d *daemon) handle(connection net.Conn) {
 	_ = encoder.Encode(reply)
 }
 
+// readDaemonFrame preserves the private protocol's one-line framing without
+// leaving a json.Decoder read-ahead buffer between the request parser and the
+// disconnect watcher. The watcher must observe peer EOF promptly to cancel the
+// daemon-derived upstream context.
+func readDaemonFrame(reader *bufio.Reader, target any) error {
+	frame, err := reader.ReadBytes('\n')
+	if err != nil {
+		return err
+	}
+	return decodeJSON(frame, target)
+}
+
 // requestContext is canceled both when the daemon shuts down and when the
 // client disconnects before its request completes. The daemon receives only
 // one request per connection, so after the request has been decoded it is safe
-// to watch the read side solely for peer closure while writing the response.
-func (d *daemon) requestContext(connection net.Conn) (context.Context, context.CancelFunc) {
+// to watch the same buffered read side solely for peer closure while writing
+// the response.
+func (d *daemon) requestContext(reader io.Reader) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(d.ctx)
 	go func() {
 		var discarded [1]byte
 		for {
-			if _, err := connection.Read(discarded[:]); err != nil {
+			if count, err := reader.Read(discarded[:]); err != nil || count != 0 {
 				cancel()
 				return
 			}
@@ -564,7 +584,7 @@ func openDaemonClient(ctx context.Context) (*daemonClient, *appError) {
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = connection.SetDeadline(deadline)
 	}
-	stopCancel := context.AfterFunc(ctx, func() { _ = connection.Close() })
+	stopCancel := context.AfterFunc(ctx, func() { cancelDaemonRequest(connection) })
 	encoder := json.NewEncoder(connection)
 	decoder := json.NewDecoder(bufio.NewReader(connection))
 	decoder.UseNumber()
@@ -588,6 +608,22 @@ func openDaemonClient(ctx context.Context) (*daemonClient, *appError) {
 		return nil, transportError("daemon_incompatible", "Wirecmd daemon protocol is incompatible", "restart or upgrade the Wirecmd daemon")
 	}
 	return &daemonClient{connection: connection, decoder: decoder, encoder: encoder, stopCancel: stopCancel}, nil
+}
+
+// cancelDaemonRequest sends a private lifecycle control byte before closing the
+// Unix write side, then unblocks this client's pending response read. The
+// daemon accepts one semantic request only; any subsequent input cancels that
+// request. Relying solely on peer EOF is racy with a blocked Streamable HTTP
+// request because the local caller must be released before the daemon writes a
+// response.
+func cancelDaemonRequest(connection net.Conn) {
+	if unixConnection, ok := connection.(*net.UnixConn); ok {
+		_, _ = unixConnection.Write([]byte(`{"type":"cancel"}` + "\n"))
+		_ = unixConnection.CloseWrite()
+		_ = unixConnection.SetReadDeadline(time.Now())
+		return
+	}
+	_ = connection.Close()
 }
 
 func (c *daemonClient) request(request daemonRequest) (daemonReply, *appError) {
@@ -665,6 +701,9 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest) daemonReply
 	defer d.release(instance)
 	instance.mu.Lock()
 	defer instance.mu.Unlock()
+	if ctx.Err() != nil {
+		return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
+	}
 	if instance.closed || instance.session == nil || instance.broken {
 		return errorReplyWithWarnings(transportError("instance_unavailable", "the retained server instance is unavailable", "run wirecmd daemon reload or restart the daemon"), warnings)
 	}
@@ -703,6 +742,13 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest) daemonReply
 		call, appErr := sessionCall(ctx, instance.session, request.Tool, arguments, instance.redactor)
 		if appErr != nil {
 			d.noteOperationError(instance, appErr)
+			if ctx.Err() != nil && instance.breakOnRequestCancel {
+				// In the pinned SDK's stateless Streamable HTTP path, cancellation
+				// can close the shared client session when the upstream rejects the
+				// cancellation notification. Preserve state-loss honesty rather than
+				// retrying or reusing that session.
+				d.markBroken(instance)
+			}
 			appErr = appErr.redacted(instance.redactor)
 			return errorReplyWithWarnings(&appError{category: appErr.category, code: appErr.code, message: appErr.message, action: appErr.action, exitCode: appErr.exitCode, result: appErr.result}, warnings)
 		}
@@ -789,16 +835,17 @@ func (d *daemon) waitForInstance(ctx context.Context, entry *poolEntry, generati
 func (d *daemon) startInstance(entry *poolEntry, key string, server config.Server, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64) {
 	defer d.wg.Done()
 	lookup := func(name string) (string, bool) { value, ok := inputs[name]; return value.Value, ok && value.Present }
-	command, secrets, appErr := makeCommand(server, root, cwd, lookup)
+	target, secrets, appErr := makeTarget(server, root, cwd, lookup)
 	var started *retainedInstance
 	if appErr == nil {
 		redactor := newRedactor(secrets, d.stderr)
-		session, connectErr := connect(d.ctx, command, redactor)
+		redactor.ProtectEndpoint(target.endpoint)
+		session, connectErr := connectTarget(d.ctx, target, redactor)
 		if connectErr != nil {
 			redactor.FlushTo(d.stderr)
 			appErr = connectErr.redacted(redactor)
 		} else {
-			started = &retainedInstance{session: session, redactor: redactor}
+			started = &retainedInstance{session: session, redactor: redactor, breakOnRequestCancel: target.endpoint != ""}
 		}
 	}
 	d.mu.Lock()
@@ -826,6 +873,7 @@ func (d *daemon) startInstance(entry *poolEntry, key string, server config.Serve
 func (d *daemon) authIdentity(server config.Server, inputs map[string]secretInput) string {
 	items := make([]string, 0)
 	seen := map[string]struct{}{}
+	mac := hmac.New(sha256.New, d.hmacKey)
 	add := func(destination string, value config.Value) {
 		if !value.IsSecret() {
 			return
@@ -838,6 +886,9 @@ func (d *daemon) authIdentity(server config.Server, inputs map[string]secretInpu
 		input := inputs[name]
 		items = append(items, destination+"\x00"+input.Value)
 	}
+	if server.HTTP != nil {
+		return hex.EncodeToString(mac.Sum(nil))
+	}
 	for i, value := range server.Stdio.Args {
 		add(fmt.Sprintf("arg[%d]", i), value)
 	}
@@ -845,7 +896,6 @@ func (d *daemon) authIdentity(server config.Server, inputs map[string]secretInpu
 		add("env["+env.Name+"]", env.Value)
 	}
 	sort.Strings(items)
-	mac := hmac.New(sha256.New, d.hmacKey)
 	for _, item := range items {
 		_, _ = fmt.Fprintf(mac, "%d:%s", len(item), item)
 	}
@@ -875,6 +925,10 @@ func (d *daemon) noteOperationError(instance *retainedInstance, appErr *appError
 	if appErr.category != "transport" || appErr.code != "connection_closed" {
 		return
 	}
+	d.markBroken(instance)
+}
+
+func (d *daemon) markBroken(instance *retainedInstance) {
 	// execute holds instance.mu while this is called, so a waiter that obtains
 	// that mutex after the failed operation will observe the broken state.
 	instance.broken = true

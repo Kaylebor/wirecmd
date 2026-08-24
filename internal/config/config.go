@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -91,12 +92,22 @@ type Stdio struct {
 	Provenance
 }
 
+// HTTP describes one complete modern Streamable HTTP transport.
+// Query and header child nodes are intentionally deferred until their typed
+// value and secret-destination semantics are implemented.
+type HTTP struct {
+	Endpoint           string
+	EndpointProvenance Provenance
+	Provenance
+}
+
 // Server is a named complete configured capability source.
 type Server struct {
 	Name            string
 	Scope           Scope
 	ScopeProvenance Provenance
 	Stdio           Stdio
+	HTTP            *HTTP
 	Provenance
 }
 
@@ -121,6 +132,7 @@ type ServerSource struct {
 	Scope           *Scope
 	ScopeProvenance Provenance
 	Stdio           *StdioSource
+	HTTP            *HTTPSource
 	Provenance
 }
 
@@ -131,6 +143,15 @@ type StdioSource struct {
 	CommandProvenance Provenance
 	Args              []Value
 	Env               []Environment
+	Provenance
+}
+
+// HTTPSource is a potentially partial HTTP transport layer. A present source
+// selects HTTP even when it omits the endpoint to inherit one from a weaker
+// HTTP layer.
+type HTTPSource struct {
+	Endpoint           *string
+	EndpointProvenance Provenance
 	Provenance
 }
 
@@ -220,7 +241,21 @@ func Compose(sources ...*Source) (*Config, error) {
 				server.ScopeProvenance = partial.ScopeProvenance
 			}
 			if partial.Stdio != nil {
+				if server.HTTP != nil {
+					server.HTTP = nil
+					server.Stdio = Stdio{}
+				}
 				composeStdio(&server.Stdio, partial.Stdio)
+			}
+			if partial.HTTP != nil {
+				if server.Stdio.Provenance != (Provenance{}) {
+					server.Stdio = Stdio{}
+					server.HTTP = nil
+				}
+				if server.HTTP == nil {
+					server.HTTP = &HTTP{}
+				}
+				composeHTTP(server.HTTP, partial.HTTP)
 			}
 		}
 	}
@@ -229,6 +264,14 @@ func Compose(sources ...*Source) (*Config, error) {
 		return nil, err
 	}
 	return config, nil
+}
+
+func composeHTTP(result *HTTP, partial *HTTPSource) {
+	result.Provenance = partial.Provenance
+	if partial.Endpoint != nil {
+		result.Endpoint = *partial.Endpoint
+		result.EndpointProvenance = partial.EndpointProvenance
+	}
 }
 
 func composeStdio(result *Stdio, partial *StdioSource) {
@@ -270,12 +313,35 @@ func validate(config *Config) error {
 		if server.Scope != ScopeWorkspace {
 			return validationError(server.ScopeProvenance, path+".scope", "unsupported scope %q", server.Scope)
 		}
-		if server.Stdio.Provenance == (Provenance{}) {
-			return validationError(server.Provenance, path+".stdio", "stdio is required")
+		if server.HTTP != nil {
+			if server.HTTP.Endpoint == "" {
+				return validationError(server.HTTP.Provenance, path+".http", "endpoint is required")
+			}
+			if err := validateHTTPEndpoint(server.HTTP.Endpoint); err != nil {
+				return validationError(server.HTTP.EndpointProvenance, path+".http", "%v", err)
+			}
+		} else {
+			if server.Stdio.Provenance == (Provenance{}) {
+				return validationError(server.Provenance, path+".stdio", "stdio or http is required")
+			}
+			if server.Stdio.Command == "" {
+				return validationError(server.Stdio.Provenance, path+".stdio", "executable is required")
+			}
 		}
-		if server.Stdio.Command == "" {
-			return validationError(server.Stdio.Provenance, path+".stdio", "executable is required")
-		}
+	}
+	return nil
+}
+
+func validateHTTPEndpoint(endpoint string) error {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || !parsed.IsAbs() || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return fmt.Errorf("endpoint must be an absolute http or https URL with a host")
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("endpoint must not contain URL user information")
+	}
+	if parsed.Fragment != "" {
+		return fmt.Errorf("endpoint must not contain a fragment")
 	}
 	return nil
 }
@@ -379,16 +445,54 @@ func parseServer(file string, node *document.Node) (ServerSource, error) {
 			if server.Stdio != nil {
 				return ServerSource{}, fmt.Errorf("%s.stdio: duplicate stdio", path)
 			}
+			if server.HTTP != nil {
+				return ServerSource{}, fmt.Errorf("%s: stdio and http are mutually exclusive", path)
+			}
 			stdio, err := parseStdio(file, child, path)
 			if err != nil {
 				return ServerSource{}, err
 			}
 			server.Stdio = &stdio
+		case "http":
+			if server.HTTP != nil {
+				return ServerSource{}, fmt.Errorf("%s.http: duplicate http", path)
+			}
+			if server.Stdio != nil {
+				return ServerSource{}, fmt.Errorf("%s: stdio and http are mutually exclusive", path)
+			}
+			http, err := parseHTTP(file, child, path)
+			if err != nil {
+				return ServerSource{}, err
+			}
+			server.HTTP = &http
 		default:
 			return ServerSource{}, fmt.Errorf("%s: unknown child node %q", path, nodeName(child))
 		}
 	}
 	return server, nil
+}
+
+func parseHTTP(file string, node *document.Node, serverPath string) (HTTPSource, error) {
+	path := serverPath + ".http"
+	if err := plainNode(node, path); err != nil {
+		return HTTPSource{}, err
+	}
+	if len(node.Arguments) > 1 {
+		return HTTPSource{}, fmt.Errorf("%s: expected at most one endpoint", path)
+	}
+	if len(node.Children) != 0 {
+		return HTTPSource{}, fmt.Errorf("%s: child nodes are not supported yet", path)
+	}
+	source := HTTPSource{Provenance: provenance(file, path)}
+	if len(node.Arguments) == 1 {
+		endpoint, err := literalText(node.Arguments[0], path)
+		if err != nil {
+			return HTTPSource{}, err
+		}
+		source.Endpoint = &endpoint
+		source.EndpointProvenance = provenance(file, path)
+	}
+	return source, nil
 }
 
 func parseScope(node *document.Node, serverPath string) (Scope, error) {

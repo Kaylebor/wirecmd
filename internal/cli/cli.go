@@ -9,6 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -171,14 +173,15 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 		return renderDaemonHelp(result)
 	}
 
-	command, secrets, commandErr := makeCommand(server, cfg.Root, cwd, os.LookupEnv)
-	if commandErr != nil {
-		return nil, commandErr
+	target, secrets, targetErr := makeTarget(server, cfg.Root, cwd, os.LookupEnv)
+	if targetErr != nil {
+		return nil, targetErr
 	}
 	redactor := newRedactor(secrets, errOut)
+	redactor.ProtectEndpoint(target.endpoint)
 	defer redactor.FlushTo(errOut)
 	if req.operation == listTools {
-		tools, runErr := directTools(ctx, command, redactor)
+		tools, runErr := directTools(ctx, target, redactor)
 		if runErr != nil {
 			return nil, runErr.redacted(redactor)
 		}
@@ -188,7 +191,7 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 		return toolsEnvelope{OK: true, Server: server.Name, Tools: tools}, nil
 	}
 	if req.operation == inspectTool {
-		description, runErr := directToolDescription(ctx, command, req.tool, redactor)
+		description, runErr := directToolDescription(ctx, target, req.tool, redactor)
 		if runErr != nil {
 			return nil, runErr.redacted(redactor)
 		}
@@ -196,13 +199,13 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 	}
 	arguments := req.arguments
 	if len(req.projected) != 0 || req.overlay != nil {
-		call, runErr := directProjectedCall(ctx, command, req.tool, req.projected, req.overlay, redactor)
+		call, runErr := directProjectedCall(ctx, target, req.tool, req.projected, req.overlay, redactor)
 		if runErr != nil {
 			return nil, runErr.redacted(redactor)
 		}
 		return callEnvelope{OK: true, Server: server.Name, Tool: req.tool, Result: call}, nil
 	}
-	call, runErr := directCall(ctx, command, req.tool, arguments, redactor)
+	call, runErr := directCall(ctx, target, req.tool, arguments, redactor)
 	if runErr != nil {
 		return nil, runErr.redacted(redactor)
 	}
@@ -381,9 +384,32 @@ func findServer(cfg *config.Config, name string) (config.Server, bool) {
 func serverList(cfg *config.Config) serversEnvelope {
 	servers := make([]serverSummary, 0, len(cfg.Servers))
 	for _, server := range cfg.Servers {
-		servers = append(servers, serverSummary{Name: server.Name, Scope: string(server.Scope), Transport: "stdio"})
+		transport := "stdio"
+		if server.HTTP != nil {
+			transport = "http"
+		}
+		servers = append(servers, serverSummary{Name: server.Name, Scope: string(server.Scope), Transport: transport})
 	}
 	return serversEnvelope{OK: true, Servers: servers}
+}
+
+// connectionTarget is the small transport-neutral execution seam. It keeps
+// the CLI and daemon independent from MCP transport construction without
+// introducing a general adapter layer.
+type connectionTarget struct {
+	command  *exec.Cmd
+	endpoint string
+}
+
+func makeTarget(server config.Server, root *config.Root, callerCWD string, lookup func(string) (string, bool)) (connectionTarget, []string, *appError) {
+	if server.HTTP != nil {
+		return connectionTarget{endpoint: server.HTTP.Endpoint}, nil, nil
+	}
+	command, secrets, appErr := makeCommand(server, root, callerCWD, lookup)
+	if appErr != nil {
+		return connectionTarget{}, nil, appErr
+	}
+	return connectionTarget{command: command}, secrets, nil
 }
 
 func makeCommand(server config.Server, root *config.Root, callerCWD string, lookup func(string) (string, bool)) (*exec.Cmd, []string, *appError) {
@@ -438,8 +464,8 @@ func resolveRoot(root config.Root) string {
 	return filepath.Join(filepath.Dir(root.File), root.Path)
 }
 
-func directTools(ctx context.Context, command *exec.Cmd, redactor *redactor) ([]toolSummary, *appError) {
-	session, err := connect(ctx, command, redactor)
+func directTools(ctx context.Context, target connectionTarget, redactor *redactor) ([]toolSummary, *appError) {
+	session, err := connectTarget(ctx, target, redactor)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +477,7 @@ func sessionTools(ctx context.Context, session *mcp.ClientSession, redactor *red
 	var tools []toolSummary
 	for tool, err := range session.Tools(ctx, nil) {
 		if err != nil {
-			if errors.Is(err, mcp.ErrConnectionClosed) {
+			if isTransportFailure(err) {
 				return nil, transportError("connection_closed", err.Error(), "check the upstream MCP server diagnostics")
 			}
 			return nil, protocolError("tool_list_failed", err.Error(), "check the upstream MCP server diagnostics")
@@ -462,8 +488,8 @@ func sessionTools(ctx context.Context, session *mcp.ClientSession, redactor *red
 	return tools, nil
 }
 
-func directCall(ctx context.Context, command *exec.Cmd, tool string, arguments map[string]any, redactor *redactor) (toolResult, *appError) {
-	session, err := connect(ctx, command, redactor)
+func directCall(ctx context.Context, target connectionTarget, tool string, arguments map[string]any, redactor *redactor) (toolResult, *appError) {
+	session, err := connectTarget(ctx, target, redactor)
 	if err != nil {
 		return toolResult{}, err
 	}
@@ -474,7 +500,7 @@ func directCall(ctx context.Context, command *exec.Cmd, tool string, arguments m
 func sessionCall(ctx context.Context, session *mcp.ClientSession, tool string, arguments map[string]any, redactor *redactor) (toolResult, *appError) {
 	response, callErr := session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: arguments})
 	if callErr != nil {
-		if errors.Is(callErr, mcp.ErrConnectionClosed) {
+		if isTransportFailure(callErr) {
 			return toolResult{}, transportError("connection_closed", callErr.Error(), "check the upstream MCP server diagnostics")
 		}
 		return toolResult{}, protocolError("tool_call_failed", callErr.Error(), "check the upstream MCP server diagnostics")
@@ -492,33 +518,62 @@ func sessionCall(ctx context.Context, session *mcp.ClientSession, tool string, a
 	return result, nil
 }
 
-func connect(ctx context.Context, command *exec.Cmd, redactor *redactor) (*mcp.ClientSession, *appError) {
+func isTransportFailure(err error) bool {
+	if errors.Is(err, mcp.ErrConnectionClosed) {
+		return true
+	}
+	var networkError net.Error
+	return errors.As(err, &networkError)
+}
+
+func connectTarget(ctx context.Context, target connectionTarget, redactor *redactor) (*mcp.ClientSession, *appError) {
+	if target.command != nil {
+		return connectCommand(ctx, target.command, redactor)
+	}
+	if target.endpoint != "" {
+		transport := &mcp.StreamableClientTransport{Endpoint: target.endpoint, DisableStandaloneSSE: true}
+		return connectSession(ctx, transport)
+	}
+	return nil, transportError("mcp_connect_failed", "server has no configured transport", "correct the server transport configuration")
+}
+
+func connectCommand(ctx context.Context, command *exec.Cmd, redactor *redactor) (*mcp.ClientSession, *appError) {
 	command.Stderr = redactor
-	transport := &trackedCommandTransport{transport: &mcp.CommandTransport{Command: command}}
+	return connectSession(ctx, &mcp.CommandTransport{Command: command})
+}
+
+// connect remains a narrow compatibility helper for the stdio-specific
+// connection cleanup test. Production callers use connectTarget.
+func connect(ctx context.Context, command *exec.Cmd, redactor *redactor) (*mcp.ClientSession, *appError) {
+	return connectCommand(ctx, command, redactor)
+}
+
+func connectSession(ctx context.Context, transport mcp.Transport) (*mcp.ClientSession, *appError) {
+	tracked := &trackedTransport{transport: transport}
 	client := mcp.NewClient(&mcp.Implementation{Name: "wirecmd", Version: "dev"}, &mcp.ClientOptions{
 		MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true},
 	})
-	session, err := client.Connect(ctx, transport, nil)
+	session, err := client.Connect(ctx, tracked, nil)
 	if err != nil {
-		if transport.connection != nil {
-			_ = transport.connection.Close()
+		if tracked.connection != nil {
+			_ = tracked.connection.Close()
 		}
-		return nil, transportError("mcp_connect_failed", err.Error(), "check the server command, working directory, and upstream diagnostics")
+		return nil, transportError("mcp_connect_failed", err.Error(), "check the configured transport and upstream diagnostics")
 	}
 	return session, nil
 }
 
-// trackedCommandTransport retains the SDK-owned connection until
-// Client.Connect returns a session. In v1.7.0 some initialization failures
-// return without a session for the caller to close after CommandTransport has
-// started its child. Closing this saved connection uses the SDK's ioConn
-// sync.Once cleanup and its normal CommandTransport shutdown path.
-type trackedCommandTransport struct {
-	transport  *mcp.CommandTransport
+// trackedTransport retains an SDK-created connection until Client.Connect
+// returns a session. In v1.7.0 an initialization failure may return without a
+// session for the caller to close, regardless of transport. Closing the saved
+// connection preserves the transport's normal child-process or HTTP-session
+// shutdown behavior.
+type trackedTransport struct {
+	transport  mcp.Transport
 	connection mcp.Connection
 }
 
-func (t *trackedCommandTransport) Connect(ctx context.Context) (mcp.Connection, error) {
+func (t *trackedTransport) Connect(ctx context.Context) (mcp.Connection, error) {
 	connection, err := t.transport.Connect(ctx)
 	if err == nil {
 		t.connection = connection
@@ -697,9 +752,12 @@ func writeJSON(writer io.Writer, value any) {
 // redactor keeps at most the suffix that could start a secret spanning the
 // next write. It is intentionally only used for known resolved secret values.
 type redactor struct {
-	secrets []string
-	pending string
-	writer  io.Writer
+	secrets       []string
+	endpoint      string
+	endpointQuery string
+	safeEndpoint  string
+	pending       string
+	writer        io.Writer
 }
 
 func newRedactor(values []string, writer io.Writer) *redactor {
@@ -720,10 +778,34 @@ func newRedactor(values []string, writer io.Writer) *redactor {
 }
 
 func (r *redactor) Redact(value string) string {
+	if r.endpoint != "" {
+		value = strings.ReplaceAll(value, r.endpoint, r.safeEndpoint)
+		value = strings.ReplaceAll(value, r.endpointQuery, "[REDACTED]")
+	}
 	for _, secret := range r.secrets {
 		value = strings.ReplaceAll(value, secret, "[REDACTED]")
 	}
 	return value
+}
+
+// ProtectEndpoint makes literal query strings diagnostic-only: the endpoint
+// path stays useful, but no raw query or query value can escape in SDK errors.
+// Query entries are not configuration secrets in this slice; this is solely a
+// boundary redaction rule until typed header/query values are introduced.
+func (r *redactor) ProtectEndpoint(endpoint string) {
+	if endpoint == "" {
+		return
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.RawQuery == "" {
+		return
+	}
+	bare := *parsed
+	bare.RawQuery = ""
+	bare.ForceQuery = false
+	r.endpoint = endpoint
+	r.endpointQuery = parsed.RawQuery
+	r.safeEndpoint = bare.String() + "?[REDACTED]"
 }
 
 func (r *redactor) Write(input []byte) (int, error) {

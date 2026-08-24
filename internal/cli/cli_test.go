@@ -5,14 +5,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -256,6 +261,103 @@ func TestDirectListAndCallContracts(t *testing.T) {
 	code, output, _ = invokeWithInput(t, []string{"--direct", "--config", config, "--stdin", "helper", "a_tool"}, `{"name":"Ada"}`)
 	if code != exitOK || decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)["name"] != "Ada" {
 		t.Fatalf("stdin call: code=%d output=%s", code, output)
+	}
+}
+
+func TestDirectStreamableHTTPContracts(t *testing.T) {
+	fixture := newHTTPFixture(t)
+	config := httpConfig(t, fixture.URL)
+
+	code, output, stderr := invoke(t, []string{"--direct", "--config", config})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("list servers: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	servers := decodeOutput(t, output)["servers"].([]any)
+	if len(servers) != 1 || servers[0].(map[string]any)["transport"] != "http" {
+		t.Fatalf("HTTP server list = %#v", servers)
+	}
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "remote"})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("HTTP list tools: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	tools := decodeOutput(t, output)["tools"].([]any)
+	if tools[0].(map[string]any)["name"] != "a_tool" || tools[len(tools)-1].(map[string]any)["name"] != "z_tool" {
+		t.Fatalf("HTTP tool order = %#v", tools)
+	}
+	if !fixture.sawMethod("server/discover") {
+		t.Fatal("HTTP fixture did not observe modern server/discover")
+	}
+
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "--help", "remote", "projected"})
+	if code != exitOK || stderr != "" || !strings.Contains(output, "--query") {
+		t.Fatalf("HTTP focused help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "remote", "projected", "--query", "Ada", "--enabled", "--", `{"tool_name":"one","toolName":"two"}`})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("HTTP projected call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	data := decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)
+	if data["query"] != "Ada" || data["enabled"] != true || data["tool_name"] != "one" || data["toolName"] != "two" {
+		t.Fatalf("HTTP projected data = %#v", data)
+	}
+
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "remote", `{"tool":"a_tool","arguments":{"name":"Ada"}}`})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)["name"] != "Ada" {
+		t.Fatalf("HTTP exact call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	code, output, _ = invoke(t, []string{"--direct", "--config", config, "remote", "failure"})
+	if code != exitUpstreamTool || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_reported_error" {
+		t.Fatalf("HTTP tool failure: code=%d output=%s", code, output)
+	}
+	if fixture.requests.Load() == 0 {
+		t.Fatal("HTTP fixture did not receive MCP requests")
+	}
+}
+
+func TestDirectStreamableHTTPConnectionFailures(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := "http://" + listener.Addr().String() + "/mcp"
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	refused := httpConfig(t, endpoint)
+	code, output, _ := invoke(t, []string{"--direct", "--config", refused, "remote"})
+	if code != exitTransport || decodeOutput(t, output)["error"].(map[string]any)["code"] != "mcp_connect_failed" {
+		t.Fatalf("refused HTTP connection: code=%d output=%s", code, output)
+	}
+	nonMCP := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "text/plain")
+		_, _ = writer.Write([]byte("not MCP"))
+	}))
+	t.Cleanup(nonMCP.Close)
+	config := httpConfig(t, nonMCP.URL)
+	code, output, _ = invoke(t, []string{"--direct", "--config", config, "remote"})
+	if code != exitTransport || decodeOutput(t, output)["error"].(map[string]any)["code"] != "mcp_connect_failed" {
+		t.Fatalf("non-MCP HTTP response: code=%d output=%s", code, output)
+	}
+}
+
+func TestHTTPQueryIsRedactedFromConnectionDiagnostics(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := "http://" + listener.Addr().String() + "/mcp?access_token=http-query-secret"
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	config := httpConfig(t, endpoint)
+	code, output, stderr := invoke(t, []string{"--direct", "--config", config, "remote"})
+	if code != exitTransport || strings.Contains(output, "access_token") || strings.Contains(output, "http-query-secret") || strings.Contains(stderr, "access_token") || strings.Contains(stderr, "http-query-secret") {
+		t.Fatalf("direct HTTP query disclosure: code=%d stdout=%q stderr=%q", code, output, stderr)
+	}
+	if !strings.Contains(output, "?[REDACTED]") {
+		t.Fatalf("direct HTTP endpoint was not usefully sanitized: %s", output)
 	}
 }
 
@@ -528,6 +630,44 @@ func TestConnectFailureReapsStartedChild(t *testing.T) {
 	}
 }
 
+func TestHTTPConnectFailureClosesEstablishedSession(t *testing.T) {
+	deleted := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodDelete {
+			select {
+			case deleted <- struct{}{}:
+			default:
+			}
+			writer.WriteHeader(http.StatusNoContent)
+			return
+		}
+		var message struct {
+			ID json.RawMessage `json:"id"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&message); err != nil {
+			http.Error(writer, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		writer.Header().Set("Mcp-Session-Id", "failed-initialize-session")
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      message.ID,
+			"error":   map[string]any{"code": -32601, "message": "initialization unavailable"},
+		})
+	}))
+	defer server.Close()
+	session, appErr := connectTarget(context.Background(), connectionTarget{endpoint: server.URL}, newRedactor(nil, io.Discard))
+	if session != nil || appErr == nil || appErr.code != "mcp_connect_failed" {
+		t.Fatalf("HTTP connect = (%v, %#v), want initialization failure", session, appErr)
+	}
+	select {
+	case <-deleted:
+	case <-time.After(time.Second):
+		t.Fatal("failed HTTP initialization did not close the established session")
+	}
+}
+
 func TestRepeatedConfigsUseStrongestLayer(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
 	base := writeConfig(t, `wirecmd { server "helper" { scope "workspace"; stdio "definitely-not-a-command" } }`)
@@ -589,6 +729,92 @@ func TestRedactorProtectsSplitSecrets(t *testing.T) {
 
 func helperConfig(t *testing.T, root, env string) string {
 	return helperConfigAt(t, filepath.Join(t.TempDir(), "wirecmd.kdl"), root, env)
+}
+
+type httpFixture struct {
+	*httptest.Server
+	requests        atomic.Int64
+	blockStarted    chan struct{}
+	blockRelease    chan struct{}
+	blockOnce       sync.Once
+	holdStarted     chan struct{}
+	holdRelease     chan struct{}
+	holdOnce        sync.Once
+	holdReleaseOnce sync.Once
+	mu              sync.Mutex
+	methods         []string
+}
+
+func newHTTPFixture(t *testing.T) *httpFixture {
+	t.Helper()
+	fixture := &httpFixture{blockStarted: make(chan struct{}), blockRelease: make(chan struct{}), holdStarted: make(chan struct{}), holdRelease: make(chan struct{})}
+	server := mcp.NewServer(&mcp.Implementation{Name: "wirecmd-http-test-server", Version: "dev"}, &mcp.ServerOptions{PageSize: 2})
+	mcp.AddTool(server, &mcp.Tool{Name: "z_tool", Title: "Zed", Description: "last HTTP tool"}, echoTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "a_tool", Title: "Aye", Description: "first HTTP tool"}, echoTool)
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "projected", Title: "Projected HTTP fixture", Description: "exercise HTTP focused help and projected arguments",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"enabled":{"type":"boolean"},"tool_name":{"type":"string"},"toolName":{"type":"string"}},"required":["query"]}`),
+	}, echoTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "failure", Description: "return a tool error"}, failureTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "block", Description: "wait for cancellation"}, func(ctx context.Context, _ *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
+		fixture.blockOnce.Do(func() { close(fixture.blockStarted) })
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		case <-fixture.blockRelease:
+			return nil, nil, errors.New("fixture released")
+		}
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "hold", Description: "hold one request until released"}, func(context.Context, *mcp.CallToolRequest, map[string]any) (*mcp.CallToolResult, any, error) {
+		fixture.holdOnce.Do(func() { close(fixture.holdStarted) })
+		<-fixture.holdRelease
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "released"}}}, nil, nil
+	})
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+		fixture.requests.Add(1)
+		return server
+	}, &mcp.StreamableHTTPOptions{Stateless: true})
+	fixture.Server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err == nil {
+			var message struct {
+				Method string `json:"method"`
+			}
+			if json.Unmarshal(body, &message) == nil && message.Method != "" {
+				fixture.mu.Lock()
+				fixture.methods = append(fixture.methods, message.Method)
+				fixture.mu.Unlock()
+			}
+			request.Body = io.NopCloser(bytes.NewReader(body))
+		}
+		handler.ServeHTTP(writer, request)
+	}))
+	t.Cleanup(func() {
+		close(fixture.blockRelease)
+		fixture.releaseHold()
+		fixture.Close()
+	})
+	return fixture
+}
+
+func (f *httpFixture) releaseHold() {
+	f.holdReleaseOnce.Do(func() { close(f.holdRelease) })
+}
+
+func (f *httpFixture) sawMethod(want string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, method := range f.methods {
+		if method == want {
+			return true
+		}
+	}
+	return false
+}
+
+func httpConfig(t *testing.T, endpoint string) string {
+	t.Helper()
+	return writeConfig(t, "wirecmd { server \"remote\" { scope \"workspace\"; http "+strconv.Quote(endpoint)+" } }")
 }
 
 func helperConfigAt(t *testing.T, path, root, env string) string {

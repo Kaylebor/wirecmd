@@ -65,6 +65,7 @@ func TestParseAllowsPartialSources(t *testing.T) {
 		{name: "server only", source: `wirecmd { server "memory" }`},
 		{name: "scope only", source: `wirecmd { server "memory" { scope "workspace"; } }`},
 		{name: "stdio only", source: `wirecmd { server "memory" { stdio { env FLAG="" } } }`},
+		{name: "http only", source: `wirecmd { server "remote" { http } }`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -186,7 +187,7 @@ func TestComposeValidatesOnlyEffectiveConfiguration(t *testing.T) {
 	}{
 		{name: "no server", source: `wirecmd { root "/workspace" }`, want: "expected at least one server"},
 		{name: "missing scope", source: `wirecmd { server "memory" { stdio "memory" } }`, want: `server["memory"].scope: scope is required`},
-		{name: "missing stdio", source: `wirecmd { server "memory" { scope "workspace"; } }`, want: `server["memory"].stdio: stdio is required`},
+		{name: "missing transport", source: `wirecmd { server "memory" { scope "workspace"; } }`, want: `server["memory"].stdio: stdio or http is required`},
 		{name: "missing executable", source: `wirecmd { server "memory" { scope "workspace"; stdio { env FLAG="one" } } }`, want: `server["memory"].stdio: executable is required`},
 	}
 	for _, test := range tests {
@@ -277,7 +278,7 @@ func TestParseRejectsMalformedAndUnknownStructure(t *testing.T) {
 	}{
 		{name: "unknown root child", source: `wirecmd { transport "http" }`, want: `unknown child node "transport"`},
 		{name: "duplicate configured root", source: `wirecmd { root "/one"; root "/two" }`, want: "duplicate root"},
-		{name: "unknown server child", source: `wirecmd { server "memory" { http "https://example.test" } }`, want: `unknown child node "http"`},
+		{name: "unknown server child", source: `wirecmd { server "memory" { websocket "wss://example.test" } }`, want: `unknown child node "websocket"`},
 		{name: "duplicate environment", source: `wirecmd { server "memory" { stdio "go" { env TOKEN="one"; env TOKEN="two" } } }`, want: "duplicate environment name"},
 		{name: "invalid KDL 2", source: `wirecmd {`, want: "parse KDL 2:"},
 	}
@@ -286,6 +287,82 @@ func TestParseRejectsMalformedAndUnknownStructure(t *testing.T) {
 			_, err := ParseString("test.kdl", test.source)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("ParseString() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestComposeHTTPTransportAndProvenance(t *testing.T) {
+	base, err := ParseString("base.kdl", `wirecmd { server "remote" { scope "workspace"; http "https://example.test/mcp?tenant=base" } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	partial, err := ParseString("partial.kdl", `wirecmd { server "remote" { http } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := Compose(base, partial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := config.Servers[0]
+	if remote.HTTP == nil || remote.HTTP.Endpoint != "https://example.test/mcp?tenant=base" {
+		t.Fatalf("HTTP = %#v", remote.HTTP)
+	}
+	if remote.HTTP.Provenance.File != "partial.kdl" || remote.HTTP.EndpointProvenance.File != "base.kdl" {
+		t.Fatalf("HTTP provenance = %#v", remote.HTTP)
+	}
+
+	stdio, err := ParseString("stdio.kdl", `wirecmd { server "remote" { stdio "replacement" } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err = Compose(base, stdio)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Servers[0].HTTP != nil || config.Servers[0].Stdio.Command != "replacement" {
+		t.Fatalf("stdio replacement = %#v", config.Servers[0])
+	}
+
+	http, err := ParseString("http.kdl", `wirecmd { server "remote" { http "https://example.test/replacement" } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err = Compose(base, stdio, http)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Servers[0].HTTP == nil || config.Servers[0].HTTP.Endpoint != "https://example.test/replacement" || config.Servers[0].Stdio.Provenance != (Provenance{}) {
+		t.Fatalf("http replacement = %#v", config.Servers[0])
+	}
+}
+
+func TestHTTPConfigurationValidation(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "missing endpoint", source: `wirecmd { server "remote" { scope "workspace"; http } }`, want: "endpoint is required"},
+		{name: "relative", source: `wirecmd { server "remote" { scope "workspace"; http "/mcp" } }`, want: "absolute http or https"},
+		{name: "user info", source: `wirecmd { server "remote" { scope "workspace"; http "https://user:pass@example.test/mcp" } }`, want: "must not contain URL user information"},
+		{name: "fragment", source: `wirecmd { server "remote" { scope "workspace"; http "https://example.test/mcp#section" } }`, want: "must not contain a fragment"},
+		{name: "children deferred", source: `wirecmd { server "remote" { scope "workspace"; http "https://example.test/mcp" { header TOKEN="x" } } }`, want: "child nodes are not supported yet"},
+		{name: "same source exclusive", source: `wirecmd { server "remote" { scope "workspace"; stdio "one"; http "https://example.test/mcp" } }`, want: "mutually exclusive"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source, err := ParseString("test.kdl", test.source)
+			if err != nil {
+				if !strings.Contains(err.Error(), test.want) {
+					t.Fatalf("ParseString() error = %v, want %q", err, test.want)
+				}
+				return
+			}
+			_, err = Compose(source)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Compose() error = %v, want %q", err, test.want)
 			}
 		})
 	}
