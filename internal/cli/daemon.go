@@ -438,8 +438,31 @@ func (d *daemon) handle(connection net.Conn) {
 		_ = encoder.Encode(daemonReply{Error: &errorBody{Category: "invocation", Code: "daemon_request_invalid", Message: "invalid daemon request", Action: "use a compatible Wirecmd client"}, ExitCode: exitInvocation})
 		return
 	}
-	reply := d.execute(request)
+	requestCtx, cancel := d.requestContext(connection)
+	reply := d.execute(requestCtx, request)
+	// Once the operation has completed, do not let the connection watcher's
+	// eventual EOF affect the completed response. Closing the connection on
+	// return releases that watcher.
+	cancel()
 	_ = encoder.Encode(reply)
+}
+
+// requestContext is canceled both when the daemon shuts down and when the
+// client disconnects before its request completes. The daemon receives only
+// one request per connection, so after the request has been decoded it is safe
+// to watch the read side solely for peer closure while writing the response.
+func (d *daemon) requestContext(connection net.Conn) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(d.ctx)
+	go func() {
+		var discarded [1]byte
+		for {
+			if _, err := connection.Read(discarded[:]); err != nil {
+				cancel()
+				return
+			}
+		}
+	}()
+	return ctx, cancel
 }
 
 func daemonDial() (net.Conn, *appError) {
@@ -578,7 +601,7 @@ func (c *daemonClient) request(request daemonRequest) (daemonReply, *appError) {
 	return reply, nil
 }
 
-func (d *daemon) execute(request daemonRequest) daemonReply {
+func (d *daemon) execute(ctx context.Context, request daemonRequest) daemonReply {
 	if request.Admin != "" {
 		return d.executeAdmin(request.Admin)
 	}
@@ -635,7 +658,7 @@ func (d *daemon) execute(request daemonRequest) daemonReply {
 	if err := validateSecretInputs(server, request.Secrets); err != nil {
 		return errorReplyWithWarnings(err, warnings)
 	}
-	instance, appErr := d.acquire(server, cached.config.Root, request.CWD, request.Secrets, generation)
+	instance, appErr := d.acquire(ctx, server, cached.config.Root, request.CWD, request.Secrets, generation)
 	if appErr != nil {
 		return errorReplyWithWarnings(appErr, warnings)
 	}
@@ -647,7 +670,7 @@ func (d *daemon) execute(request daemonRequest) daemonReply {
 	}
 	var result any
 	if request.Operation == listTools {
-		tools, appErr := sessionTools(d.ctx, instance.session, instance.redactor)
+		tools, appErr := sessionTools(ctx, instance.session, instance.redactor)
 		if appErr != nil {
 			d.noteOperationError(instance, appErr)
 			return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
@@ -658,7 +681,7 @@ func (d *daemon) execute(request daemonRequest) daemonReply {
 			result = toolsEnvelope{OK: true, Server: server.Name, Tools: tools}
 		}
 	} else if request.Operation == inspectTool {
-		description, appErr := sessionToolDescription(d.ctx, instance.session, request.Tool, instance.redactor)
+		description, appErr := sessionToolDescription(ctx, instance.session, request.Tool, instance.redactor)
 		if appErr != nil {
 			d.noteOperationError(instance, appErr)
 			return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
@@ -667,7 +690,7 @@ func (d *daemon) execute(request daemonRequest) daemonReply {
 	} else {
 		arguments := request.Arguments
 		if len(request.Projected) != 0 || request.Overlay != nil {
-			description, appErr := sessionToolProjection(d.ctx, instance.session, request.Tool)
+			description, appErr := sessionToolProjection(ctx, instance.session, request.Tool)
 			if appErr != nil {
 				d.noteOperationError(instance, appErr)
 				return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
@@ -677,7 +700,7 @@ func (d *daemon) execute(request daemonRequest) daemonReply {
 				return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
 			}
 		}
-		call, appErr := sessionCall(d.ctx, instance.session, request.Tool, arguments, instance.redactor)
+		call, appErr := sessionCall(ctx, instance.session, request.Tool, arguments, instance.redactor)
 		if appErr != nil {
 			d.noteOperationError(instance, appErr)
 			appErr = appErr.redacted(instance.redactor)
@@ -709,7 +732,7 @@ func validateSecretInputs(server config.Server, inputs map[string]secretInput) *
 	return nil
 }
 
-func (d *daemon) acquire(server config.Server, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64) (*retainedInstance, *appError) {
+func (d *daemon) acquire(ctx context.Context, server config.Server, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64) (*retainedInstance, *appError) {
 	workspace := cwd
 	if root != nil {
 		workspace = resolveRoot(*root)
@@ -722,29 +745,49 @@ func (d *daemon) acquire(server config.Server, root *config.Root, cwd string, in
 		return nil, transportError("instance_retired", "the daemon configuration generation changed before the server instance started", "retry after daemon reload completes")
 	}
 	if entry := d.pools[key]; entry != nil {
-		ready := entry.ready
 		d.mu.Unlock()
-		<-ready
-		d.mu.Lock()
-		appErr := entry.err
-		broken := entry.broken
-		instance := entry.instance
-		if appErr == nil && !broken && instance != nil {
-			instance.active++
-		}
-		d.mu.Unlock()
-		if appErr != nil {
-			return nil, appErr
-		}
-		if broken || instance == nil {
-			return nil, transportError("instance_unavailable", "the retained server instance is unavailable", "run wirecmd daemon reload or restart the daemon")
-		}
-		return instance, nil
+		return d.waitForInstance(ctx, entry, generation)
 	}
 	entry := &poolEntry{ready: make(chan struct{})}
 	d.pools[key] = entry
+	d.wg.Add(1)
 	d.mu.Unlock()
+	go d.startInstance(entry, key, server, root, cwd, inputs, generation)
+	return d.waitForInstance(ctx, entry, generation)
+}
 
+// waitForInstance gives each daemon request its own cancellation boundary. The
+// pool startup itself is daemon-owned shared work, so a departing first caller
+// must not tear it down beneath other callers that have coalesced on it.
+func (d *daemon) waitForInstance(ctx context.Context, entry *poolEntry, generation uint64) (*retainedInstance, *appError) {
+	select {
+	case <-entry.ready:
+	case <-ctx.Done():
+		return nil, transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request")
+	}
+	d.mu.Lock()
+	appErr := entry.err
+	broken := entry.broken
+	retiring := entry.retiring || d.closing || d.generation != generation
+	instance := entry.instance
+	if appErr == nil && !broken && !retiring && instance != nil {
+		instance.active++
+	}
+	d.mu.Unlock()
+	if appErr != nil {
+		return nil, appErr
+	}
+	if retiring {
+		return nil, transportError("instance_retired", "the server instance was retired while starting", "retry after daemon reload completes")
+	}
+	if broken || instance == nil {
+		return nil, transportError("instance_unavailable", "the retained server instance is unavailable", "run wirecmd daemon reload or restart the daemon")
+	}
+	return instance, nil
+}
+
+func (d *daemon) startInstance(entry *poolEntry, key string, server config.Server, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64) {
+	defer d.wg.Done()
 	lookup := func(name string) (string, bool) { value, ok := inputs[name]; return value.Value, ok && value.Present }
 	command, secrets, appErr := makeCommand(server, root, cwd, lookup)
 	var started *retainedInstance
@@ -755,7 +798,7 @@ func (d *daemon) acquire(server config.Server, root *config.Root, cwd string, in
 			redactor.FlushTo(d.stderr)
 			appErr = connectErr.redacted(redactor)
 		} else {
-			started = &retainedInstance{session: session, redactor: redactor, active: 1}
+			started = &retainedInstance{session: session, redactor: redactor}
 		}
 	}
 	d.mu.Lock()
@@ -773,13 +816,11 @@ func (d *daemon) acquire(server config.Server, root *config.Root, cwd string, in
 	entry.err = appErr
 	close(entry.ready)
 	if appErr != nil {
-		delete(d.pools, key)
+		if d.pools[key] == entry {
+			delete(d.pools, key)
+		}
 	}
 	d.mu.Unlock()
-	if appErr != nil {
-		return nil, appErr
-	}
-	return entry.instance, nil
 }
 
 func (d *daemon) authIdentity(server config.Server, inputs map[string]secretInput) string {

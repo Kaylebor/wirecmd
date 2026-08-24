@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -27,6 +28,29 @@ func TestHelperProcess(t *testing.T) {
 			fmt.Fprintln(os.Stderr, err)
 			return
 		}
+	}
+	if countFile := os.Getenv("WIRECMD_CHILD_COUNT_FILE"); countFile != "" {
+		file, err := os.OpenFile(countFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return
+		}
+		_, _ = fmt.Fprintln(file, os.Getpid())
+		_ = file.Close()
+	}
+	if startedFile := os.Getenv("WIRECMD_HELPER_STARTED_FILE"); startedFile != "" {
+		if err := os.WriteFile(startedFile, []byte("started"), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return
+		}
+	}
+	if delay := os.Getenv("WIRECMD_START_DELAY"); delay != "" {
+		duration, err := time.ParseDuration(delay)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return
+		}
+		time.Sleep(duration)
 	}
 	secret := os.Getenv("SECRET")
 	if os.Getenv("WIRECMD_EMIT_SECRET") == "1" && secret != "" {
@@ -155,7 +179,13 @@ func recallTool(_ context.Context, _ *mcp.CallToolRequest, _ map[string]any) (*m
 }
 
 func blockTool(ctx context.Context, _ *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
+	if path := os.Getenv("WIRECMD_BLOCK_STARTED_FILE"); path != "" {
+		_ = os.WriteFile(path, []byte("started"), 0o600)
+	}
 	<-ctx.Done()
+	if path := os.Getenv("WIRECMD_BLOCK_CANCELED_FILE"); path != "" {
+		_ = os.WriteFile(path, []byte("canceled"), 0o600)
+	}
 	return nil, nil, ctx.Err()
 }
 

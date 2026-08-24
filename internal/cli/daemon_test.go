@@ -210,7 +210,66 @@ func TestDaemonCoalescesConcurrentStartup(t *testing.T) {
 	}
 }
 
-func TestDaemonClientCancellationClosesIPC(t *testing.T) {
+func TestDaemonCoalescedStartupSurvivesInitiatorCancellation(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	runtime := t.TempDir()
+	if err := os.Chmod(runtime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	d := startTestDaemon(t)
+	started := filepath.Join(t.TempDir(), "started")
+	children := filepath.Join(t.TempDir(), "children")
+	configPath := helperConfig(t, "", "env WIRECMD_HELPER_STARTED_FILE="+strconv.Quote(started)+"\nenv WIRECMD_START_DELAY=\"500ms\"\nenv WIRECMD_CHILD_COUNT_FILE="+strconv.Quote(children))
+
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	firstDone := make(chan int, 1)
+	go func() {
+		var stdout, stderr bytes.Buffer
+		firstDone <- Run(firstCtx, []string{"--config", configPath, "helper", "a_tool"}, strings.NewReader(""), &stdout, &stderr)
+	}()
+	waitForFile(t, started)
+
+	type invocation struct {
+		code   int
+		output string
+		stderr string
+	}
+	secondDone := make(chan invocation, 1)
+	go func() {
+		var stdout, stderr bytes.Buffer
+		code := Run(context.Background(), []string{"--config", configPath, "helper", "a_tool"}, strings.NewReader(""), &stdout, &stderr)
+		secondDone <- invocation{code: code, output: stdout.String(), stderr: stderr.String()}
+	}()
+	waitForDaemonConnections(t, d, 2)
+	cancelFirst()
+
+	select {
+	case code := <-firstDone:
+		if code != exitTransport {
+			t.Fatalf("canceled startup caller code=%d, want transport failure", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled startup caller remained blocked")
+	}
+	select {
+	case result := <-secondDone:
+		if result.code != exitOK || result.stderr != "" || !strings.Contains(result.output, `"tool":"a_tool"`) {
+			t.Fatalf("coalesced caller: code=%d stderr=%q output=%s", result.code, result.stderr, result.output)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("coalesced caller did not receive the shared retained instance")
+	}
+	contents, err := os.ReadFile(children)
+	if err != nil {
+		t.Fatalf("read child count: %v", err)
+	}
+	if pids := strings.Fields(string(contents)); len(pids) != 1 {
+		t.Fatalf("retained child starts = %q, want exactly one", contents)
+	}
+}
+
+func TestDaemonClientCancellationCancelsUpstreamOperation(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
 	runtime := t.TempDir()
 	if err := os.Chmod(runtime, 0o700); err != nil {
@@ -218,14 +277,16 @@ func TestDaemonClientCancellationClosesIPC(t *testing.T) {
 	}
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
-	configPath := helperConfig(t, "", "")
+	started := filepath.Join(t.TempDir(), "started")
+	canceled := filepath.Join(t.TempDir(), "canceled")
+	configPath := helperConfig(t, "", "env WIRECMD_BLOCK_STARTED_FILE="+strconv.Quote(started)+"\nenv WIRECMD_BLOCK_CANCELED_FILE="+strconv.Quote(canceled))
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan int, 1)
 	go func() {
 		var stdout, stderr bytes.Buffer
 		done <- Run(ctx, []string{"--config", configPath, "helper", "block"}, strings.NewReader(""), &stdout, &stderr)
 	}()
-	time.Sleep(30 * time.Millisecond)
+	waitForFile(t, started)
 	cancel()
 	select {
 	case code := <-done:
@@ -234,6 +295,27 @@ func TestDaemonClientCancellationClosesIPC(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("canceled daemon client remained blocked on IPC")
+	}
+	waitForFile(t, canceled)
+
+	// The block call used the retained instance. A following call can only
+	// acquire its mutex if upstream cancellation completed that call.
+	done = make(chan int, 1)
+	go func() {
+		var stdout, stderr bytes.Buffer
+		code := Run(context.Background(), []string{"--config", configPath, "helper", "a_tool"}, strings.NewReader(""), &stdout, &stderr)
+		if code != exitOK || stderr.Len() != 0 || !strings.Contains(stdout.String(), `"tool":"a_tool"`) {
+			code = -1
+		}
+		done <- code
+	}()
+	select {
+	case code := <-done:
+		if code != exitOK {
+			t.Fatal("subsequent daemon call did not use a usable retained instance")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled daemon operation retained the instance mutex")
 	}
 }
 
@@ -579,4 +661,16 @@ func waitForPIDFile(t *testing.T, path string) int {
 	}
 	t.Fatal("timed out waiting for retained child PID")
 	return 0
+}
+
+func waitForFile(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", path)
 }
