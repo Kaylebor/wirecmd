@@ -37,6 +37,9 @@ const (
 // ordinary operations. It returns the documented process exit status.
 func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
 	result, appErr, help := run(ctx, args, in, errOut)
+	if runner, ok := result.(foregroundDaemon); ok {
+		return runner.run(ctx, out, errOut)
+	}
 	if help {
 		writeJSON(out, map[string]any{"ok": true, "help": usage})
 		return exitOK
@@ -94,6 +97,18 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 	if opts.help {
 		return nil, nil, true
 	}
+	if admin, ok := parseDaemonAdmin(positionals, opts); ok {
+		if admin.err != nil {
+			return nil, admin.err, false
+		}
+		switch admin.command {
+		case "run":
+			return foregroundDaemon{}, nil, false
+		case "status", "reload":
+			result, appErr := runDaemonAdmin(ctx, admin.command, errOut)
+			return result, appErr, false
+		}
+	}
 	req, requestErr := parseRequest(positionals, opts, in)
 	if requestErr != nil {
 		return nil, requestErr, false
@@ -102,13 +117,33 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 		return nil, configurationError("config_required", "at least one --config PATH is required", "supply one or more KDL configuration files"), false
 	}
 
-	cfg, err := config.LoadEffective(opts.configs)
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, transportError("caller_cwd_unavailable", err.Error(), "run Wirecmd from an accessible working directory"), false
+	}
+	configPaths, err := absoluteConfigPaths(cwd, opts.configs)
+	if err != nil {
+		return nil, configurationError("config_path_invalid", err.Error(), "supply valid configuration paths"), false
+	}
+	// The daemon handshake precedes configuration parsing and secret lookup.
+	// Besides failing clearly when it is unavailable, this makes normal-mode
+	// configuration evaluation conditional on a compatible lifecycle broker.
+	var daemonClient *daemonClient
+	if !opts.direct {
+		var appErr *appError
+		daemonClient, appErr = openDaemonClient(ctx)
+		if appErr != nil {
+			return nil, appErr, false
+		}
+		defer daemonClient.Close()
+	}
+	cfg, err := config.LoadEffective(configPaths)
 	if err != nil {
 		return nil, configurationError("config_invalid", err.Error(), "correct the supplied KDL configuration"), false
 	}
 	if req.operation == listServers {
 		if !opts.direct {
-			return nil, daemonUnavailable(), false
+			return daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, cwd, configPaths, nil), errOut)
 		}
 		return serverList(cfg), nil, false
 	}
@@ -117,10 +152,11 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 		return nil, configurationError("server_not_found", fmt.Sprintf("configured server %q was not found", req.server), "list configured servers and choose one by name"), false
 	}
 	if !opts.direct {
-		return nil, daemonUnavailable(), false
+		secrets := selectedSecretInputs(server, os.LookupEnv)
+		return daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, cwd, configPaths, secrets), errOut)
 	}
 
-	command, secrets, commandErr := makeCommand(server, cfg.Root)
+	command, secrets, commandErr := makeCommand(server, cfg.Root, cwd, os.LookupEnv)
 	if commandErr != nil {
 		return nil, commandErr, false
 	}
@@ -288,11 +324,11 @@ func serverList(cfg *config.Config) serversEnvelope {
 	return serversEnvelope{OK: true, Servers: servers}
 }
 
-func makeCommand(server config.Server, root *config.Root) (*exec.Cmd, []string, *appError) {
+func makeCommand(server config.Server, root *config.Root, callerCWD string, lookup func(string) (string, bool)) (*exec.Cmd, []string, *appError) {
 	arguments := make([]string, 0, len(server.Stdio.Args))
 	secrets := make([]string, 0, len(server.Stdio.Env)+len(server.Stdio.Args))
 	for _, arg := range server.Stdio.Args {
-		value, err := arg.ResolveEnv(os.LookupEnv)
+		value, err := arg.ResolveEnv(lookup)
 		if err != nil {
 			return nil, nil, configurationError("secret_not_available", err.Error(), "set the required environment variable before invoking Wirecmd")
 		}
@@ -303,7 +339,7 @@ func makeCommand(server config.Server, root *config.Root) (*exec.Cmd, []string, 
 	}
 	env := os.Environ()
 	for _, assignment := range server.Stdio.Env {
-		value, err := assignment.Value.ResolveEnv(os.LookupEnv)
+		value, err := assignment.Value.ResolveEnv(lookup)
 		if err != nil {
 			return nil, nil, configurationError("secret_not_available", err.Error(), "set the required environment variable before invoking Wirecmd")
 		}
@@ -316,6 +352,8 @@ func makeCommand(server config.Server, root *config.Root) (*exec.Cmd, []string, 
 	command.Env = env
 	if root != nil {
 		command.Dir = resolveRoot(*root)
+	} else {
+		command.Dir = callerCWD
 	}
 	return command, secrets, nil
 }
@@ -344,6 +382,10 @@ func directTools(ctx context.Context, command *exec.Cmd, redactor *redactor) ([]
 		return nil, err
 	}
 	defer session.Close()
+	return sessionTools(ctx, session, redactor)
+}
+
+func sessionTools(ctx context.Context, session *mcp.ClientSession, redactor *redactor) ([]toolSummary, *appError) {
 	var tools []toolSummary
 	for tool, err := range session.Tools(ctx, nil) {
 		if err != nil {
@@ -364,6 +406,10 @@ func directCall(ctx context.Context, command *exec.Cmd, tool string, arguments m
 		return toolResult{}, err
 	}
 	defer session.Close()
+	return sessionCall(ctx, session, tool, arguments, redactor)
+}
+
+func sessionCall(ctx context.Context, session *mcp.ClientSession, tool string, arguments map[string]any, redactor *redactor) (toolResult, *appError) {
 	response, callErr := session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: arguments})
 	if callErr != nil {
 		if errors.Is(callErr, mcp.ErrConnectionClosed) {

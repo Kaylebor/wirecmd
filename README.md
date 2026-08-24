@@ -13,7 +13,7 @@ agent / human / automation
         shell
           |
           v
- capability CLI and optional local daemon
+ capability CLI and local daemon
           |
           v
    MCP servers and future adapters
@@ -35,9 +35,18 @@ go install github.com/Kaylebor/wirecmd@latest
 The module path deliberately does not depend on a vanity domain. A project
 website such as `wirecmd.dev` may be added independently later.
 
-The project is currently in pre-implementation validation. The first milestone
-is to test the agent-facing interaction model, not to deliver broad MCP feature
-parity.
+The project is in its first validation slice. Normal commands use a private
+foreground local daemon; `--direct` is the deliberate one-shot path for testing
+and diagnosis. The first milestone is to test the agent-facing interaction
+model, not to deliver broad MCP feature parity.
+
+Current daemon administration is intentionally small:
+
+```sh
+wirecmd daemon run
+wirecmd daemon status
+wirecmd daemon reload
+```
 
 ## Project documents
 

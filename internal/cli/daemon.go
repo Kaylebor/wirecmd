@@ -1,0 +1,899 @@
+package cli
+
+// This file implements Wirecmd's deliberately small, same-user daemon. Its
+// protocol is private: it transports already-normalized shell operations, not
+// MCP requests or SDK objects.
+
+import (
+	"bufio"
+	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"syscall"
+
+	"github.com/Kaylebor/wirecmd/internal/config"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+const daemonProtocol = 1
+
+type daemonAdmin struct {
+	command string
+	err     *appError
+}
+
+// parseDaemonAdmin intentionally reserves only bare administrative forms.
+// --json/--stdin and an exact-call object remain an escape hatch for a server
+// named daemon.
+func parseDaemonAdmin(positionals []string, opts options) (daemonAdmin, bool) {
+	if len(positionals) != 2 || positionals[0] != "daemon" {
+		return daemonAdmin{}, false
+	}
+	if positionals[1] != "run" && positionals[1] != "status" && positionals[1] != "reload" {
+		return daemonAdmin{}, false
+	}
+	if opts.jsonSet || opts.stdin || startsJSONObject(positionals[1]) {
+		return daemonAdmin{}, false
+	}
+	if opts.direct || len(opts.configs) != 0 {
+		return daemonAdmin{err: invocationError("daemon_admin_flags", "daemon administration does not accept --direct or --config", "run wirecmd daemon run, status, or reload without client flags")}, true
+	}
+	return daemonAdmin{command: positionals[1]}, true
+}
+
+type foregroundDaemon struct{}
+
+func (foregroundDaemon) run(ctx context.Context, out, errOut io.Writer) int {
+	d, err := newDaemon(errOut)
+	if err != nil {
+		writeJSON(out, failureEnvelope(err))
+		return err.exitCode
+	}
+	defer d.close()
+	writeJSON(out, map[string]any{"ok": true, "daemon": map[string]any{"status": "running", "protocol": daemonProtocol, "pid": os.Getpid()}})
+	if err := d.serve(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
+		fmt.Fprintln(errOut, "wirecmd daemon:", err)
+		return exitInternal
+	}
+	return exitOK
+}
+
+type daemonHello struct {
+	Type     string `json:"type"`
+	Protocol int    `json:"protocol"`
+	Version  string `json:"version"`
+}
+
+type daemonHelloReply struct {
+	Type     string     `json:"type"`
+	Protocol int        `json:"protocol,omitempty"`
+	Error    *errorBody `json:"error,omitempty"`
+}
+
+type secretInput struct {
+	Present bool   `json:"present"`
+	Value   string `json:"value,omitempty"`
+}
+
+type daemonRequest struct {
+	Operation   operation              `json:"operation"`
+	Server      string                 `json:"server,omitempty"`
+	Tool        string                 `json:"tool,omitempty"`
+	Arguments   map[string]any         `json:"arguments,omitempty"`
+	CWD         string                 `json:"cwd"`
+	Configs     []string               `json:"configs,omitempty"`
+	Fingerprint string                 `json:"fingerprint,omitempty"`
+	Execution   string                 `json:"execution_fingerprint,omitempty"`
+	Secrets     map[string]secretInput `json:"secrets,omitempty"`
+	Admin       string                 `json:"admin,omitempty"`
+}
+
+type daemonReply struct {
+	Result   json.RawMessage `json:"result,omitempty"`
+	Error    *errorBody      `json:"error,omitempty"`
+	ExitCode int             `json:"exit_code,omitempty"`
+	Warnings []string        `json:"warnings,omitempty"`
+}
+
+func appErrorFromBody(body *errorBody, code int) *appError {
+	if body == nil {
+		return nil
+	}
+	if code == 0 {
+		code = exitInternal
+	}
+	return &appError{category: body.Category, code: body.Code, message: body.Message, action: body.Action, exitCode: code}
+}
+
+func absoluteConfigPaths(cwd string, paths []string) ([]string, error) {
+	result := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(cwd, path)
+		}
+		result = append(result, filepath.Clean(path))
+	}
+	return result, nil
+}
+
+func daemonRequestFromConfig(req request, cfg *config.Config, cwd string, paths []string, secrets map[string]secretInput) daemonRequest {
+	request := daemonRequest{Operation: req.operation, Server: req.server, Tool: req.tool, Arguments: req.arguments, CWD: cwd, Configs: paths, Fingerprint: configFingerprint(cfg, cwd), Secrets: secrets}
+	if req.operation != listServers {
+		if server, ok := findServer(cfg, req.server); ok {
+			request.Execution = executionFingerprint(server, cfg.Root, cwd)
+		}
+	}
+	return request
+}
+
+func selectedSecretInputs(server config.Server, lookup func(string) (string, bool)) map[string]secretInput {
+	result := map[string]secretInput{}
+	add := func(value config.Value) {
+		if !value.IsSecret() {
+			return
+		}
+		name := strings.TrimPrefix(value.Text, "env://")
+		if _, exists := result[name]; exists {
+			return
+		}
+		resolved, present := lookup(name)
+		result[name] = secretInput{Present: present, Value: resolved}
+	}
+	for _, value := range server.Stdio.Args {
+		add(value)
+	}
+	for _, env := range server.Stdio.Env {
+		add(env.Value)
+	}
+	return result
+}
+
+// configFingerprint deliberately excludes provenance and resolved values, while
+// retaining the resolved root because a root's declaring file changes execution
+// semantics for relative paths.
+func configFingerprint(cfg *config.Config, cwd string) string {
+	servers := make([]any, 0, len(cfg.Servers))
+	for _, server := range cfg.Servers {
+		servers = append(servers, semanticServer(server))
+	}
+	root := cwd
+	if cfg.Root != nil {
+		root = resolveRoot(*cfg.Root)
+	}
+	return fingerprint(map[string]any{"v": 1, "root": root, "servers": servers})
+}
+
+func executionFingerprint(server config.Server, root *config.Root, cwd string) string {
+	resolvedRoot := cwd
+	if root != nil {
+		resolvedRoot = resolveRoot(*root)
+	}
+	return fingerprint(map[string]any{"v": 1, "root": resolvedRoot, "server": semanticServer(server)})
+}
+
+func semanticServer(server config.Server) any {
+	args := make([]any, 0, len(server.Stdio.Args))
+	for _, arg := range server.Stdio.Args {
+		args = append(args, []any{arg.Kind, arg.Text})
+	}
+	env := make([]any, 0, len(server.Stdio.Env))
+	for _, entry := range server.Stdio.Env {
+		env = append(env, []any{entry.Name, entry.Value.Kind, entry.Value.Text})
+	}
+	return map[string]any{"name": server.Name, "scope": server.Scope, "command": server.Stdio.Command, "args": args, "env": env}
+}
+
+func fingerprint(value any) string {
+	encoded, _ := json.Marshal(value)
+	digest := sha256.Sum256(append([]byte("wirecmd-semantic-v1\x00"), encoded...))
+	return hex.EncodeToString(digest[:])
+}
+
+func runtimePaths() (string, string, string, *appError) {
+	runtime := os.Getenv("XDG_RUNTIME_DIR")
+	if runtime == "" || !filepath.IsAbs(runtime) {
+		return "", "", "", transportError("runtime_dir_unavailable", "XDG_RUNTIME_DIR must name an absolute private runtime directory", "set XDG_RUNTIME_DIR or use --direct deliberately")
+	}
+	info, err := os.Stat(runtime)
+	if err != nil {
+		return "", "", "", transportError("runtime_dir_unavailable", err.Error(), "use an accessible private XDG_RUNTIME_DIR or --direct deliberately")
+	}
+	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 || !ownedByCurrentUser(info) {
+		return "", "", "", transportError("runtime_dir_unsafe", "XDG_RUNTIME_DIR is not a private directory owned by the current user", "correct XDG_RUNTIME_DIR permissions or use --direct deliberately")
+	}
+	directory := filepath.Join(runtime, "wirecmd")
+	return directory, filepath.Join(directory, "daemon.sock"), filepath.Join(directory, "daemon.lock"), nil
+}
+
+func ownedByCurrentUser(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Uid == uint32(os.Getuid())
+}
+
+func openRuntimeDirectory() (string, string, string, *appError) {
+	directory, socket, lock, appErr := runtimePaths()
+	if appErr != nil {
+		return "", "", "", appErr
+	}
+	if err := os.Mkdir(directory, 0o700); err != nil && !os.IsExist(err) {
+		return "", "", "", transportError("runtime_dir_unavailable", err.Error(), "create a private XDG runtime directory or use --direct deliberately")
+	}
+	info, err := os.Lstat(directory)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm() != 0o700 || !ownedByCurrentUser(info) {
+		return "", "", "", transportError("runtime_dir_unsafe", "Wirecmd runtime directory must be a private directory owned by the current user", "remove unsafe runtime state and restart the daemon")
+	}
+	return directory, socket, lock, nil
+}
+
+type daemon struct {
+	listener net.Listener
+	socket   string
+	lock     *os.File
+	stderr   io.Writer
+
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+
+	mu          sync.Mutex
+	generation  uint64
+	configs     map[string]*daemonConfig
+	pools       map[string]*poolEntry
+	retiring    map[*retainedInstance]struct{}
+	connections map[net.Conn]struct{}
+	closing     bool
+	hmacKey     []byte
+}
+
+type daemonConfig struct {
+	config      *config.Config
+	fingerprint string
+}
+
+type poolEntry struct {
+	ready    chan struct{}
+	instance *retainedInstance
+	err      *appError
+	broken   bool
+	retiring bool
+}
+
+type retainedInstance struct {
+	mu       sync.Mutex
+	session  *mcp.ClientSession
+	redactor *redactor
+	active   int
+	retiring bool
+	broken   bool
+	closed   bool
+}
+
+func newDaemon(stderr io.Writer) (*daemon, *appError) {
+	_, socket, lockPath, appErr := openRuntimeDirectory()
+	if appErr != nil {
+		return nil, appErr
+	}
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, transportError("daemon_lock_failed", err.Error(), "check the Wirecmd runtime directory")
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = lock.Close()
+		return nil, transportError("daemon_already_running", "another Wirecmd daemon holds the runtime lock", "use wirecmd daemon status or stop the existing daemon")
+	}
+	if info, err := os.Lstat(socket); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 || !ownedByCurrentUser(info) {
+			_ = lock.Close()
+			return nil, transportError("daemon_socket_unsafe", "existing daemon socket path is unsafe", "remove unsafe runtime state before starting Wirecmd")
+		}
+		if err := os.Remove(socket); err != nil {
+			_ = lock.Close()
+			return nil, transportError("daemon_socket_cleanup_failed", err.Error(), "remove the stale Wirecmd socket and retry")
+		}
+	} else if !os.IsNotExist(err) {
+		_ = lock.Close()
+		return nil, transportError("daemon_socket_stat_failed", err.Error(), "check the Wirecmd runtime directory")
+	}
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		_ = lock.Close()
+		return nil, transportError("daemon_listen_failed", err.Error(), "check the Wirecmd runtime directory and existing daemon")
+	}
+	if err := os.Chmod(socket, 0o600); err != nil {
+		_ = listener.Close()
+		removeOwnedSocket(socket)
+		_ = lock.Close()
+		return nil, transportError("daemon_socket_permissions_failed", err.Error(), "check the Wirecmd runtime directory")
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		_ = listener.Close()
+		removeOwnedSocket(socket)
+		_ = lock.Close()
+		return nil, transportError("daemon_randomness_failed", err.Error(), "restart Wirecmd after system randomness is available")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &daemon{listener: listener, socket: socket, lock: lock, stderr: stderr, ctx: ctx, cancel: cancel, configs: map[string]*daemonConfig{}, pools: map[string]*poolEntry{}, retiring: map[*retainedInstance]struct{}{}, connections: map[net.Conn]struct{}{}, hmacKey: key}, nil
+}
+
+func (d *daemon) close() {
+	d.cancel()
+	_ = d.listener.Close()
+	d.mu.Lock()
+	d.closing = true
+	instances := make([]*retainedInstance, 0, len(d.pools)+len(d.retiring))
+	for _, entry := range d.pools {
+		entry.retiring = true
+		if entry.instance != nil {
+			entry.instance.retiring = true
+			instances = append(instances, entry.instance)
+		}
+	}
+	for instance := range d.retiring {
+		instances = append(instances, instance)
+	}
+	connections := make([]net.Conn, 0, len(d.connections))
+	for connection := range d.connections {
+		connections = append(connections, connection)
+	}
+	d.mu.Unlock()
+	for _, connection := range connections {
+		_ = connection.Close()
+	}
+	for _, instance := range instances {
+		instance.mu.Lock()
+		if !instance.closed {
+			instance.closed = true
+			_ = instance.session.Close()
+		}
+		instance.mu.Unlock()
+	}
+	d.wg.Wait()
+	removeOwnedSocket(d.socket)
+	if d.lock != nil {
+		_ = syscall.Flock(int(d.lock.Fd()), syscall.LOCK_UN)
+		_ = d.lock.Close()
+	}
+}
+
+// removeOwnedSocket never unlinks an unexpected replacement at a daemon path.
+// It is used after the singleton lock is held, but same-UID processes are still
+// allowed to alter their own runtime tree.
+func removeOwnedSocket(path string) {
+	info, err := os.Lstat(path)
+	if err == nil && info.Mode()&os.ModeSymlink == 0 && info.Mode()&os.ModeSocket != 0 && ownedByCurrentUser(info) {
+		_ = os.Remove(path)
+	}
+}
+
+func (d *daemon) serve(ctx context.Context) error {
+	go func() {
+		<-ctx.Done()
+		d.cancel()
+		_ = d.listener.Close()
+	}()
+	for {
+		connection, err := d.listener.Accept()
+		if err != nil {
+			if d.ctx.Err() != nil || ctx.Err() != nil {
+				return context.Canceled
+			}
+			return err
+		}
+		d.mu.Lock()
+		if d.closing {
+			d.mu.Unlock()
+			_ = connection.Close()
+			continue
+		}
+		d.connections[connection] = struct{}{}
+		d.wg.Add(1)
+		d.mu.Unlock()
+		go func() {
+			defer func() {
+				d.mu.Lock()
+				delete(d.connections, connection)
+				d.mu.Unlock()
+				d.wg.Done()
+			}()
+			defer connection.Close()
+			d.handle(connection)
+		}()
+	}
+}
+
+func (d *daemon) handle(connection net.Conn) {
+	decoder := json.NewDecoder(bufio.NewReader(connection))
+	decoder.UseNumber()
+	encoder := json.NewEncoder(connection)
+	var hello daemonHello
+	if err := decoder.Decode(&hello); err != nil || hello.Type != "hello" {
+		_ = encoder.Encode(daemonHelloReply{Type: "hello_error", Error: &errorBody{Category: "transport", Code: "daemon_protocol_invalid", Message: "expected daemon hello", Action: "use a compatible Wirecmd client"}})
+		return
+	}
+	if hello.Protocol != daemonProtocol {
+		_ = encoder.Encode(daemonHelloReply{Type: "hello_error", Error: &errorBody{Category: "transport", Code: "daemon_incompatible", Message: "Wirecmd daemon protocol is incompatible", Action: "restart or upgrade the Wirecmd daemon"}})
+		return
+	}
+	if err := encoder.Encode(daemonHelloReply{Type: "hello_ok", Protocol: daemonProtocol}); err != nil {
+		return
+	}
+	var request daemonRequest
+	if err := decoder.Decode(&request); err != nil {
+		_ = encoder.Encode(daemonReply{Error: &errorBody{Category: "invocation", Code: "daemon_request_invalid", Message: "invalid daemon request", Action: "use a compatible Wirecmd client"}, ExitCode: exitInvocation})
+		return
+	}
+	reply := d.execute(request)
+	_ = encoder.Encode(reply)
+}
+
+func daemonDial() (net.Conn, *appError) {
+	_, socket, _, appErr := runtimePaths()
+	if appErr != nil {
+		return nil, appErr
+	}
+	connection, err := net.Dial("unix", socket)
+	if err != nil {
+		return nil, daemonUnavailable()
+	}
+	return connection, nil
+}
+
+func daemonRequestCall(ctx context.Context, request daemonRequest, errOut io.Writer) (any, *appError, bool) {
+	client, appErr := openDaemonClient(ctx)
+	if appErr != nil {
+		return nil, appErr, false
+	}
+	defer client.Close()
+	return daemonRequestCallWithClient(client, request, errOut)
+}
+
+func daemonRequestCallWithClient(client *daemonClient, request daemonRequest, errOut io.Writer) (any, *appError, bool) {
+	reply, appErr := client.request(request)
+	if appErr != nil {
+		return nil, appErr, false
+	}
+	for _, warning := range reply.Warnings {
+		fmt.Fprintln(errOut, "wirecmd warning:", warning)
+	}
+	if reply.Error != nil {
+		appErr := appErrorFromBody(reply.Error, reply.ExitCode)
+		if len(reply.Result) != 0 {
+			var result toolResult
+			if err := decodeJSON(reply.Result, &result); err == nil {
+				appErr.result = &result
+			}
+		}
+		return nil, appErr, false
+	}
+	var result any
+	decoder := json.NewDecoder(strings.NewReader(string(reply.Result)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
+		return nil, transportError("daemon_response_invalid", err.Error(), "restart the Wirecmd daemon"), false
+	}
+	return result, nil, false
+}
+
+func runDaemonAdmin(ctx context.Context, command string, errOut io.Writer) (any, *appError) {
+	reply, appErr := daemonRoundTrip(ctx, daemonRequest{Admin: command})
+	if appErr != nil {
+		return nil, appErr
+	}
+	for _, warning := range reply.Warnings {
+		fmt.Fprintln(errOut, "wirecmd warning:", warning)
+	}
+	if reply.Error != nil {
+		return nil, appErrorFromBody(reply.Error, reply.ExitCode)
+	}
+	var result any
+	decoder := json.NewDecoder(strings.NewReader(string(reply.Result)))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
+		return nil, transportError("daemon_response_invalid", err.Error(), "restart the Wirecmd daemon")
+	}
+	return result, nil
+}
+
+func daemonRoundTrip(ctx context.Context, request daemonRequest) (daemonReply, *appError) {
+	client, appErr := openDaemonClient(ctx)
+	if appErr != nil {
+		return daemonReply{}, appErr
+	}
+	defer client.Close()
+	return client.request(request)
+}
+
+type daemonClient struct {
+	connection net.Conn
+	decoder    *json.Decoder
+	encoder    *json.Encoder
+	stopCancel func() bool
+}
+
+func (c *daemonClient) Close() error {
+	if c.stopCancel != nil {
+		c.stopCancel()
+	}
+	return c.connection.Close()
+}
+
+func openDaemonClient(ctx context.Context) (*daemonClient, *appError) {
+	connection, appErr := daemonDial()
+	if appErr != nil {
+		return nil, appErr
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = connection.SetDeadline(deadline)
+	}
+	stopCancel := context.AfterFunc(ctx, func() { _ = connection.Close() })
+	encoder := json.NewEncoder(connection)
+	decoder := json.NewDecoder(bufio.NewReader(connection))
+	decoder.UseNumber()
+	if err := encoder.Encode(daemonHello{Type: "hello", Protocol: daemonProtocol, Version: "dev"}); err != nil {
+		stopCancel()
+		_ = connection.Close()
+		return nil, daemonUnavailable()
+	}
+	var hello daemonHelloReply
+	if err := decoder.Decode(&hello); err != nil {
+		stopCancel()
+		_ = connection.Close()
+		return nil, daemonUnavailable()
+	}
+	if hello.Type != "hello_ok" || hello.Protocol != daemonProtocol {
+		stopCancel()
+		_ = connection.Close()
+		if hello.Error != nil {
+			return nil, appErrorFromBody(hello.Error, exitTransport)
+		}
+		return nil, transportError("daemon_incompatible", "Wirecmd daemon protocol is incompatible", "restart or upgrade the Wirecmd daemon")
+	}
+	return &daemonClient{connection: connection, decoder: decoder, encoder: encoder, stopCancel: stopCancel}, nil
+}
+
+func (c *daemonClient) request(request daemonRequest) (daemonReply, *appError) {
+	if err := c.encoder.Encode(request); err != nil {
+		return daemonReply{}, transportError("daemon_request_failed", err.Error(), "restart the Wirecmd daemon")
+	}
+	var reply daemonReply
+	if err := c.decoder.Decode(&reply); err != nil {
+		return daemonReply{}, transportError("daemon_response_failed", err.Error(), "restart the Wirecmd daemon")
+	}
+	return reply, nil
+}
+
+func (d *daemon) execute(request daemonRequest) daemonReply {
+	if request.Admin != "" {
+		return d.executeAdmin(request.Admin)
+	}
+	if request.Operation != listServers && request.Operation != listTools && request.Operation != callTool {
+		return errorReply(invocationError("daemon_operation_invalid", "invalid daemon operation", "use a compatible Wirecmd client"))
+	}
+	if !filepath.IsAbs(request.CWD) || len(request.Configs) == 0 {
+		return errorReply(configurationError("daemon_context_invalid", "daemon requests require absolute caller context and configuration paths", "use the Wirecmd CLI"))
+	}
+	for _, path := range request.Configs {
+		if !filepath.IsAbs(path) {
+			return errorReply(configurationError("daemon_context_invalid", "daemon configuration paths must be absolute", "use the Wirecmd CLI"))
+		}
+	}
+	generation := d.currentGeneration()
+	key := daemonConfigKey(request.CWD, request.Configs, generation)
+	d.mu.Lock()
+	cached := d.configs[key]
+	d.mu.Unlock()
+	if cached == nil {
+		loaded, err := config.LoadEffective(request.Configs)
+		if err != nil {
+			return errorReply(configurationError("config_invalid", err.Error(), "correct the supplied KDL configuration"))
+		}
+		cached = &daemonConfig{config: loaded, fingerprint: configFingerprint(loaded, request.CWD)}
+		d.mu.Lock()
+		if d.closing || d.generation != generation {
+			d.mu.Unlock()
+			return errorReply(transportError("instance_retired", "the daemon configuration generation changed while loading configuration", "retry after daemon reload completes"))
+		}
+		// A concurrent loader may have populated the same context; either
+		// semantic equivalent config is safe because no watcher exists.
+		if current := d.configs[key]; current != nil {
+			cached = current
+		} else {
+			d.configs[key] = cached
+		}
+		d.mu.Unlock()
+	}
+	warnings := []string(nil)
+	if request.Fingerprint != cached.fingerprint {
+		warnings = []string{"configuration differs from the daemon cache; run wirecmd daemon reload to apply it"}
+	}
+	if request.Operation == listServers {
+		return resultReply(serverList(cached.config), warnings)
+	}
+	server, ok := findServer(cached.config, request.Server)
+	if !ok {
+		return errorReplyWithWarnings(configurationError("config_mismatch", fmt.Sprintf("cached configuration has no server %q", request.Server), "run wirecmd daemon reload and retry"), warnings)
+	}
+	if request.Fingerprint != cached.fingerprint && request.Execution != executionFingerprint(server, cached.config.Root, request.CWD) {
+		return errorReplyWithWarnings(configurationError("config_mismatch", "selected server execution configuration differs from the daemon cache", "run wirecmd daemon reload and retry"), warnings)
+	}
+	if err := validateSecretInputs(server, request.Secrets); err != nil {
+		return errorReplyWithWarnings(err, warnings)
+	}
+	instance, appErr := d.acquire(server, cached.config.Root, request.CWD, request.Secrets, generation)
+	if appErr != nil {
+		return errorReplyWithWarnings(appErr, warnings)
+	}
+	defer d.release(instance)
+	instance.mu.Lock()
+	defer instance.mu.Unlock()
+	if instance.closed || instance.session == nil || instance.broken {
+		return errorReplyWithWarnings(transportError("instance_unavailable", "the retained server instance is unavailable", "run wirecmd daemon reload or restart the daemon"), warnings)
+	}
+	var result any
+	if request.Operation == listTools {
+		tools, appErr := sessionTools(d.ctx, instance.session, instance.redactor)
+		if appErr != nil {
+			d.noteOperationError(instance, appErr)
+			return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
+		}
+		result = toolsEnvelope{OK: true, Server: server.Name, Tools: tools}
+	} else {
+		call, appErr := sessionCall(d.ctx, instance.session, request.Tool, request.Arguments, instance.redactor)
+		if appErr != nil {
+			d.noteOperationError(instance, appErr)
+			appErr = appErr.redacted(instance.redactor)
+			return errorReplyWithWarnings(&appError{category: appErr.category, code: appErr.code, message: appErr.message, action: appErr.action, exitCode: appErr.exitCode, result: appErr.result}, warnings)
+		}
+		result = callEnvelope{OK: true, Server: server.Name, Tool: request.Tool, Result: call}
+	}
+	return resultReply(result, warnings)
+}
+
+func (d *daemon) currentGeneration() uint64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.generation
+}
+
+func daemonConfigKey(cwd string, paths []string, generation uint64) string {
+	return fmt.Sprintf("%d\x00%s\x00%s", generation, cwd, strings.Join(paths, "\x00"))
+}
+
+func validateSecretInputs(server config.Server, inputs map[string]secretInput) *appError {
+	expected := selectedSecretInputs(server, func(string) (string, bool) { return "", false })
+	for name := range expected {
+		input, ok := inputs[name]
+		if !ok || !input.Present {
+			return configurationError("secret_not_available", fmt.Sprintf("configured environment variable %q is not set", name), "set the required environment variable before invoking Wirecmd")
+		}
+	}
+	return nil
+}
+
+func (d *daemon) acquire(server config.Server, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64) (*retainedInstance, *appError) {
+	workspace := cwd
+	if root != nil {
+		workspace = resolveRoot(*root)
+	}
+	auth := d.authIdentity(server, inputs)
+	key := strings.Join([]string{server.Name, workspace, executionFingerprint(server, root, cwd), fmt.Sprint(generation), auth}, "\x00")
+	d.mu.Lock()
+	if d.closing || d.generation != generation {
+		d.mu.Unlock()
+		return nil, transportError("instance_retired", "the daemon configuration generation changed before the server instance started", "retry after daemon reload completes")
+	}
+	if entry := d.pools[key]; entry != nil {
+		ready := entry.ready
+		d.mu.Unlock()
+		<-ready
+		d.mu.Lock()
+		appErr := entry.err
+		broken := entry.broken
+		instance := entry.instance
+		if appErr == nil && !broken && instance != nil {
+			instance.active++
+		}
+		d.mu.Unlock()
+		if appErr != nil {
+			return nil, appErr
+		}
+		if broken || instance == nil {
+			return nil, transportError("instance_unavailable", "the retained server instance is unavailable", "run wirecmd daemon reload or restart the daemon")
+		}
+		return instance, nil
+	}
+	entry := &poolEntry{ready: make(chan struct{})}
+	d.pools[key] = entry
+	d.mu.Unlock()
+
+	lookup := func(name string) (string, bool) { value, ok := inputs[name]; return value.Value, ok && value.Present }
+	command, secrets, appErr := makeCommand(server, root, cwd, lookup)
+	var started *retainedInstance
+	if appErr == nil {
+		redactor := newRedactor(secrets, d.stderr)
+		session, connectErr := connect(d.ctx, command, redactor)
+		if connectErr != nil {
+			redactor.FlushTo(d.stderr)
+			appErr = connectErr.redacted(redactor)
+		} else {
+			started = &retainedInstance{session: session, redactor: redactor, active: 1}
+		}
+	}
+	d.mu.Lock()
+	if appErr == nil && (entry.retiring || d.closing || d.generation != generation) {
+		d.mu.Unlock()
+		if started != nil {
+			_ = started.session.Close()
+			started.redactor.FlushTo(d.stderr)
+		}
+		d.mu.Lock()
+		appErr = transportError("instance_retired", "the server instance was retired while starting", "retry after daemon reload completes")
+	} else if appErr == nil {
+		entry.instance = started
+	}
+	entry.err = appErr
+	close(entry.ready)
+	if appErr != nil {
+		delete(d.pools, key)
+	}
+	d.mu.Unlock()
+	if appErr != nil {
+		return nil, appErr
+	}
+	return entry.instance, nil
+}
+
+func (d *daemon) authIdentity(server config.Server, inputs map[string]secretInput) string {
+	items := make([]string, 0)
+	seen := map[string]struct{}{}
+	add := func(destination string, value config.Value) {
+		if !value.IsSecret() {
+			return
+		}
+		name := strings.TrimPrefix(value.Text, "env://")
+		if _, ok := seen[destination]; ok {
+			return
+		}
+		seen[destination] = struct{}{}
+		input := inputs[name]
+		items = append(items, destination+"\x00"+input.Value)
+	}
+	for i, value := range server.Stdio.Args {
+		add(fmt.Sprintf("arg[%d]", i), value)
+	}
+	for _, env := range server.Stdio.Env {
+		add("env["+env.Name+"]", env.Value)
+	}
+	sort.Strings(items)
+	mac := hmac.New(sha256.New, d.hmacKey)
+	for _, item := range items {
+		_, _ = fmt.Fprintf(mac, "%d:%s", len(item), item)
+	}
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func (d *daemon) release(instance *retainedInstance) {
+	d.mu.Lock()
+	instance.active--
+	closeNow := instance.retiring && instance.active == 0
+	d.mu.Unlock()
+	if closeNow {
+		instance.mu.Lock()
+		if !instance.closed {
+			instance.closed = true
+			_ = instance.session.Close()
+			instance.redactor.FlushTo(d.stderr)
+		}
+		instance.mu.Unlock()
+		d.mu.Lock()
+		delete(d.retiring, instance)
+		d.mu.Unlock()
+	}
+}
+
+func (d *daemon) noteOperationError(instance *retainedInstance, appErr *appError) {
+	if appErr.category != "transport" || appErr.code != "connection_closed" {
+		return
+	}
+	// execute holds instance.mu while this is called, so a waiter that obtains
+	// that mutex after the failed operation will observe the broken state.
+	instance.broken = true
+	d.mu.Lock()
+	for _, entry := range d.pools {
+		if entry.instance == instance {
+			entry.broken = true
+		}
+	}
+	d.mu.Unlock()
+}
+
+func (d *daemon) executeAdmin(command string) daemonReply {
+	switch command {
+	case "status":
+		d.mu.Lock()
+		contexts := len(d.configs)
+		active, broken := 0, 0
+		for _, entry := range d.pools {
+			if entry.broken {
+				broken++
+			}
+			if entry.instance != nil {
+				if !entry.instance.retiring {
+					active++
+				}
+			}
+		}
+		generation := d.generation
+		retiring := len(d.retiring)
+		d.mu.Unlock()
+		return resultReply(map[string]any{"ok": true, "daemon": map[string]any{"status": "running", "protocol": daemonProtocol, "pid": os.Getpid(), "generation": generation, "cached_contexts": contexts, "active_instances": active, "retiring_instances": retiring, "broken_instances": broken}}, nil)
+	case "reload":
+		d.mu.Lock()
+		contexts := len(d.configs)
+		instances := 0
+		toClose := []*retainedInstance{}
+		for _, entry := range d.pools {
+			entry.retiring = true
+			if entry.instance != nil {
+				instances++
+				entry.instance.retiring = true
+				d.retiring[entry.instance] = struct{}{}
+				if entry.instance.active == 0 {
+					toClose = append(toClose, entry.instance)
+				}
+			}
+		}
+		d.configs = map[string]*daemonConfig{}
+		d.pools = map[string]*poolEntry{}
+		d.generation++
+		d.mu.Unlock()
+		for _, instance := range toClose {
+			instance.mu.Lock()
+			if !instance.closed {
+				instance.closed = true
+				_ = instance.session.Close()
+				instance.redactor.FlushTo(d.stderr)
+			}
+			instance.mu.Unlock()
+			d.mu.Lock()
+			delete(d.retiring, instance)
+			d.mu.Unlock()
+		}
+		return resultReply(map[string]any{"ok": true, "reload": map[string]any{"contexts_retired": contexts, "instances_retired": instances}}, nil)
+	default:
+		return errorReply(invocationError("daemon_admin_invalid", "invalid daemon administrative command", "use status or reload"))
+	}
+}
+
+func resultReply(value any, warnings []string) daemonReply {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return errorReply(transportError("daemon_response_encode_failed", "failed to encode daemon response", "restart the Wirecmd daemon"))
+	}
+	return daemonReply{Result: encoded, Warnings: warnings}
+}
+
+func errorReply(appErr *appError) daemonReply { return errorReplyWithWarnings(appErr, nil) }
+
+func errorReplyWithWarnings(appErr *appError, warnings []string) daemonReply {
+	reply := daemonReply{Error: &errorBody{Category: appErr.category, Code: appErr.code, Message: appErr.message, Action: appErr.action}, ExitCode: appErr.exitCode, Warnings: warnings}
+	if appErr.result != nil {
+		if encoded, err := json.Marshal(appErr.result); err == nil {
+			reply.Result = encoded
+		}
+	}
+	return reply
+}

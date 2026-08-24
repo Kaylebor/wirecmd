@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -20,6 +21,12 @@ import (
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WIRECMD_HELPER") != "1" {
 		return
+	}
+	if pidFile := os.Getenv("WIRECMD_CHILD_PID_FILE"); pidFile != "" {
+		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return
+		}
 	}
 	secret := os.Getenv("SECRET")
 	if os.Getenv("WIRECMD_EMIT_SECRET") == "1" && secret != "" {
@@ -39,6 +46,9 @@ func TestHelperProcess(t *testing.T) {
 	mcp.AddTool(server, &mcp.Tool{Name: "failure", Description: "return a tool error"}, failureTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "binary", Description: "return unsupported content"}, binaryTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "input_required", Description: "request further input"}, inputRequiredTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "remember", Description: "retain process-local state"}, rememberTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "recall", Description: "read process-local state"}, recallTool)
+	mcp.AddTool(server, &mcp.Tool{Name: "block", Description: "wait for cancellation"}, blockTool)
 	if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
@@ -92,6 +102,34 @@ func binaryTool(_ context.Context, _ *mcp.CallToolRequest, _ map[string]any) (*m
 
 func inputRequiredTool(_ context.Context, _ *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
 	return &mcp.CallToolResult{InputRequests: mcp.InputRequestMap{"question": &mcp.ElicitParams{Message: "continue"}}}, nil, nil
+}
+
+var helperMemory struct {
+	sync.Mutex
+	value string
+}
+
+func rememberTool(_ context.Context, request *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
+	var arguments map[string]string
+	if err := json.Unmarshal(request.Params.Arguments, &arguments); err != nil {
+		return nil, nil, err
+	}
+	helperMemory.Lock()
+	helperMemory.value = arguments["value"]
+	helperMemory.Unlock()
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "remembered"}}}, map[string]any{"value": arguments["value"]}, nil
+}
+
+func recallTool(_ context.Context, _ *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
+	helperMemory.Lock()
+	value := helperMemory.value
+	helperMemory.Unlock()
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "recalled"}}}, map[string]any{"value": value}, nil
+}
+
+func blockTool(ctx context.Context, _ *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
+	<-ctx.Done()
+	return nil, nil, ctx.Err()
 }
 
 func TestConnectFailureProcess(t *testing.T) {
