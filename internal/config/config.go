@@ -1,4 +1,4 @@
-// Package config parses the first-slice Wirecmd configuration shape.
+// Package config parses and composes the first-slice Wirecmd configuration.
 package config
 
 import (
@@ -63,7 +63,6 @@ func (v Value) ResolveEnv(lookup func(string) (string, bool)) (ResolvedValue, er
 	if v.Kind == ValueLiteral {
 		return ResolvedValue{Text: v.Text}, nil
 	}
-
 	if lookup == nil {
 		return ResolvedValue{}, fmt.Errorf("%s: no environment lookup", v.Path)
 	}
@@ -83,49 +82,100 @@ type Environment struct {
 	Provenance
 }
 
-// Stdio describes one local command transport.
+// Stdio describes one complete local command transport.
 type Stdio struct {
-	Command string
-	Args    []Value
-	Env     []Environment
+	Command           string
+	CommandProvenance Provenance
+	Args              []Value
+	Env               []Environment
 	Provenance
 }
 
-// Server is a named configured capability source.
+// Server is a named complete configured capability source.
 type Server struct {
-	Name  string
-	Scope Scope
-	Stdio Stdio
+	Name            string
+	Scope           Scope
+	ScopeProvenance Provenance
+	Stdio           Stdio
 	Provenance
 }
 
 // Root is a configured workspace root. Resolving relative paths and applying
-// caller overrides are daemon concerns, not parser behavior.
+// caller overrides are daemon concerns, not configuration composition.
 type Root struct {
 	Path string
 	Provenance
 }
 
-// Config is the source-syntax-independent first-slice configuration model.
-type Config struct {
+// Source is one partially specified KDL configuration layer. It is valid for
+// a source to omit fields that are supplied by a weaker layer.
+type Source struct {
 	Root    *Root
-	Servers []Server
+	Servers []ServerSource
 	Provenance
 }
 
-// Load parses a KDL 2 configuration file.
-func Load(path string) (*Config, error) {
+// ServerSource is a potentially partial server layer.
+type ServerSource struct {
+	Name            string
+	Scope           *Scope
+	ScopeProvenance Provenance
+	Stdio           *StdioSource
+	Provenance
+}
+
+// StdioSource is a potentially partial stdio layer. A non-empty Args slice
+// replaces inherited arguments; Env entries merge by name.
+type StdioSource struct {
+	Command           *string
+	CommandProvenance Provenance
+	Args              []Value
+	Env               []Environment
+	Provenance
+}
+
+// Config is the complete source-syntax-independent configuration model
+// consumed by execution.
+type Config struct {
+	Root    *Root
+	Servers []Server
+}
+
+// Load parses one KDL 2 configuration source file.
+func Load(path string) (*Source, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load configuration %q: %w", path, err)
 	}
 	defer f.Close()
 
-	return Parse(path, f)
+	source, err := Parse(path, f)
+	if err != nil {
+		return nil, fmt.Errorf("load configuration %q: %w", path, err)
+	}
+	return source, nil
 }
 
-// Parse parses the first-slice Wirecmd KDL 2 configuration shape from r.
-func Parse(file string, r io.Reader) (*Config, error) {
+// LoadEffective loads paths from weakest to strongest, composes their partial
+// sources, and validates the resulting complete configuration.
+func LoadEffective(paths []string) (*Config, error) {
+	if len(paths) == 0 {
+		return nil, fmt.Errorf("configuration: at least one config file is required")
+	}
+
+	sources := make([]*Source, 0, len(paths))
+	for _, path := range paths {
+		source, err := Load(path)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, source)
+	}
+	return Compose(sources...)
+}
+
+// Parse parses one possibly partial first-slice Wirecmd KDL 2 source from r.
+func Parse(file string, r io.Reader) (*Source, error) {
 	doc, err := kdl.ParseWithOptions(r, kdl.ParseOptions{Version: kdl.ParseVersionV2})
 	if err != nil {
 		return nil, fmt.Errorf("parse KDL 2: %w", err)
@@ -133,13 +183,112 @@ func Parse(file string, r io.Reader) (*Config, error) {
 	return parseDocument(file, doc)
 }
 
-// ParseString is Parse for an in-memory configuration, mainly useful to
-// callers that already hold the source text.
-func ParseString(file, source string) (*Config, error) {
+// ParseString is Parse for source text already held in memory.
+func ParseString(file, source string) (*Source, error) {
 	return Parse(file, strings.NewReader(source))
 }
 
-func parseDocument(file string, doc *document.Document) (*Config, error) {
+// Compose combines sources from weakest to strongest and validates the
+// effective result. Scalars use the strongest present value. Named servers and
+// environment entries retain first-introduction order while later sources
+// replace matching entries.
+func Compose(sources ...*Source) (*Config, error) {
+	config := &Config{}
+	serverIndex := make(map[string]int)
+
+	for _, source := range sources {
+		if source.Root != nil {
+			root := *source.Root
+			config.Root = &root
+		}
+
+		for _, partial := range source.Servers {
+			index, exists := serverIndex[partial.Name]
+			if !exists {
+				index = len(config.Servers)
+				serverIndex[partial.Name] = index
+				config.Servers = append(config.Servers, Server{
+					Name:       partial.Name,
+					Provenance: partial.Provenance,
+				})
+			}
+
+			server := &config.Servers[index]
+			server.Provenance = partial.Provenance
+			if partial.Scope != nil {
+				server.Scope = *partial.Scope
+				server.ScopeProvenance = partial.ScopeProvenance
+			}
+			if partial.Stdio != nil {
+				composeStdio(&server.Stdio, partial.Stdio)
+			}
+		}
+	}
+
+	if err := validate(config); err != nil {
+		return nil, err
+	}
+	return config, nil
+}
+
+func composeStdio(result *Stdio, partial *StdioSource) {
+	result.Provenance = partial.Provenance
+	if partial.Command != nil {
+		result.Command = *partial.Command
+		result.CommandProvenance = partial.CommandProvenance
+	}
+	if len(partial.Args) != 0 {
+		result.Args = append([]Value(nil), partial.Args...)
+	}
+
+	envIndex := make(map[string]int, len(result.Env))
+	for index, env := range result.Env {
+		envIndex[env.Name] = index
+	}
+	for _, env := range partial.Env {
+		if index, exists := envIndex[env.Name]; exists {
+			result.Env[index] = env
+			continue
+		}
+		envIndex[env.Name] = len(result.Env)
+		result.Env = append(result.Env, env)
+	}
+}
+
+func validate(config *Config) error {
+	if config.Root != nil && config.Root.Path == "" {
+		return validationError(config.Root.Provenance, config.Root.Provenance.Path, "path must not be empty")
+	}
+	if len(config.Servers) == 0 {
+		return fmt.Errorf("configuration: expected at least one server")
+	}
+	for _, server := range config.Servers {
+		path := serverPath(server.Name)
+		if server.Scope == "" {
+			return validationError(server.Provenance, path+".scope", "scope is required")
+		}
+		if server.Scope != ScopeWorkspace {
+			return validationError(server.ScopeProvenance, path+".scope", "unsupported scope %q", server.Scope)
+		}
+		if server.Stdio.Provenance == (Provenance{}) {
+			return validationError(server.Provenance, path+".stdio", "stdio is required")
+		}
+		if server.Stdio.Command == "" {
+			return validationError(server.Stdio.Provenance, path+".stdio", "executable is required")
+		}
+	}
+	return nil
+}
+
+func validationError(provenance Provenance, path, format string, args ...any) error {
+	message := fmt.Sprintf(format, args...)
+	if provenance.File == "" {
+		return fmt.Errorf("%s: %s", path, message)
+	}
+	return fmt.Errorf("%s: %s: %s", provenance.File, path, message)
+}
+
+func parseDocument(file string, doc *document.Document) (*Source, error) {
 	if len(doc.Nodes) != 1 {
 		return nil, fmt.Errorf("configuration: expected one wirecmd root node")
 	}
@@ -155,19 +304,19 @@ func parseDocument(file string, doc *document.Document) (*Config, error) {
 		return nil, fmt.Errorf("wirecmd: root does not accept arguments")
 	}
 
-	cfg := &Config{Provenance: provenance(file, "wirecmd")}
+	source := &Source{Provenance: provenance(file, "wirecmd")}
 	seenServers := make(map[string]struct{}, len(root.Children))
 	for _, child := range root.Children {
 		switch nodeName(child) {
 		case "root":
-			if cfg.Root != nil {
+			if source.Root != nil {
 				return nil, fmt.Errorf("wirecmd.root: duplicate root")
 			}
 			configRoot, err := parseRoot(file, child)
 			if err != nil {
 				return nil, err
 			}
-			cfg.Root = &configRoot
+			source.Root = &configRoot
 		case "server":
 			server, err := parseServer(file, child)
 			if err != nil {
@@ -177,16 +326,12 @@ func parseDocument(file string, doc *document.Document) (*Config, error) {
 				return nil, fmt.Errorf("%s: duplicate server", server.Path)
 			}
 			seenServers[server.Name] = struct{}{}
-			cfg.Servers = append(cfg.Servers, server)
+			source.Servers = append(source.Servers, server)
 		default:
 			return nil, fmt.Errorf("wirecmd: unknown child node %q", nodeName(child))
 		}
 	}
-	if len(cfg.Servers) == 0 {
-		return nil, fmt.Errorf("wirecmd: expected at least one server")
-	}
-
-	return cfg, nil
+	return source, nil
 }
 
 func parseRoot(file string, node *document.Node) (Root, error) {
@@ -201,57 +346,48 @@ func parseRoot(file string, node *document.Node) (Root, error) {
 	if err != nil {
 		return Root{}, err
 	}
-	if value == "" {
-		return Root{}, fmt.Errorf("%s: path must not be empty", path)
-	}
 	return Root{Path: value, Provenance: provenance(file, path)}, nil
 }
 
-func parseServer(file string, node *document.Node) (Server, error) {
+func parseServer(file string, node *document.Node) (ServerSource, error) {
 	if err := plainNode(node, "server"); err != nil {
-		return Server{}, err
+		return ServerSource{}, err
 	}
 	if len(node.Arguments) != 1 {
-		return Server{}, fmt.Errorf("wirecmd.server: expected one name")
+		return ServerSource{}, fmt.Errorf("wirecmd.server: expected one name")
 	}
 	name, err := literalText(node.Arguments[0], "wirecmd.server")
 	if err != nil {
-		return Server{}, err
+		return ServerSource{}, err
 	}
 	path := serverPath(name)
-	server := Server{Name: name, Provenance: provenance(file, path)}
+	server := ServerSource{Name: name, Provenance: provenance(file, path)}
 
-	var haveScope, haveStdio bool
 	for _, child := range node.Children {
 		switch nodeName(child) {
 		case "scope":
-			if haveScope {
-				return Server{}, fmt.Errorf("%s.scope: duplicate scope", path)
+			if server.Scope != nil {
+				return ServerSource{}, fmt.Errorf("%s.scope: duplicate scope", path)
 			}
 			scope, err := parseScope(child, path)
 			if err != nil {
-				return Server{}, err
+				return ServerSource{}, err
 			}
-			server.Scope = scope
-			haveScope = true
+			server.Scope = &scope
+			server.ScopeProvenance = provenance(file, path+".scope")
 		case "stdio":
-			if haveStdio {
-				return Server{}, fmt.Errorf("%s.stdio: duplicate stdio", path)
+			if server.Stdio != nil {
+				return ServerSource{}, fmt.Errorf("%s.stdio: duplicate stdio", path)
 			}
 			stdio, err := parseStdio(file, child, path)
 			if err != nil {
-				return Server{}, err
+				return ServerSource{}, err
 			}
-			server.Stdio = stdio
-			haveStdio = true
+			server.Stdio = &stdio
 		default:
-			return Server{}, fmt.Errorf("%s: unknown child node %q", path, nodeName(child))
+			return ServerSource{}, fmt.Errorf("%s: unknown child node %q", path, nodeName(child))
 		}
 	}
-	if !haveScope || !haveStdio {
-		return Server{}, fmt.Errorf("%s: scope and stdio are required", path)
-	}
-
 	return server, nil
 }
 
@@ -267,50 +403,51 @@ func parseScope(node *document.Node, serverPath string) (Scope, error) {
 	if err != nil {
 		return "", err
 	}
-	if scope != string(ScopeWorkspace) {
-		return "", fmt.Errorf("%s: unsupported scope %q", path, scope)
-	}
 	return Scope(scope), nil
 }
 
-func parseStdio(file string, node *document.Node, serverPath string) (Stdio, error) {
+func parseStdio(file string, node *document.Node, serverPath string) (StdioSource, error) {
 	path := serverPath + ".stdio"
 	if err := plainNode(node, path); err != nil {
-		return Stdio{}, err
+		return StdioSource{}, err
 	}
-	if len(node.Arguments) != 1 {
-		return Stdio{}, fmt.Errorf("%s: expected one executable", path)
-	}
-	command, err := literalText(node.Arguments[0], path)
-	if err != nil {
-		return Stdio{}, err
+	if len(node.Arguments) > 1 {
+		return StdioSource{}, fmt.Errorf("%s: expected at most one executable", path)
 	}
 
-	stdio := Stdio{Command: command, Provenance: provenance(file, path)}
+	stdio := StdioSource{Provenance: provenance(file, path)}
+	if len(node.Arguments) == 1 {
+		command, err := literalText(node.Arguments[0], path)
+		if err != nil {
+			return StdioSource{}, err
+		}
+		stdio.Command = &command
+		stdio.CommandProvenance = provenance(file, path)
+	}
+
 	seenEnv := make(map[string]struct{}, len(node.Children))
 	for _, child := range node.Children {
 		switch nodeName(child) {
 		case "arg":
 			arg, err := parseSingleValue(file, child, fmt.Sprintf("%s.arg[%d]", path, len(stdio.Args)))
 			if err != nil {
-				return Stdio{}, err
+				return StdioSource{}, err
 			}
 			stdio.Args = append(stdio.Args, arg)
 		case "env":
 			env, err := parseEnvironment(file, child, path)
 			if err != nil {
-				return Stdio{}, err
+				return StdioSource{}, err
 			}
 			if _, exists := seenEnv[env.Name]; exists {
-				return Stdio{}, fmt.Errorf("%s: duplicate environment name", env.Path)
+				return StdioSource{}, fmt.Errorf("%s: duplicate environment name", env.Path)
 			}
 			seenEnv[env.Name] = struct{}{}
 			stdio.Env = append(stdio.Env, env)
 		default:
-			return Stdio{}, fmt.Errorf("%s: unknown child node %q", path, nodeName(child))
+			return StdioSource{}, fmt.Errorf("%s: unknown child node %q", path, nodeName(child))
 		}
 	}
-
 	return stdio, nil
 }
 
@@ -337,8 +474,6 @@ func parseEnvironment(file string, node *document.Node, stdioPath string) (Envir
 		}
 		return Environment{Name: name, Value: value, Provenance: provenance(file, entryPath)}, nil
 	}
-	// The length check above guarantees the loop returns. Keep the compiler's
-	// control-flow requirement local rather than inventing a fallback shape.
 	return Environment{}, fmt.Errorf("%s: expected one named value", path)
 }
 
