@@ -33,15 +33,15 @@ const (
 	exitInternal       = 70
 )
 
-// Run executes Wirecmd with args and writes exactly one JSON envelope for
-// ordinary operations. It returns the documented process exit status.
+// Run executes Wirecmd with args. Ordinary operations and failures write one
+// JSON envelope; successful help is deliberately conventional plain text.
 func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
-	result, appErr, help := run(ctx, args, in, errOut)
+	result, appErr := run(ctx, args, in, errOut)
 	if runner, ok := result.(foregroundDaemon); ok {
 		return runner.run(ctx, out, errOut)
 	}
-	if help {
-		writeJSON(out, map[string]any{"ok": true, "help": usage})
+	if help, ok := result.(helpText); ok {
+		_, _ = io.WriteString(out, string(help))
 		return exitOK
 	}
 	if appErr != nil {
@@ -79,6 +79,9 @@ type request struct {
 	server    string
 	tool      string
 	arguments map[string]any
+	projected []projectedArgument
+	overlay   map[string]any
+	help      helpKind
 }
 
 type operation uint8
@@ -87,43 +90,50 @@ const (
 	listServers operation = iota
 	listTools
 	callTool
+	inspectTool
 )
 
-func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (any, *appError, bool) {
+func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (any, *appError) {
 	opts, positionals, parseErr := parseOptions(args)
 	if parseErr != nil {
-		return nil, invocationError("invalid_flags", parseErr.Error(), "place Wirecmd flags before the server and tool names"), false
+		return nil, invocationError("invalid_flags", parseErr.Error(), "place Wirecmd flags before the server and tool names")
 	}
+	var req request
+	var requestErr *appError
 	if opts.help {
-		return nil, nil, true
+		req, requestErr = parseHelpRequest(positionals, opts)
+	} else {
+		req, requestErr = parseRequest(positionals, opts, in)
+	}
+	if requestErr != nil {
+		return nil, requestErr
+	}
+	if req.help == globalHelp {
+		return helpText(globalHelpText()), nil
 	}
 	if admin, ok := parseDaemonAdmin(positionals, opts); ok {
 		if admin.err != nil {
-			return nil, admin.err, false
+			return nil, admin.err
 		}
 		switch admin.command {
 		case "run":
-			return foregroundDaemon{}, nil, false
+			return foregroundDaemon{}, nil
 		case "status", "reload":
 			result, appErr := runDaemonAdmin(ctx, admin.command, errOut)
-			return result, appErr, false
+			return result, appErr
 		}
 	}
-	req, requestErr := parseRequest(positionals, opts, in)
-	if requestErr != nil {
-		return nil, requestErr, false
-	}
 	if len(opts.configs) == 0 {
-		return nil, configurationError("config_required", "at least one --config PATH is required", "supply one or more KDL configuration files"), false
+		return nil, configurationError("config_required", "at least one --config PATH is required", "supply one or more KDL configuration files")
 	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, transportError("caller_cwd_unavailable", err.Error(), "run Wirecmd from an accessible working directory"), false
+		return nil, transportError("caller_cwd_unavailable", err.Error(), "run Wirecmd from an accessible working directory")
 	}
 	configPaths, err := absoluteConfigPaths(cwd, opts.configs)
 	if err != nil {
-		return nil, configurationError("config_path_invalid", err.Error(), "supply valid configuration paths"), false
+		return nil, configurationError("config_path_invalid", err.Error(), "supply valid configuration paths")
 	}
 	// The daemon handshake precedes configuration parsing and secret lookup.
 	// Besides failing clearly when it is unavailable, this makes normal-mode
@@ -133,47 +143,70 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 		var appErr *appError
 		daemonClient, appErr = openDaemonClient(ctx)
 		if appErr != nil {
-			return nil, appErr, false
+			return nil, appErr
 		}
 		defer daemonClient.Close()
 	}
 	cfg, err := config.LoadEffective(configPaths)
 	if err != nil {
-		return nil, configurationError("config_invalid", err.Error(), "correct the supplied KDL configuration"), false
+		return nil, configurationError("config_invalid", err.Error(), "correct the supplied KDL configuration")
 	}
 	if req.operation == listServers {
 		if !opts.direct {
-			return daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, cwd, configPaths, nil), errOut)
+			result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, cwd, configPaths, nil), errOut)
+			return result, appErr
 		}
-		return serverList(cfg), nil, false
+		return serverList(cfg), nil
 	}
 	server, ok := findServer(cfg, req.server)
 	if !ok {
-		return nil, configurationError("server_not_found", fmt.Sprintf("configured server %q was not found", req.server), "list configured servers and choose one by name"), false
+		return nil, configurationError("server_not_found", fmt.Sprintf("configured server %q was not found", req.server), "list configured servers and choose one by name")
 	}
 	if !opts.direct {
 		secrets := selectedSecretInputs(server, os.LookupEnv)
-		return daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, cwd, configPaths, secrets), errOut)
+		result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, cwd, configPaths, secrets), errOut)
+		if appErr != nil || req.help == noHelp {
+			return result, appErr
+		}
+		return renderDaemonHelp(result)
 	}
 
 	command, secrets, commandErr := makeCommand(server, cfg.Root, cwd, os.LookupEnv)
 	if commandErr != nil {
-		return nil, commandErr, false
+		return nil, commandErr
 	}
 	redactor := newRedactor(secrets, errOut)
 	defer redactor.FlushTo(errOut)
 	if req.operation == listTools {
 		tools, runErr := directTools(ctx, command, redactor)
 		if runErr != nil {
-			return nil, runErr.redacted(redactor), false
+			return nil, runErr.redacted(redactor)
 		}
-		return toolsEnvelope{OK: true, Server: server.Name, Tools: tools}, nil, false
+		if req.help == serverHelp {
+			return helpText(renderServerHelp(server.Name, tools)), nil
+		}
+		return toolsEnvelope{OK: true, Server: server.Name, Tools: tools}, nil
 	}
-	call, runErr := directCall(ctx, command, req.tool, req.arguments, redactor)
+	if req.operation == inspectTool {
+		description, runErr := directToolDescription(ctx, command, req.tool, redactor)
+		if runErr != nil {
+			return nil, runErr.redacted(redactor)
+		}
+		return helpText(renderToolHelp(server.Name, description)), nil
+	}
+	arguments := req.arguments
+	if len(req.projected) != 0 || req.overlay != nil {
+		call, runErr := directProjectedCall(ctx, command, req.tool, req.projected, req.overlay, redactor)
+		if runErr != nil {
+			return nil, runErr.redacted(redactor)
+		}
+		return callEnvelope{OK: true, Server: server.Name, Tool: req.tool, Result: call}, nil
+	}
+	call, runErr := directCall(ctx, command, req.tool, arguments, redactor)
 	if runErr != nil {
-		return nil, runErr.redacted(redactor), false
+		return nil, runErr.redacted(redactor)
 	}
-	return callEnvelope{OK: true, Server: server.Name, Tool: req.tool, Result: call}, nil, false
+	return callEnvelope{OK: true, Server: server.Name, Tool: req.tool, Result: call}, nil
 }
 
 func parseOptions(args []string) (options, []string, error) {
@@ -228,7 +261,36 @@ func parseRequest(positionals []string, opts options, in io.Reader) (request, *a
 		}
 		return request{operation: callTool, server: positionals[0], tool: positionals[1], arguments: arguments}, nil
 	default:
-		return request{}, invocationError("suffix_arguments_unsupported", "arguments after <server> <tool> are not supported yet", "use --json, --stdin, or an exact call object; projected tool arguments are deferred")
+		if opts.jsonSet || opts.stdin {
+			return request{}, invocationError("input_with_projected_arguments", "--json and --stdin cannot be combined with projected tool arguments", "choose either exact JSON input or projected arguments")
+		}
+		projected, overlay, err := parseProjectedSuffix(positionals[2:])
+		if err != nil {
+			return request{}, err
+		}
+		if positionals[1] == "" {
+			return request{}, invocationError("tool_required", "tool name must not be empty", "supply a non-empty tool name")
+		}
+		return request{operation: callTool, server: positionals[0], tool: positionals[1], arguments: map[string]any{}, projected: projected, overlay: overlay}, nil
+	}
+}
+
+func parseHelpRequest(positionals []string, opts options) (request, *appError) {
+	if opts.jsonSet || opts.stdin {
+		return request{}, invocationError("input_with_help", "--json and --stdin cannot be used with --help", "request help without a tool input mode")
+	}
+	switch len(positionals) {
+	case 0:
+		return request{help: globalHelp}, nil
+	case 1:
+		return request{operation: listTools, server: positionals[0], help: serverHelp}, nil
+	case 2:
+		if positionals[1] == "" {
+			return request{}, invocationError("tool_required", "tool name must not be empty", "supply a non-empty tool name")
+		}
+		return request{operation: inspectTool, server: positionals[0], tool: positionals[1], help: toolHelp}, nil
+	default:
+		return request{}, invocationError("help_arity", "focused help accepts at most <server> <tool>", "use wirecmd --help [<server> [<tool>]]")
 	}
 }
 

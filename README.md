@@ -48,6 +48,25 @@ wirecmd daemon status
 wirecmd daemon reload
 ```
 
+Focused help is conventional text, so it can be read directly or filtered with
+ordinary shell tools. Calls and failures remain newline-terminated JSON:
+
+```sh
+# Discover a server's tools, then inspect the one needed.
+wirecmd --config ./wirecmd.kdl --help memory
+wirecmd --config ./wirecmd.kdl --help memory create_entities
+
+# Use generated top-level flags where the schema is unambiguous.
+wirecmd --config ./wirecmd.kdl memory create_entities --entities '[...]'
+
+# Merge collision-prone or otherwise raw properties structurally.
+wirecmd --config ./wirecmd.kdl server tool --simple value -- '{"tool_name":"one","toolName":"two"}'
+```
+
+`--json`, `--stdin`, and the exact-call object remain the lossless fallback for
+every tool input. Wirecmd does not locally validate the full JSON Schema; the
+upstream tool remains responsible for semantic validation.
+
 ## Project documents
 
 - [Product thesis](docs/product-thesis.md) defines the authoritative product

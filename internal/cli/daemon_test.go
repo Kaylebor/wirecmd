@@ -62,6 +62,65 @@ func TestDaemonRetainsSessionAndReloads(t *testing.T) {
 	_ = d
 }
 
+func TestDaemonFocusedHelpAndProjectedCall(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	runtime := t.TempDir()
+	if err := os.Chmod(runtime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	startTestDaemon(t)
+	configPath := helperConfig(t, "", "")
+
+	directCode, directOutput, directStderr := invoke(t, []string{"--direct", "--config", configPath, "--help", "helper", "projected"})
+	if directCode != exitOK || directStderr != "" {
+		t.Fatalf("direct tool help: code=%d stderr=%q output=%s", directCode, directStderr, directOutput)
+	}
+	code, output, stderr := invoke(t, []string{"--config", configPath, "--help", "helper", "projected"})
+	if code != exitOK || stderr != "" || !strings.Contains(output, "--query") || strings.HasPrefix(output, "{") || output != directOutput {
+		t.Fatalf("daemon tool help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, stderr = invoke(t, []string{"--config", configPath, "helper", "projected", "--query", "daemon", "--enabled=false", "--", `{"tool_name":"one","toolName":"two"}`})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("daemon projected call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	data := decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)
+	if data["query"] != "daemon" || data["enabled"] != false || data["tool_name"] != "one" || data["toolName"] != "two" {
+		t.Fatalf("daemon projected data = %#v", data)
+	}
+}
+
+func TestDaemonProjectedErrorsRedactSecretsAndUsePrivateSchema(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	const secret = "daemon-projected-secret"
+	t.Setenv("WIRECMD_DAEMON_PROJECTED_SECRET", secret)
+	runtime := t.TempDir()
+	if err := os.Chmod(runtime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	startTestDaemon(t)
+	config := helperConfig(t, "", `env SECRET=(secret)"env://WIRECMD_DAEMON_PROJECTED_SECRET"`)
+	flag, ok := projectedFlag(secret)
+	if !ok {
+		t.Fatal("fixture secret must form a projected flag")
+	}
+
+	for _, args := range [][]string{
+		{"--config", config, "helper", "semantic_secret", "--" + flag + "-unknown", "value"},
+		{"--config", config, "helper", "semantic_secret", "--" + flag, "value", "--", `{"daemon-projected-secret":"other"}`},
+	} {
+		code, output, stderr := invoke(t, args)
+		if code != exitInvocation || strings.Contains(output, secret) || strings.Contains(stderr, secret) || !strings.Contains(output, "[REDACTED]") {
+			t.Fatalf("daemon projected secret error: code=%d stderr=%q output=%s", code, stderr, output)
+		}
+	}
+	code, output, stderr := invoke(t, []string{"--config", config, "helper", "semantic_secret", "--" + flag, "value"})
+	if code != exitOK || stderr != "" || strings.Contains(output, secret) || decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)["matched"] != true {
+		t.Fatalf("daemon private schema call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+}
+
 func TestDaemonConfigMismatchAndSecretIsolation(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
 	runtime := t.TempDir()

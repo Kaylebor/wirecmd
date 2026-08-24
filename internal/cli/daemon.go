@@ -92,6 +92,9 @@ type daemonRequest struct {
 	Server      string                 `json:"server,omitempty"`
 	Tool        string                 `json:"tool,omitempty"`
 	Arguments   map[string]any         `json:"arguments,omitempty"`
+	Projected   []projectedArgument    `json:"projected,omitempty"`
+	Overlay     map[string]any         `json:"overlay,omitempty"`
+	Help        helpKind               `json:"help,omitempty"`
 	CWD         string                 `json:"cwd"`
 	Configs     []string               `json:"configs,omitempty"`
 	Fingerprint string                 `json:"fingerprint,omitempty"`
@@ -129,7 +132,7 @@ func absoluteConfigPaths(cwd string, paths []string) ([]string, error) {
 }
 
 func daemonRequestFromConfig(req request, cfg *config.Config, cwd string, paths []string, secrets map[string]secretInput) daemonRequest {
-	request := daemonRequest{Operation: req.operation, Server: req.server, Tool: req.tool, Arguments: req.arguments, CWD: cwd, Configs: paths, Fingerprint: configFingerprint(cfg, cwd), Secrets: secrets}
+	request := daemonRequest{Operation: req.operation, Server: req.server, Tool: req.tool, Arguments: req.arguments, Projected: req.projected, Overlay: req.overlay, Help: req.help, CWD: cwd, Configs: paths, Fingerprint: configFingerprint(cfg, cwd), Secrets: secrets}
 	if req.operation != listServers {
 		if server, ok := findServer(cfg, req.server); ok {
 			request.Execution = executionFingerprint(server, cfg.Root, cwd)
@@ -579,7 +582,7 @@ func (d *daemon) execute(request daemonRequest) daemonReply {
 	if request.Admin != "" {
 		return d.executeAdmin(request.Admin)
 	}
-	if request.Operation != listServers && request.Operation != listTools && request.Operation != callTool {
+	if request.Operation != listServers && request.Operation != listTools && request.Operation != callTool && request.Operation != inspectTool {
 		return errorReply(invocationError("daemon_operation_invalid", "invalid daemon operation", "use a compatible Wirecmd client"))
 	}
 	if !filepath.IsAbs(request.CWD) || len(request.Configs) == 0 {
@@ -649,9 +652,32 @@ func (d *daemon) execute(request daemonRequest) daemonReply {
 			d.noteOperationError(instance, appErr)
 			return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
 		}
-		result = toolsEnvelope{OK: true, Server: server.Name, Tools: tools}
+		if request.Help == serverHelp {
+			result = helpResponse{Kind: serverHelp, Server: server.Name, Tools: tools}
+		} else {
+			result = toolsEnvelope{OK: true, Server: server.Name, Tools: tools}
+		}
+	} else if request.Operation == inspectTool {
+		description, appErr := sessionToolDescription(d.ctx, instance.session, request.Tool, instance.redactor)
+		if appErr != nil {
+			d.noteOperationError(instance, appErr)
+			return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
+		}
+		result = helpResponse{Kind: toolHelp, Server: server.Name, Tool: description}
 	} else {
-		call, appErr := sessionCall(d.ctx, instance.session, request.Tool, request.Arguments, instance.redactor)
+		arguments := request.Arguments
+		if len(request.Projected) != 0 || request.Overlay != nil {
+			description, appErr := sessionToolProjection(d.ctx, instance.session, request.Tool)
+			if appErr != nil {
+				d.noteOperationError(instance, appErr)
+				return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
+			}
+			arguments, appErr = resolveProjectedArguments(description, request.Projected, request.Overlay)
+			if appErr != nil {
+				return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
+			}
+		}
+		call, appErr := sessionCall(d.ctx, instance.session, request.Tool, arguments, instance.redactor)
 		if appErr != nil {
 			d.noteOperationError(instance, appErr)
 			appErr = appErr.redacted(instance.redactor)

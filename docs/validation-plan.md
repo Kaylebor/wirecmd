@@ -27,6 +27,8 @@ Implement only enough product surface to exercise:
 - listing configured sources;
 - listing or inspecting a source's capabilities;
 - focused help for a single tool;
+- conservative top-level schema-derived arguments, with raw JSON overlay and
+  exact-JSON fallback for every input that cannot be projected safely;
 - lossless JSON input from an argument or stdin;
 - stable structured success output;
 - stable structured error output and documented exit codes; and
@@ -109,11 +111,9 @@ template materialization follow only after the central daemon-backed stdio path
 works; their internal representation must remain possible without implementing
 them here.
 
-Focused schema-derived tool help and the universal Agent Skill are immediate
-follow-on work required before agent-facing milestone evaluation. Their absence
-does not block qualification of this infrastructure slice and does not count as
-completion of the overall milestone. The controlled HTTP fixture likewise
-remains required for the milestone after the stdio slice succeeds.
+Focused schema help, projected arguments, and the universal Agent Skill are now
+implemented. The controlled HTTP fixture remains required before the full
+agent-facing milestone evaluation.
 
 ## Explicitly deferred
 
@@ -122,7 +122,6 @@ remains required for the milestone after the stdio slice succeeds.
   stability.
 - OAuth browser flows.
 - Hierarchical KDL configuration beyond the minimum needed for the fixtures.
-- Schema-derived ergonomic flags.
 - Legacy initialized protocol qualification and HTTP+SSE implementation; these
   are sequenced after the modern slice, not excluded from the full MVP.
 - Resources, prompts, subscriptions, Tasks, sampling, and rich elicitation.
@@ -204,8 +203,9 @@ too small to justify a new runtime.
 ## After the milestone
 
 Only after reviewing the evidence should the project commit to production
-daemon behavior, configuration format and merging, OAuth, schema-derived flags,
-or packaging. If the interaction model remains viable, compatibility work then
-continues backward through the two legacy layers required for the full MVP.
-Promote accepted decisions into the authoritative documents; retain rejected
-and unresolved alternatives in `docs/notes/`.
+daemon behavior, automatic configuration discovery and templating, OAuth,
+broader schema projection, or packaging. If the interaction model remains
+viable, compatibility work then continues backward through the two legacy
+layers required for the full MVP. Promote accepted decisions into the
+authoritative documents; retain rejected and unresolved alternatives in
+`docs/notes/`.

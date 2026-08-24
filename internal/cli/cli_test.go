@@ -39,6 +39,23 @@ func TestHelperProcess(t *testing.T) {
 	server := mcp.NewServer(&mcp.Implementation{Name: "wirecmd-test-server", Version: "dev"}, &mcp.ServerOptions{PageSize: 2})
 	mcp.AddTool(server, &mcp.Tool{Name: "z_tool", Title: "Zed", Description: "last tool"}, echoTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "a_tool", Title: "Aye", Description: "first tool"}, echoTool)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:         "projected",
+		Title:        "Projected fixture",
+		Description:  "exercise focused help and projected arguments",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"query":{"type":"string","description":"search text"},"limit":{"type":"integer","default":10},"enabled":{"type":"boolean"},"filters":{"type":"object"},"tool_name":{"type":"string"},"toolName":{"type":"string"},"weird.name":{"type":"string"}},"required":["query"]}`),
+		OutputSchema: json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean"}}}`),
+	}, echoTool)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "schema_secret",
+		Description: "schema metadata " + secret,
+		InputSchema: map[string]any{"type": "object", "description": "schema " + secret, "properties": map[string]any{"value": map[string]any{"type": "string", "examples": []any{secret}}}},
+	}, echoTool)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "semantic_secret",
+		Description: "private schema property " + secret,
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{secret: map[string]any{"type": "string"}}},
+	}, semanticSecretTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "environment", Description: "read child environment"}, environmentTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "working_directory", Description: "read child working directory"}, workingDirectoryTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "secret", Description: "return configured secret"}, secretTool)
@@ -62,6 +79,16 @@ func echoTool(_ context.Context, request *mcp.CallToolRequest, _ map[string]any)
 		return nil, nil, err
 	}
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "echo"}}}, arguments, nil
+}
+
+func semanticSecretTool(_ context.Context, request *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
+	secret := os.Getenv("SECRET")
+	var arguments map[string]any
+	if err := json.Unmarshal(request.Params.Arguments, &arguments); err != nil {
+		return nil, nil, err
+	}
+	_, matched := arguments[secret]
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "semantic secret"}}}, map[string]any{"matched": matched}, nil
 }
 
 func environmentTool(_ context.Context, _ *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
@@ -212,14 +239,14 @@ func TestInvocationValidationAndDaemonFailure(t *testing.T) {
 		want string
 	}{
 		{name: "normal mode fails closed", args: []string{"--config", config}, code: exitTransport, want: "daemon_unavailable"},
-		{name: "suffix rejected", args: []string{"--direct", "--config", config, "helper", "a_tool", "extra"}, code: exitInvocation, want: "suffix_arguments_unsupported"},
+		{name: "invalid projected suffix", args: []string{"--direct", "--config", config, "helper", "a_tool", "extra"}, code: exitInvocation, want: "projected_argument_invalid"},
 		{name: "input conflict", args: []string{"--direct", "--config", config, "--json", `{}`, "--stdin", "helper", "a_tool"}, code: exitInvocation, want: "input_mode_conflict"},
 		{name: "non object", args: []string{"--direct", "--config", config, "--json", `[]`, "helper", "a_tool"}, code: exitInvocation, want: "invalid_json"},
 		{name: "empty JSON is still JSON input", args: []string{"--direct", "--config", config, "--json", ``, "helper", "a_tool"}, code: exitInvocation, want: "invalid_json"},
 		{name: "trailing object", args: []string{"--direct", "--config", config, "--json", `{} {}`, "helper", "a_tool"}, code: exitInvocation, want: "invalid_json"},
 		{name: "malformed envelope has no fallback", args: []string{"--direct", "--config", config, "helper", `{"tool":`}, code: exitInvocation, want: "invalid_exact_call"},
 		{name: "unknown envelope field", args: []string{"--direct", "--config", config, "helper", `{"tool":"a_tool","unknown":true}`}, code: exitInvocation, want: "invalid_exact_call"},
-		{name: "config after positional is suffix", args: []string{"--direct", "helper", "--config", config}, code: exitInvocation, want: "suffix_arguments_unsupported"},
+		{name: "config after positional is suffix", args: []string{"--direct", "helper", "--config", config}, code: exitInvocation, want: "projected_argument_invalid"},
 		{name: "JSON escapes unusual tool name", args: []string{"--direct", "--config", config, "--json", `{}`, "helper", "{unusual"}, code: exitProtocol, want: "tool_call_failed"},
 	}
 	for _, test := range tests {
@@ -234,8 +261,130 @@ func TestInvocationValidationAndDaemonFailure(t *testing.T) {
 
 func TestHelpDoesNotRequireConfiguration(t *testing.T) {
 	code, output, stderr := invoke(t, []string{"--help"})
-	if code != exitOK || stderr != "" || !strings.Contains(decodeOutput(t, output)["help"].(string), "--config PATH") {
+	if code != exitOK || stderr != "" || !strings.Contains(output, "--config PATH") || !strings.HasSuffix(output, "\n") {
 		t.Fatalf("help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+}
+
+func TestFocusedHelpAndProjectedArguments(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	config := helperConfig(t, "", "")
+
+	code, output, stderr := invoke(t, []string{"--direct", "--config", config, "--help", "helper"})
+	if code != exitOK || stderr != "" || !strings.Contains(output, "projected") || strings.HasPrefix(output, "{") {
+		t.Fatalf("server help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "--help", "helper", "projected"})
+	for _, want := range []string{"--query", "JSON: query (string)", "--filters", "Value: one JSON value", "tool_name  JSON-only", "Exact JSON fallback", "Output schema:"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("tool help missing %q: %s", want, output)
+		}
+	}
+	if code != exitOK || stderr != "" || !strings.HasSuffix(output, "\n") {
+		t.Fatalf("tool help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "helper", "projected", "--query", "Ada", "--limit=12", "--enabled", "--filters", `{"status":"open"}`, "--", `{"tool_name":"one","toolName":"two","weird.name":"three"}`})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("projected call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	data := decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)
+	if data["query"] != "Ada" || data["limit"].(json.Number).String() != "12" || data["enabled"] != true || data["filters"].(map[string]any)["status"] != "open" || data["tool_name"] != "one" || data["toolName"] != "two" {
+		t.Fatalf("projected data = %#v", data)
+	}
+
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"unknown", []string{"--direct", "--config", config, "helper", "projected", "--missing", "x"}, "projected_argument_unknown"},
+		{"duplicate flag", []string{"--direct", "--config", config, "helper", "projected", "--query", "one", "--query", "two"}, "projected_argument_duplicate"},
+		{"duplicate overlay", []string{"--direct", "--config", config, "helper", "projected", "--query", "one", "--", `{"query":"two"}`}, "projected_argument_duplicate"},
+		{"complex invalid", []string{"--direct", "--config", config, "helper", "projected", "--filters", "not-json"}, "projected_json_invalid"},
+		{"boolean invalid", []string{"--direct", "--config", config, "helper", "projected", "--enabled", "yes"}, "projected_boolean_invalid"},
+		{"overlay trailing", []string{"--direct", "--config", config, "helper", "projected", "--", `{}`, "tail"}, "raw_overlay_invalid"},
+		{"input conflict", []string{"--direct", "--config", config, "--json", `{}`, "helper", "projected", "--query", "Ada"}, "input_with_projected_arguments"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			code, output, _ := invoke(t, test.args)
+			if code != exitInvocation || decodeOutput(t, output)["error"].(map[string]any)["code"] != test.want {
+				t.Fatalf("code=%d output=%s want=%s", code, output, test.want)
+			}
+		})
+	}
+}
+
+func TestFocusedHelpRedactsSchemaMetadata(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	const secret = "schema-secret-value"
+	t.Setenv("WIRECMD_SCHEMA_SECRET", secret)
+	config := helperConfig(t, "", `env SECRET=(secret)"env://WIRECMD_SCHEMA_SECRET"`)
+	code, output, stderr := invoke(t, []string{"--direct", "--config", config, "--help", "helper", "schema_secret"})
+	if code != exitOK || stderr != "" || strings.Contains(output, secret) || !strings.Contains(output, "[REDACTED]") {
+		t.Fatalf("schema help redaction: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+}
+
+func TestProjectedSecretPropertyUsesPrivateSchema(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	const secret = "projected-schema-secret"
+	t.Setenv("WIRECMD_SCHEMA_SECRET", secret)
+	config := helperConfig(t, "", `env SECRET=(secret)"env://WIRECMD_SCHEMA_SECRET"`)
+	flag, ok := projectedFlag(secret)
+	if !ok {
+		t.Fatal("fixture secret must form a projected flag")
+	}
+	code, output, stderr := invoke(t, []string{"--direct", "--config", config, "--help", "helper", "semantic_secret"})
+	if code != exitOK || stderr != "" || strings.Contains(output, secret) || !strings.Contains(output, "[REDACTED]") {
+		t.Fatalf("secret schema help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "helper", "semantic_secret", "--" + flag, "value"})
+	if code != exitOK || stderr != "" || strings.Contains(output, secret) || decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)["matched"] != true {
+		t.Fatalf("secret projected call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+}
+
+func TestProjectedNumbersUseNumber(t *testing.T) {
+	description := toolDescription{InputSchema: json.RawMessage(`{"type":"object","properties":{"value":{"type":"number"}}}`)}
+	arguments, appErr := resolveProjectedArguments(description, []projectedArgument{{Name: "value", Value: "12345678901234567890", ValueSet: true}}, nil)
+	if appErr != nil || arguments["value"].(json.Number).String() != "12345678901234567890" {
+		t.Fatalf("projected number = %#v error=%v", arguments, appErr)
+	}
+}
+
+func TestProjectedNumberSyntaxAndOverlayOnlyFallback(t *testing.T) {
+	description := toolDescription{InputSchema: json.RawMessage(`{"type":"object","properties":{"number":{"type":"number"},"integer":{"type":"integer"}}}`)}
+	arguments, appErr := resolveProjectedArguments(description, []projectedArgument{{Name: "number", Value: "1e2", ValueSet: true}, {Name: "integer", Value: "0.0", ValueSet: true}}, nil)
+	if appErr != nil || arguments["number"].(json.Number).String() != "1e2" || arguments["integer"].(json.Number).String() != "0.0" {
+		t.Fatalf("number syntax = %#v error=%v", arguments, appErr)
+	}
+	arguments, appErr = resolveProjectedArguments(toolDescription{InputSchema: json.RawMessage(`{"type":"array"}`)}, nil, map[string]any{"unprojectable": true})
+	if appErr != nil || arguments["unprojectable"] != true {
+		t.Fatalf("overlay-only fallback = %#v error=%v", arguments, appErr)
+	}
+}
+
+func TestProjectedFlagNormalizationAndCollisions(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		want string
+		ok   bool
+	}{
+		{"tool_name", "tool-name", true},
+		{"toolName", "tool-name", true},
+		{"XMLParser", "xml-parser", true},
+		{"many__parts", "many-parts", true},
+		{"é", "", false},
+	} {
+		got, ok := projectedFlag(test.name)
+		if got != test.want || ok != test.ok {
+			t.Fatalf("projectedFlag(%q) = (%q, %v), want (%q, %v)", test.name, got, ok, test.want, test.ok)
+		}
+	}
+	description := toolDescription{InputSchema: json.RawMessage(`{"type":"object","properties":{"tool_name":{"type":"string"},"toolName":{"type":"string"}}}`)}
+	if _, appErr := resolveProjectedArguments(description, []projectedArgument{{Name: "tool-name", Value: "value", ValueSet: true}}, nil); appErr == nil || appErr.code != "projected_argument_unknown" {
+		t.Fatalf("collision must be overlay-only: %#v", appErr)
 	}
 }
 
