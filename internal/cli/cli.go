@@ -477,10 +477,7 @@ func sessionTools(ctx context.Context, session *mcp.ClientSession, redactor *red
 	var tools []toolSummary
 	for tool, err := range session.Tools(ctx, nil) {
 		if err != nil {
-			if isTransportFailure(err) {
-				return nil, transportError("connection_closed", err.Error(), "check the upstream MCP server diagnostics")
-			}
-			return nil, protocolError("tool_list_failed", err.Error(), "check the upstream MCP server diagnostics")
+			return nil, mcpOperationError(err, "tool_list_failed")
 		}
 		tools = append(tools, toolSummary{Name: redactor.Redact(tool.Name), Title: redactor.Redact(tool.Title), Description: redactor.Redact(tool.Description)})
 	}
@@ -500,10 +497,7 @@ func directCall(ctx context.Context, target connectionTarget, tool string, argum
 func sessionCall(ctx context.Context, session *mcp.ClientSession, tool string, arguments map[string]any, redactor *redactor) (toolResult, *appError) {
 	response, callErr := session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: arguments})
 	if callErr != nil {
-		if isTransportFailure(callErr) {
-			return toolResult{}, transportError("connection_closed", callErr.Error(), "check the upstream MCP server diagnostics")
-		}
-		return toolResult{}, protocolError("tool_call_failed", callErr.Error(), "check the upstream MCP server diagnostics")
+		return toolResult{}, mcpOperationError(callErr, "tool_call_failed")
 	}
 	result, normalizeErr := normalizeResult(response, redactor)
 	if normalizeErr != nil {
@@ -524,6 +518,21 @@ func isTransportFailure(err error) bool {
 	}
 	var networkError net.Error
 	return errors.As(err, &networkError)
+}
+
+// mcpOperationError retains the raw SDK cancellation signal privately. The
+// daemon needs it to distinguish a canceled MCP request, whose HTTP session
+// may be poisoned by the SDK's cancellation notification, from a local error
+// produced after a successful SDK operation. It is never serialized.
+func mcpOperationError(err error, protocolCode string) *appError {
+	var appErr *appError
+	if isTransportFailure(err) {
+		appErr = transportError("connection_closed", err.Error(), "check the upstream MCP server diagnostics")
+	} else {
+		appErr = protocolError(protocolCode, err.Error(), "check the upstream MCP server diagnostics")
+	}
+	appErr.sdkCanceled = errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	return appErr
 }
 
 func connectTarget(ctx context.Context, target connectionTarget, redactor *redactor) (*mcp.ClientSession, *appError) {
@@ -651,12 +660,13 @@ func uniqueRedactedKey(object map[string]any, key string) string {
 }
 
 type appError struct {
-	category string
-	code     string
-	message  string
-	action   string
-	exitCode int
-	result   *toolResult
+	category    string
+	code        string
+	message     string
+	action      string
+	exitCode    int
+	result      *toolResult
+	sdkCanceled bool
 }
 
 func (e *appError) redacted(redactor *redactor) *appError {

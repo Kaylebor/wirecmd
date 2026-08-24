@@ -100,6 +100,25 @@ func TestHelperProcess(t *testing.T) {
 	}
 }
 
+func TestMCPOperationErrorCapturesOnlyRawCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "ordinary protocol error", err: errors.New("invalid response"), want: false},
+		{name: "canceled", err: context.Canceled, want: true},
+		{name: "deadline", err: context.DeadlineExceeded, want: true},
+		{name: "wrapped canceled", err: fmt.Errorf("request: %w", context.Canceled), want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := mcpOperationError(test.err, "tool_list_failed").sdkCanceled; got != test.want {
+				t.Fatalf("sdkCanceled = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func echoTool(_ context.Context, request *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
 	var arguments any
 	decoder := json.NewDecoder(bytes.NewReader(request.Params.Arguments))
@@ -733,21 +752,30 @@ func helperConfig(t *testing.T, root, env string) string {
 
 type httpFixture struct {
 	*httptest.Server
-	requests        atomic.Int64
-	blockStarted    chan struct{}
-	blockRelease    chan struct{}
-	blockOnce       sync.Once
-	holdStarted     chan struct{}
-	holdRelease     chan struct{}
-	holdOnce        sync.Once
-	holdReleaseOnce sync.Once
-	mu              sync.Mutex
-	methods         []string
+	requests            atomic.Int64
+	blockToolList       bool
+	toolListStarted     chan struct{}
+	toolListRelease     chan struct{}
+	toolListOnce        sync.Once
+	toolListReleaseOnce sync.Once
+	blockStarted        chan struct{}
+	blockRelease        chan struct{}
+	blockOnce           sync.Once
+	holdStarted         chan struct{}
+	holdRelease         chan struct{}
+	holdOnce            sync.Once
+	holdReleaseOnce     sync.Once
+	mu                  sync.Mutex
+	methods             []string
 }
 
 func newHTTPFixture(t *testing.T) *httpFixture {
+	return newHTTPFixtureWithBlockedToolList(t, false)
+}
+
+func newHTTPFixtureWithBlockedToolList(t *testing.T, blockToolList bool) *httpFixture {
 	t.Helper()
-	fixture := &httpFixture{blockStarted: make(chan struct{}), blockRelease: make(chan struct{}), holdStarted: make(chan struct{}), holdRelease: make(chan struct{})}
+	fixture := &httpFixture{blockToolList: blockToolList, toolListStarted: make(chan struct{}), toolListRelease: make(chan struct{}), blockStarted: make(chan struct{}), blockRelease: make(chan struct{}), holdStarted: make(chan struct{}), holdRelease: make(chan struct{})}
 	server := mcp.NewServer(&mcp.Implementation{Name: "wirecmd-http-test-server", Version: "dev"}, &mcp.ServerOptions{PageSize: 2})
 	mcp.AddTool(server, &mcp.Tool{Name: "z_tool", Title: "Zed", Description: "last HTTP tool"}, echoTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "a_tool", Title: "Aye", Description: "first HTTP tool"}, echoTool)
@@ -784,17 +812,26 @@ func newHTTPFixture(t *testing.T) *httpFixture {
 				fixture.mu.Lock()
 				fixture.methods = append(fixture.methods, message.Method)
 				fixture.mu.Unlock()
+				if fixture.blockToolList && message.Method == "tools/list" {
+					fixture.toolListOnce.Do(func() { close(fixture.toolListStarted) })
+					<-fixture.toolListRelease
+				}
 			}
 			request.Body = io.NopCloser(bytes.NewReader(body))
 		}
 		handler.ServeHTTP(writer, request)
 	}))
 	t.Cleanup(func() {
+		fixture.releaseToolList()
 		close(fixture.blockRelease)
 		fixture.releaseHold()
 		fixture.Close()
 	})
 	return fixture
+}
+
+func (f *httpFixture) releaseToolList() {
+	f.toolListReleaseOnce.Do(func() { close(f.toolListRelease) })
 }
 
 func (f *httpFixture) releaseHold() {

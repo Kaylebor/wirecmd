@@ -711,8 +711,11 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest) daemonReply
 	if request.Operation == listTools {
 		tools, appErr := sessionTools(ctx, instance.session, instance.redactor)
 		if appErr != nil {
-			d.noteOperationError(instance, appErr)
+			d.noteSDKOperation(instance, appErr)
 			return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
+		}
+		if ctx.Err() != nil {
+			return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
 		}
 		if request.Help == serverHelp {
 			result = helpResponse{Kind: serverHelp, Server: server.Name, Tools: tools}
@@ -722,8 +725,11 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest) daemonReply
 	} else if request.Operation == inspectTool {
 		description, appErr := sessionToolDescription(ctx, instance.session, request.Tool, instance.redactor)
 		if appErr != nil {
-			d.noteOperationError(instance, appErr)
+			d.noteSDKOperation(instance, appErr)
 			return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
+		}
+		if ctx.Err() != nil {
+			return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
 		}
 		result = helpResponse{Kind: toolHelp, Server: server.Name, Tool: description}
 	} else {
@@ -731,8 +737,11 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest) daemonReply
 		if len(request.Projected) != 0 || request.Overlay != nil {
 			description, appErr := sessionToolProjection(ctx, instance.session, request.Tool)
 			if appErr != nil {
-				d.noteOperationError(instance, appErr)
+				d.noteSDKOperation(instance, appErr)
 				return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
+			}
+			if ctx.Err() != nil {
+				return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
 			}
 			arguments, appErr = resolveProjectedArguments(description, request.Projected, request.Overlay)
 			if appErr != nil {
@@ -741,16 +750,12 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest) daemonReply
 		}
 		call, appErr := sessionCall(ctx, instance.session, request.Tool, arguments, instance.redactor)
 		if appErr != nil {
-			d.noteOperationError(instance, appErr)
-			if ctx.Err() != nil && instance.breakOnRequestCancel {
-				// In the pinned SDK's stateless Streamable HTTP path, cancellation
-				// can close the shared client session when the upstream rejects the
-				// cancellation notification. Preserve state-loss honesty rather than
-				// retrying or reusing that session.
-				d.markBroken(instance)
-			}
+			d.noteSDKOperation(instance, appErr)
 			appErr = appErr.redacted(instance.redactor)
 			return errorReplyWithWarnings(&appError{category: appErr.category, code: appErr.code, message: appErr.message, action: appErr.action, exitCode: appErr.exitCode, result: appErr.result}, warnings)
+		}
+		if ctx.Err() != nil {
+			return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
 		}
 		result = callEnvelope{OK: true, Server: server.Name, Tool: request.Tool, Result: call}
 	}
@@ -926,6 +931,21 @@ func (d *daemon) noteOperationError(instance *retainedInstance, appErr *appError
 		return
 	}
 	d.markBroken(instance)
+}
+
+// noteSDKOperation keeps retained HTTP-session state honest after an SDK call
+// that observed cancellation. The pinned SDK's stateless Streamable HTTP
+// cancellation notification can poison the shared session for any outgoing
+// request, not only tools/call. A request canceled before it acquires the
+// instance does not reach this helper and leaves it reusable.
+func (d *daemon) noteSDKOperation(instance *retainedInstance, appErr *appError) {
+	if appErr == nil {
+		return
+	}
+	d.noteOperationError(instance, appErr)
+	if appErr.sdkCanceled && instance.breakOnRequestCancel {
+		d.markBroken(instance)
+	}
 }
 
 func (d *daemon) markBroken(instance *retainedInstance) {

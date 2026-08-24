@@ -119,10 +119,7 @@ func directProjectedCall(ctx context.Context, target connectionTarget, tool stri
 func sessionToolProjection(ctx context.Context, session *mcp.ClientSession, name string) (toolDescription, *appError) {
 	for tool, err := range session.Tools(ctx, nil) {
 		if err != nil {
-			if isTransportFailure(err) {
-				return toolDescription{}, transportError("connection_closed", err.Error(), "check the upstream MCP server diagnostics")
-			}
-			return toolDescription{}, protocolError("tool_list_failed", err.Error(), "check the upstream MCP server diagnostics")
+			return toolDescription{}, mcpOperationError(err, "tool_list_failed")
 		}
 		if tool.Name != name {
 			continue
@@ -139,10 +136,7 @@ func sessionToolProjection(ctx context.Context, session *mcp.ClientSession, name
 func sessionToolDescription(ctx context.Context, session *mcp.ClientSession, name string, redactor *redactor) (toolDescription, *appError) {
 	for tool, err := range session.Tools(ctx, nil) {
 		if err != nil {
-			if isTransportFailure(err) {
-				return toolDescription{}, transportError("connection_closed", err.Error(), "check the upstream MCP server diagnostics")
-			}
-			return toolDescription{}, protocolError("tool_list_failed", err.Error(), "check the upstream MCP server diagnostics")
+			return toolDescription{}, mcpOperationError(err, "tool_list_failed")
 		}
 		if tool.Name != name {
 			continue

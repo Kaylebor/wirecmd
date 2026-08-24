@@ -188,6 +188,82 @@ func TestDaemonCancellationReleasesHTTPInstance(t *testing.T) {
 	}
 }
 
+func TestDaemonCancellationDuringHTTPToolDiscoveryMarksInstanceBroken(t *testing.T) {
+	assertDaemonCanceledHTTPToolListBreaksInstance(t, []string{"remote"})
+}
+
+func TestDaemonCancellationDuringHTTPFocusedHelpMarksInstanceBroken(t *testing.T) {
+	assertDaemonCanceledHTTPToolListBreaksInstance(t, []string{"--help", "remote", "projected"})
+}
+
+func TestDaemonCancellationDuringHTTPProjectedSchemaMarksInstanceBroken(t *testing.T) {
+	assertDaemonCanceledHTTPToolListBreaksInstance(t, []string{"remote", "projected", "--query", "Ada"})
+}
+
+func TestDaemonCanceledAfterSuccessfulSDKOperationKeepsHTTPInstanceHealthy(t *testing.T) {
+	instance := &retainedInstance{breakOnRequestCancel: true}
+	(&daemon{}).noteSDKOperation(instance, nil)
+	if instance.broken {
+		t.Fatal("cancellation after a successful SDK operation must not retire a healthy HTTP instance")
+	}
+}
+
+func TestDaemonCanceledAfterLocalPostSDKErrorsKeepsHTTPInstanceHealthy(t *testing.T) {
+	for _, appErr := range []*appError{
+		protocolError("tool_not_found", "tool was not advertised", "list tools"),
+		protocolError("tool_schema_invalid", "tool schema is invalid", "use exact JSON"),
+		protocolError("unsupported_result", "result content is unsupported", "inspect upstream output"),
+		{category: "user_action", code: "input_required", message: "input required", action: "continue interactively", exitCode: exitUserAction},
+		{category: "upstream_tool", code: "tool_reported_error", message: "tool failed", action: "correct arguments", exitCode: exitUpstreamTool},
+	} {
+		instance := &retainedInstance{breakOnRequestCancel: true}
+		(&daemon{}).noteSDKOperation(instance, appErr)
+		if instance.broken {
+			t.Fatalf("local post-SDK error %q must not retire a healthy HTTP instance", appErr.code)
+		}
+	}
+}
+
+func assertDaemonCanceledHTTPToolListBreaksInstance(t *testing.T, operation []string) {
+	t.Helper()
+	runtime := t.TempDir()
+	if err := os.Chmod(runtime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	startTestDaemon(t)
+	fixture := newHTTPFixtureWithBlockedToolList(t, true)
+	config := httpConfig(t, fixture.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan int, 1)
+	args := append([]string{"--config", config}, operation...)
+	go func() {
+		var stdout, stderr bytes.Buffer
+		done <- Run(ctx, args, strings.NewReader(""), &stdout, &stderr)
+	}()
+	select {
+	case <-fixture.toolListStarted:
+	case <-time.After(time.Second):
+		t.Fatal("HTTP tool listing did not start")
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != exitTransport {
+			t.Fatalf("canceled HTTP operation code=%d, want transport failure", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled HTTP operation remained blocked")
+	}
+	fixture.releaseToolList()
+	waitForBrokenInstance(t)
+	code, output, _ := invoke(t, []string{"--config", config, "remote", "a_tool"})
+	if code != exitTransport || decodeOutput(t, output)["error"].(map[string]any)["code"] != "instance_unavailable" {
+		t.Fatalf("canceled HTTP session must remain honestly unavailable: code=%d output=%s", code, output)
+	}
+}
+
 func TestDaemonCanceledQueuedHTTPRequestDoesNotBreakInstance(t *testing.T) {
 	runtime := t.TempDir()
 	if err := os.Chmod(runtime, 0o700); err != nil {
