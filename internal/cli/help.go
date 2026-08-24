@@ -386,7 +386,10 @@ func renderToolHelp(server string, tool toolDescription) string {
 				}
 				fmt.Fprintf(&text, "\n                          JSON: %s (%s)\n", property.Name, displayType(property.Schema))
 				if !directScalar(property.Schema) {
-					fmt.Fprint(&text, "                          Value: one JSON value\n")
+					fmt.Fprintf(&text, "                          Value: one JSON value for %q, not {%s: ...}\n", property.Name, strconv.Quote(property.Name))
+					if shape, ok := projectedShape(property.Schema); ok {
+						fmt.Fprintf(&text, "                          Illustrative shape (consult Input schema): --%s %s\n", property.Flag, shellQuote(shape))
+					}
 				}
 				if defaultValue, ok := property.Schema["default"]; ok {
 					fmt.Fprintf(&text, "                          Default: %s\n", compactJSON(defaultValue))
@@ -479,6 +482,83 @@ func placeholderValue(schema map[string]any) any {
 	default:
 		return nil
 	}
+}
+
+// projectedShape is illustrative only; the Input schema remains authoritative.
+func projectedShape(schema map[string]any) (string, bool) {
+	value, ok := projectedShapeValue(schema)
+	if !ok {
+		return "", false
+	}
+	return compactJSON(value), true
+}
+
+func projectedShapeValue(schema map[string]any) (any, bool) {
+	typeName, ok := schema["type"].(string)
+	if !ok {
+		return nil, false
+	}
+	switch typeName {
+	case "string":
+		return "...", true
+	case "number", "integer":
+		return 0, true
+	case "boolean":
+		return false, true
+	case "array":
+		if rawItems, found := schema["items"]; found {
+			items, ok := rawItems.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			item, ok := projectedShapeValue(items)
+			if !ok {
+				return nil, false
+			}
+			return []any{item}, true
+		}
+		return []any{}, true
+	case "object":
+		rawRequired, required := schema["required"]
+		if !required {
+			return map[string]any{}, true
+		}
+		names, ok := rawRequired.([]any)
+		if !ok {
+			return nil, false
+		}
+		properties, ok := schema["properties"].(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		value := make(map[string]any, len(names))
+		for _, rawName := range names {
+			name, ok := rawName.(string)
+			if !ok {
+				return nil, false
+			}
+			rawProperty, found := properties[name]
+			if !found {
+				return nil, false
+			}
+			property, ok := rawProperty.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			shape, ok := projectedShapeValue(property)
+			if !ok {
+				return nil, false
+			}
+			value[name] = shape
+		}
+		return value, true
+	default:
+		return nil, false
+	}
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func renderDaemonHelp(value any) (any, *appError) {

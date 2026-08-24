@@ -426,7 +426,7 @@ func TestFocusedHelpAndProjectedArguments(t *testing.T) {
 		t.Fatalf("server help: code=%d stderr=%q output=%s", code, stderr, output)
 	}
 	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "--help", "helper", "projected"})
-	for _, want := range []string{"--query", "JSON: query (string)", "--filters", "Value: one JSON value", "tool_name  JSON-only", "Exact JSON fallback", "Output schema:"} {
+	for _, want := range []string{"--query", "JSON: query (string)", "--filters", `Value: one JSON value for "filters", not {"filters": ...}`, "Illustrative shape (consult Input schema): --filters '{}'", "tool_name  JSON-only", "Exact JSON fallback", "Output schema:"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("tool help missing %q: %s", want, output)
 		}
@@ -463,6 +463,60 @@ func TestFocusedHelpAndProjectedArguments(t *testing.T) {
 				t.Fatalf("code=%d output=%s want=%s", code, output, test.want)
 			}
 		})
+	}
+}
+
+func TestFocusedHelpComplexProjectedShapeUsesBarePropertyValue(t *testing.T) {
+	description := toolDescription{
+		Name: "create_entities",
+		InputSchema: json.RawMessage(`{
+			"type":"object",
+			"properties":{
+				"entities":{
+					"type":"array",
+					"items":{
+						"type":"object",
+						"properties":{
+							"name":{"type":"string"},
+							"entityType":{"type":"string"},
+							"observations":{"type":"array","items":{"type":"string"}}
+						},
+						"required":["name","entityType","observations"]
+					}
+				}
+			}
+		}`),
+	}
+	help := renderToolHelp("memory", description)
+	for _, want := range []string{
+		`Value: one JSON value for "entities", not {"entities": ...}`,
+		`Illustrative shape (consult Input schema): --entities '[{"entityType":"...","name":"...","observations":["..."]}]'`,
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("tool help missing %q: %s", want, help)
+		}
+	}
+	if strings.Contains(help, `--entities '{"entities":`) {
+		t.Fatalf("projected shape must not wrap the property value: %s", help)
+	}
+}
+
+func TestFocusedHelpSkipsProjectedShapeForComposedSchema(t *testing.T) {
+	description := toolDescription{
+		Name:        "search",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":["string","null"]},"mode":{"oneOf":[{"type":"string"},{"type":"integer"}]}}}`),
+	}
+	help := renderToolHelp("memory", description)
+	for _, want := range []string{
+		`Value: one JSON value for "query", not {"query": ...}`,
+		`Value: one JSON value for "mode", not {"mode": ...}`,
+	} {
+		if !strings.Contains(help, want) {
+			t.Fatalf("tool help missing %q: %s", want, help)
+		}
+	}
+	if strings.Contains(help, "Illustrative shape (consult Input schema):") {
+		t.Fatalf("composed schemas must not receive a projected shape: %s", help)
 	}
 }
 
