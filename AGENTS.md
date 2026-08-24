@@ -96,6 +96,17 @@
   proportional; dependencies are valid implementation choices, not presumed
   failures of YAGNI. Do not edit dependency manifests or lockfiles to add or
   remove a library until the user accepts the choice.
+- Reconsider a library only when a concrete current requirement shows that the
+  standard library or existing small implementation would duplicate substantial
+  maintained behavior, a second real use case forces an abstraction, correctness
+  is unusually security/protocol/parser/concurrency sensitive, ecosystem
+  interoperability requires a standard implementation, or local maintenance is
+  likely to cost more than integration and dependency tracking. Do not add a
+  framework for a deferred feature, one speculative consumer, or a small amount
+  of straightforward code. At each reconsideration point, show the demonstrated
+  limitation, current candidates, API fit, maintenance, license, Go-version and
+  transitive-dependency evidence, migration cost, and the smallest recommendation
+  before requesting approval.
 
 ## Verification
 

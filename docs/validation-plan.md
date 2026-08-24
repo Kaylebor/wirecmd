@@ -40,8 +40,9 @@ Normal test invocations use the daemon and must fail clearly when it is absent.
 Tests request direct execution explicitly with `--direct`; an automatic direct
 fallback is a contract violation.
 
-Use the official Go MCP SDK for the supported protocol paths. Select exact
-dependency versions from current upstream evidence when implementation begins.
+Use `github.com/modelcontextprotocol/go-sdk` v1.7.0 for the supported protocol
+paths and `github.com/njreid/gokdl2` v0.6.0 for explicit KDL 2 parsing. These
+versions were selected from current upstream evidence before implementation.
 Assume the SDK owns MCP negotiation, lifecycle, transport, capability, and
 request semantics; verify its support before adding any MCP-specific code.
 
