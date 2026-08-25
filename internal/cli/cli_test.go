@@ -335,6 +335,23 @@ func TestDirectStreamableHTTPContracts(t *testing.T) {
 	}
 }
 
+func TestDirectStreamableHTTPColdCallPrimesSDKToolCache(t *testing.T) {
+	fixture := newHTTPFixture(t)
+	config := httpConfig(t, fixture.URL)
+
+	code, output, stderr := invoke(t, []string{"--direct", "--config", config, "remote", `{"tool":"header_tool","arguments":{"region":"EU"}}`})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("cold HTTP call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	data := decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)
+	if data["region"] != "EU" {
+		t.Fatalf("cold HTTP call data = %#v", data)
+	}
+	if got := fixture.methodCount("tools/list"); got == 0 {
+		t.Fatal("cold HTTP call did not prime the SDK tool cache")
+	}
+}
+
 func TestDirectStreamableHTTPConnectionFailures(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -837,6 +854,11 @@ func newHTTPFixtureWithBlockedToolList(t *testing.T, blockToolList bool) *httpFi
 		Name: "projected", Title: "Projected HTTP fixture", Description: "exercise HTTP focused help and projected arguments",
 		InputSchema: json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"enabled":{"type":"boolean"},"tool_name":{"type":"string"},"toolName":{"type":"string"}},"required":["query"]}`),
 	}, echoTool)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "header_tool",
+		Description: "exercise SDK-owned x-mcp-header generation",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"region":{"type":"string","x-mcp-header":"Region"}},"required":["region"]}`),
+	}, echoTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "failure", Description: "return a tool error"}, failureTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "block", Description: "wait for cancellation"}, func(ctx context.Context, _ *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
 		fixture.blockOnce.Do(func() { close(fixture.blockStarted) })
@@ -901,6 +923,18 @@ func (f *httpFixture) sawMethod(want string) bool {
 		}
 	}
 	return false
+}
+
+func (f *httpFixture) methodCount(want string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	count := 0
+	for _, method := range f.methods {
+		if method == want {
+			count++
+		}
+	}
+	return count
 }
 
 func httpConfig(t *testing.T, endpoint string) string {

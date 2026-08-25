@@ -401,6 +401,8 @@ type connectionTarget struct {
 	endpoint string
 }
 
+func (t connectionTarget) requiresToolPriming() bool { return t.endpoint != "" }
+
 func makeTarget(server config.Server, root *config.Root, callerCWD string, lookup func(string) (string, bool)) (connectionTarget, []string, *appError) {
 	if server.HTTP != nil {
 		return connectionTarget{endpoint: server.HTTP.Endpoint}, nil, nil
@@ -491,7 +493,24 @@ func directCall(ctx context.Context, target connectionTarget, tool string, argum
 		return toolResult{}, err
 	}
 	defer session.Close()
+	if target.requiresToolPriming() {
+		if appErr := primeSessionTools(ctx, session); appErr != nil {
+			return toolResult{}, appErr
+		}
+	}
 	return sessionCall(ctx, session, tool, arguments, redactor)
+}
+
+// primeSessionTools lets the SDK populate its private schema cache before an
+// HTTP call. The SDK uses that cache for transport behavior such as
+// x-mcp-header; Wirecmd deliberately does not reproduce that logic.
+func primeSessionTools(ctx context.Context, session *mcp.ClientSession) *appError {
+	for _, err := range session.Tools(ctx, nil) {
+		if err != nil {
+			return mcpOperationError(err, "tool_list_failed")
+		}
+	}
+	return nil
 }
 
 func sessionCall(ctx context.Context, session *mcp.ClientSession, tool string, arguments map[string]any, redactor *redactor) (toolResult, *appError) {

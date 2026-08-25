@@ -285,6 +285,7 @@ type retainedInstance struct {
 	session              *mcp.ClientSession
 	redactor             *redactor
 	breakOnRequestCancel bool
+	toolsPrimed          bool
 	active               int
 	retiring             bool
 	broken               bool
@@ -714,6 +715,7 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest) daemonReply
 			d.noteSDKOperation(instance, appErr)
 			return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
 		}
+		instance.toolsPrimed = true
 		if ctx.Err() != nil {
 			return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
 		}
@@ -747,6 +749,16 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest) daemonReply
 			if appErr != nil {
 				return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
 			}
+		}
+		if instance.breakOnRequestCancel && !instance.toolsPrimed {
+			if appErr := primeSessionTools(ctx, instance.session); appErr != nil {
+				d.noteSDKOperation(instance, appErr)
+				return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
+			}
+			instance.toolsPrimed = true
+		}
+		if ctx.Err() != nil {
+			return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
 		}
 		call, appErr := sessionCall(ctx, instance.session, request.Tool, arguments, instance.redactor)
 		if appErr != nil {

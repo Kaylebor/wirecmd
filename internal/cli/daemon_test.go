@@ -128,6 +128,39 @@ func TestDaemonStreamableHTTPContracts(t *testing.T) {
 	}
 }
 
+func TestDaemonStreamableHTTPColdCallPrimesOnce(t *testing.T) {
+	runtime := t.TempDir()
+	if err := os.Chmod(runtime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	startTestDaemon(t)
+	fixture := newHTTPFixture(t)
+	config := httpConfig(t, fixture.URL)
+	code, output, stderr := invoke(t, []string{"--config", config, "--help", "remote", "a_tool"})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("daemon HTTP help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	partialToolLists := fixture.methodCount("tools/list")
+
+	primingRequests := 0
+	for i := 0; i < 2; i++ {
+		code, output, stderr = invoke(t, []string{"--config", config, "remote", `{"tool":"header_tool","arguments":{"region":"EU"}}`})
+		if code != exitOK || stderr != "" {
+			t.Fatalf("daemon HTTP call %d: code=%d stderr=%q output=%s", i+1, code, stderr, output)
+		}
+		if i == 0 {
+			primingRequests = fixture.methodCount("tools/list")
+			if primingRequests <= partialToolLists {
+				t.Fatalf("cold daemon call did not complete SDK cache priming: before=%d after=%d", partialToolLists, primingRequests)
+			}
+		}
+	}
+	if got := fixture.methodCount("tools/list"); got != primingRequests {
+		t.Fatalf("tools/list requests after retained call = %d, want unchanged count %d", got, primingRequests)
+	}
+}
+
 func TestDaemonMarksClosedHTTPInstanceBroken(t *testing.T) {
 	runtime := t.TempDir()
 	if err := os.Chmod(runtime, 0o700); err != nil {
