@@ -1,18 +1,21 @@
 # MCP Compatibility Qualification Milestone
 
-Status: authoritative current milestone
+Status: authoritative current milestone; legacy HTTP+SSE deferred at the SDK boundary
 
 ## Objective
 
-Qualify the remaining deployed MCP protocol layers required for the first full
-MVP while preserving one shell-facing command, result, error, and daemon
-contract across protocol eras.
+Qualify the legacy initialized stdio and Streamable HTTP protocol layers that
+the pinned official SDK can support today, while preserving one shell-facing
+command, result, error, and daemon contract across those eras. Legacy HTTP+SSE
+remains a full-MVP target, but is deferred until the official SDK exposes the
+required stable client API.
 
 The milestone proceeds newest to oldest:
 
 1. establish and retain the modern `2026-07-28` baseline;
 2. qualify legacy initialized MCP over stdio and Streamable HTTP; and
-3. qualify legacy HTTP+SSE associated with `2024-11-05`.
+3. defer legacy HTTP+SSE associated with `2024-11-05` pending a stable SDK
+   release containing `ClientSessionOptions.ProtocolVersion`.
 
 The official Go SDK remains the default owner of negotiation, initialization,
 pagination, calls, shutdown, authorization, and transport behavior. Protocol
@@ -34,6 +37,16 @@ sessions preserved process/session-local state across CLI processes, fresh
 direct sessions remained isolated, and reload retired both instances. Exact
 commands and outputs are recorded in
 `docs/notes/legacy-initialized-validation.md`.
+
+Legacy HTTP+SSE is not a configured or implemented transport in this release.
+The v1.7.0 SDK cannot connect to the isolated v1.6.1 historical SSE handler:
+the handler rejects the initial modern `server/discover` request with HTTP 400,
+closing the connection before legacy initialization can run. The pinned stable
+SDK has no public protocol-selection option. The removed implementation and
+upstream tracking evidence are recorded in `docs/notes/legacy-sse-validation.md`.
+Do not add a local shim or restore the public transport surface. Re-evaluate
+only after a stable official SDK release contains
+`ClientSessionOptions.ProtocolVersion` from upstream PR #1127.
 
 ## Implementation sequence
 
@@ -58,13 +71,13 @@ including pagination, session retention where the upstream requires it,
 cancellation, connection failure, and schema-dependent SDK transport behavior.
 Do not infer support from modern stateless HTTP success.
 
-### 4. Qualify legacy HTTP+SSE
+### 4. Re-evaluate deferred legacy HTTP+SSE
 
-First verify whether the pinned SDK exposes a supported high-level client
-transport for the target revision. If it does, integrate that transport through
-the existing semantic execution boundary. If it does not, preserve the exact
-SDK evidence and ask before adding a dependency, changing the configuration
-contract, or implementing a narrow transport shim.
+After a stable official SDK release contains
+`ClientSessionOptions.ProtocolVersion` from PR #1127, first update the SDK by
+the normal dependency decision process. Then requalify the historical fixture
+with the legacy revision explicitly requested through the SDK. Do not restore
+an SSE configuration or runtime path before that qualification succeeds.
 
 ### 5. Run cross-era contract checks
 
@@ -76,12 +89,12 @@ diagnostics but must not create separate agent-facing command families.
 
 ## Acceptance criteria
 
-The milestone passes when:
+The currently supported qualification passes when:
 
-- each of the three compatibility layers has a recorded, reproducible fixture
-  and observed protocol revision;
-- supported stdio and HTTP combinations can discover and invoke tools using the
-  existing public CLI contract;
+- legacy initialized stdio and Streamable HTTP have recorded, reproducible
+  fixtures and observed protocol revisions;
+- those supported combinations can discover and invoke tools using the existing
+  public CLI contract;
 - stateful combinations retain continuity across separate daemon-backed CLI
   processes and retire cleanly on reload or shutdown;
 - direct and daemon-backed modes remain behaviorally equivalent where retained
@@ -90,7 +103,7 @@ The milestone passes when:
   duplicated locally;
 - unsupported combinations fail with deterministic structured errors and an
   actionable recovery path; and
-- full tests, race tests, vet, module verification, diff checks, and real
+- full tests, race tests, vet, module verification, diff checks, and their real
   fixture qualification pass.
 
 If the pinned SDK cannot support a required layer through a credible public
@@ -101,6 +114,9 @@ changing dependencies, configuration, or architecture.
 
 - OAuth and browser-based authorization flows.
 - Typed HTTP query, header, and credential configuration.
+- Legacy HTTP+SSE, until a stable official Go SDK release includes
+  `ClientSessionOptions.ProtocolVersion` (PR #1127); then requalify against the
+  historical fixture before exposing it in configuration or runtime behavior.
 - Automatic configuration discovery, templates, and additional secret
   providers.
 - Detached daemon startup, service-manager integration, watchers, idle
