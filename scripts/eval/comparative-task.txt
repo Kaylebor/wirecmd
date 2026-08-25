@@ -1,0 +1,28 @@
+Use only the assigned capability interface and ordinary shell tools. Discover
+that interface through its normal help or catalog surface; do not inspect
+repository source, assigned configuration contents, parent-control artifacts,
+logs from other runs, or another condition's files. Do not use raw HTTP,
+execute fixture binaries directly, or substitute another capability interface.
+
+1. Find the HTTP-backed capability source that validates a header value later
+   in this task. From that same source, find a capability that returns its
+   deterministic sentence, and obtain that sentence.
+2. Transform the sentence with an ordinary shell command into a lowercase
+   identifier containing only ASCII letters and digits.
+3. Store an entity in the stateful knowledge graph. Use the transformed
+   identifier as its name, `evaluation` as its type, and the original sentence
+   as its observation. Where the assigned interface permits capabilities in a
+   parent shell program, perform retrieval of the sentence, transformation,
+   and graph creation in one such program.
+4. In a later operation, retrieve the entity and confirm its exact name and
+   observation, demonstrating retained state.
+5. Intentionally call the header-validation capability once with an integer
+   where it expects a string. Interpret the resulting failure, correct the
+   input, and succeed with region `EU`.
+6. Delete the entity and independently verify through the assigned capability
+   interface that it is gone.
+
+Do not start, stop, reload, or repair supplied daemons or fixtures. Finish
+with a concise report of the sentence, identifier, discovery/help steps,
+failure and recovery, state verification, cleanup verification, and whether
+one-parent-shell composition succeeded.
