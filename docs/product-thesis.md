@@ -144,10 +144,11 @@ transport path. The public command and result contract must not branch by era;
 differences remain within the SDK and diagnostics unless they change an actual
 capability available to the caller.
 
-The first validation milestone found the shell interaction model viable. The
-current milestone therefore qualifies the two remaining legacy layers; it does
-not yet expand production daemon behavior, configuration discovery, OAuth, or
-packaging.
+The first validation milestone found the shell interaction model viable, and
+the supported legacy stdio and Streamable HTTP layers are now qualified. Legacy
+HTTP+SSE remains deferred at the official SDK boundary. The current milestone
+adds trusted global and workspace configuration discovery; it does not expand
+production daemon behavior, OAuth, or packaging.
 
 ## Current non-goals
 

@@ -6,8 +6,10 @@
 - `docs/product-thesis.md` is authoritative for product direction and scope.
 - `docs/validation-plan.md` is the authoritative record of the completed first
   validation milestone and its acceptance criteria.
-- `docs/compatibility-plan.md` is authoritative for the current milestone and
-  its acceptance criteria.
+- `docs/compatibility-plan.md` is the authoritative record of the completed
+  supported-protocol qualification; legacy HTTP+SSE remains deferred there.
+- `docs/discovery-plan.md` is authoritative for the current automatic
+  configuration-discovery milestone and its acceptance criteria.
 - Files under `docs/notes/` are non-authoritative working material. Do not turn
   an idea from those files into a requirement without promoting it explicitly
   into an authoritative document.
@@ -39,7 +41,7 @@
 
 ## Scope discipline
 
-- Work toward the current compatibility milestone before expanding product
+- Work toward the current authoritative milestone before expanding product
   breadth.
 - Prefer the smallest coherent, reversible change that tests a stated
   hypothesis or satisfies an accepted contract.

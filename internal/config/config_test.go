@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -267,6 +268,35 @@ func TestLoadEffectiveUsesOrderedPathsAndIdentifiesFailures(t *testing.T) {
 	}
 	if _, err := LoadEffective([]string{basePath, invalidPath}); err == nil || !strings.Contains(err.Error(), invalidPath) {
 		t.Fatalf("LoadEffective(invalid) error = %v, want source path", err)
+	}
+}
+
+func TestDiscoveredWorkspaceLoadRejectsSymlinkWithoutChangingExplicitLoad(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.kdl")
+	link := filepath.Join(dir, "wirecmd.kdl")
+	source := `wirecmd { server "helper" { scope "workspace"; stdio "helper" } }`
+	if err := os.WriteFile(target, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadEffectiveDiscovered([]string{link}); err == nil {
+		t.Fatalf("LoadEffectiveDiscovered() error = %v", err)
+	}
+	if _, err := LoadEffective([]string{link}); err != nil {
+		t.Fatalf("explicit LoadEffective() changed behavior: %v", err)
+	}
+}
+
+func TestDiscoveredWorkspaceLoadRejectsFIFO(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wirecmd.kdl")
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadEffectiveDiscovered([]string{path}); err == nil || !strings.Contains(err.Error(), "regular non-symlink") {
+		t.Fatalf("LoadEffectiveDiscovered() error = %v", err)
 	}
 }
 

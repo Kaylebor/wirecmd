@@ -20,6 +20,7 @@ import (
 	"unicode"
 
 	"github.com/Kaylebor/wirecmd/internal/config"
+	"github.com/Kaylebor/wirecmd/internal/discovery"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -100,6 +101,9 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 	if parseErr != nil {
 		return nil, invocationError("invalid_flags", parseErr.Error(), "place Wirecmd flags before the server and tool names")
 	}
+	if admin, ok := parseConfigAdmin(positionals, opts); ok {
+		return runConfigAdmin(admin)
+	}
 	var req request
 	var requestErr *appError
 	if opts.help {
@@ -125,17 +129,31 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 			return result, appErr
 		}
 	}
-	if len(opts.configs) == 0 {
-		return nil, configurationError("config_required", "at least one --config PATH is required", "supply one or more KDL configuration files")
-	}
-
 	cwd, err := os.Getwd()
 	if err != nil {
 		return nil, transportError("caller_cwd_unavailable", err.Error(), "run Wirecmd from an accessible working directory")
 	}
-	configPaths, err := absoluteConfigPaths(cwd, opts.configs)
-	if err != nil {
-		return nil, configurationError("config_path_invalid", err.Error(), "supply valid configuration paths")
+	var configPaths []string
+	discovered := len(opts.configs) == 0
+	if len(opts.configs) != 0 {
+		configPaths, err = absoluteConfigPaths(cwd, opts.configs)
+		if err != nil {
+			return nil, configurationError("config_path_invalid", err.Error(), "supply valid configuration paths")
+		}
+	} else {
+		configPaths, err = discovery.Paths(cwd)
+		if err != nil {
+			var untrusted *discovery.UntrustedError
+			var notFound *discovery.NotFoundError
+			switch {
+			case errors.As(err, &untrusted):
+				return nil, userActionError("workspace_untrusted", err.Error(), "run wirecmd config trust "+shellQuote(untrusted.Workspace))
+			case errors.As(err, &notFound):
+				return nil, configurationError("config_not_found", err.Error(), "create a global or workspace wirecmd.kdl, or supply --config PATH")
+			default:
+				return nil, configurationError("config_discovery_failed", err.Error(), "check Wirecmd configuration and trust state")
+			}
+		}
 	}
 	// The daemon handshake precedes configuration parsing and secret lookup.
 	// Besides failing clearly when it is unavailable, this makes normal-mode
@@ -149,13 +167,18 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 		}
 		defer daemonClient.Close()
 	}
-	cfg, err := config.LoadEffective(configPaths)
+	var cfg *config.Config
+	if discovered {
+		cfg, err = config.LoadEffectiveDiscovered(configPaths)
+	} else {
+		cfg, err = config.LoadEffective(configPaths)
+	}
 	if err != nil {
 		return nil, configurationError("config_invalid", err.Error(), "correct the supplied KDL configuration")
 	}
 	if req.operation == listServers {
 		if !opts.direct {
-			result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, cwd, configPaths, nil), errOut)
+			result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, cwd, configPaths, discovered, nil), errOut)
 			return result, appErr
 		}
 		return serverList(cfg), nil
@@ -166,7 +189,7 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 	}
 	if !opts.direct {
 		secrets := selectedSecretInputs(server, os.LookupEnv)
-		result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, cwd, configPaths, secrets), errOut)
+		result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, cwd, configPaths, discovered, secrets), errOut)
 		if appErr != nil || req.help == noHelp {
 			return result, appErr
 		}
@@ -712,6 +735,10 @@ func protocolError(code, message, action string) *appError {
 
 func transportError(code, message, action string) *appError {
 	return &appError{category: "transport", code: code, message: message, action: action, exitCode: exitTransport}
+}
+
+func userActionError(code, message, action string) *appError {
+	return &appError{category: "user_action", code: code, message: message, action: action, exitCode: exitUserAction}
 }
 
 func daemonUnavailable() *appError {

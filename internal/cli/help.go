@@ -344,7 +344,7 @@ func parseProjectedValue(property projectedProperty, raw projectedArgument) (any
 }
 
 func globalHelpText() string {
-	return "Usage:\n  " + usage + "\n\nDiscover configured servers, inspect focused help, then invoke tools.\n\nFocused help:\n  wirecmd [client flags] --help <server>\n  wirecmd [client flags] --help <server> <tool>\n\nTool arguments follow <server> <tool>. Use -- JSON_OBJECT for a raw argument overlay.\n"
+	return "Usage:\n  " + usage + "\n\nDiscover configured servers, inspect focused help, then invoke tools. Configuration is discovered automatically unless --config is supplied.\n\nFocused help:\n  wirecmd [client flags] --help <server>\n  wirecmd [client flags] --help <server> <tool>\n\nWorkspace trust:\n  wirecmd config trust [PATH]\n  wirecmd config untrust [PATH]\n  wirecmd config trust status [PATH]\n  wirecmd config trust list\n\nTool arguments follow <server> <tool>. Use -- JSON_OBJECT for a raw argument overlay.\n"
 }
 
 func renderServerHelp(server string, tools []toolSummary) string {

@@ -1,6 +1,6 @@
 ---
 name: wirecmd
-description: Discover and compose configured Wirecmd capabilities from the shell, including focused help, projected arguments, and lossless JSON calls.
+description: Discover and compose Wirecmd capabilities from the shell, including trusted workspace configuration, focused help, projected arguments, and lossless JSON calls.
 ---
 
 # Wirecmd
@@ -10,16 +10,41 @@ the server and tool names. Treat ordinary operation output as JSON suitable for
 inspection, piping, and scripting; send no assumptions about the upstream
 protocol into a call.
 
+## Select configuration
+
+When `--config` is omitted, Wirecmd loads the global KDL file at
+an absolute `$XDG_CONFIG_HOME/wirecmd/config.kdl`, falling back to
+`~/.config/wirecmd/config.kdl`, then composes trusted workspace `wirecmd.kdl`
+files from the trusted root to the current directory. Repeated `--config PATH`
+options replace discovery completely and preserve their weakest-to-strongest
+order.
+
+Manage trust explicitly when a workspace is not yet approved:
+
+```sh
+wirecmd config trust [PATH]
+wirecmd config untrust [PATH]
+wirecmd config trust status [PATH]
+wirecmd config trust list
+```
+
+The optional path defaults to the current directory. A missing approval is the
+recoverable `workspace_untrusted` error (exit 8); no discovered source is
+`config_not_found` (exit 3). These commands remain non-interactive. A server
+named `config` can still be called through `--json` or an exact-call envelope.
+
 ## Discover before calling
 
 Start by listing configured servers, then list the selected server's tools.
 Request focused help for a tool before guessing its input shape:
 
 ```sh
-wirecmd --config PATH
-wirecmd --config PATH SERVER
-wirecmd --config PATH --help SERVER TOOL
+wirecmd
+wirecmd SERVER
+wirecmd --help SERVER TOOL
 ```
+
+Use `--config PATH` in these forms when an explicit source list is required.
 
 Focused help is readable text. It identifies simple projected flags, the
 original JSON names and types, and properties that need JSON input or a

@@ -1,16 +1,16 @@
-# MCP Compatibility Qualification Milestone
+# MCP Compatibility Qualification Record
 
-Status: authoritative current milestone; legacy HTTP+SSE deferred at the SDK boundary
+Status: authoritative completed supported-protocol qualification; legacy HTTP+SSE deferred at the SDK boundary
 
 ## Objective
 
-Qualify the legacy initialized stdio and Streamable HTTP protocol layers that
-the pinned official SDK can support today, while preserving one shell-facing
-command, result, error, and daemon contract across those eras. Legacy HTTP+SSE
-remains a full-MVP target, but is deferred until the official SDK exposes the
-required stable client API.
+Record the qualified legacy initialized stdio and Streamable HTTP protocol
+layers that the pinned official SDK supports today, while preserving one
+shell-facing command, result, error, and daemon contract across those eras.
+Legacy HTTP+SSE remains a full-MVP target, but is deferred until the official
+SDK exposes the required stable client API.
 
-The milestone proceeds newest to oldest:
+Qualification covered the deployed layers newest to oldest:
 
 1. establish and retain the modern `2026-07-28` baseline;
 2. qualify legacy initialized MCP over stdio and Streamable HTTP; and
@@ -48,7 +48,17 @@ Do not add a local shim or restore the public transport surface. Re-evaluate
 only after a stable official SDK release contains
 `ClientSessionOptions.ProtocolVersion` from upstream PR #1127.
 
-## Implementation sequence
+## Qualification result
+
+The supported compatibility qualification is complete. Modern MCP, legacy
+initialized stdio, and legacy initialized Streamable HTTP use the same direct
+and daemon-backed shell contract, with the recorded fixtures demonstrating
+discovery, invocation, retained state where applicable, and clean reload.
+Legacy HTTP+SSE remains deferred at the SDK boundary and is not exposed in
+configuration or runtime behavior. Automatic configuration discovery is now
+tracked by the authoritative [discovery plan](discovery-plan.md).
+
+## Reproduction sequence
 
 ### 1. Establish the fixture matrix
 
@@ -89,7 +99,7 @@ diagnostics but must not create separate agent-facing command families.
 
 ## Acceptance criteria
 
-The currently supported qualification passes when:
+The completed supported qualification passes because:
 
 - legacy initialized stdio and Streamable HTTP have recorded, reproducible
   fixtures and observed protocol revisions;
@@ -117,13 +127,13 @@ changing dependencies, configuration, or architecture.
 - Legacy HTTP+SSE, until a stable official Go SDK release includes
   `ClientSessionOptions.ProtocolVersion` (PR #1127); then requalify against the
   historical fixture before exposing it in configuration or runtime behavior.
-- Automatic configuration discovery, templates, and additional secret
-  providers.
+- Templates and additional secret providers.
 - Detached daemon startup, service-manager integration, watchers, idle
   eviction, automatic recovery, and pool widths above one.
 - Resources, prompts, subscriptions, Tasks, sampling, and richer elicitation.
 - MCP server/proxy mode and non-MCP upstream adapters.
 - Packaging and release automation.
 
-These remain valid future slices but are not prerequisites for determining
-whether the first MVP can span the intended deployed MCP protocol eras.
+These remain valid future slices but are not prerequisites for the completed
+supported-protocol qualification or the current configuration-discovery
+milestone.

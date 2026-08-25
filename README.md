@@ -36,10 +36,11 @@ The module path deliberately does not depend on a vanity domain. A project
 website such as `wirecmd.dev` may be added independently later.
 
 The first agent-facing validation milestone is complete: comparative evidence
-supports continuing the project. The current milestone qualifies the remaining
-deployed MCP protocol layers needed for the first full MVP. Normal commands use
-a private foreground local daemon; `--direct` is the deliberate one-shot path
-for testing and diagnosis.
+supports continuing the project. Supported legacy stdio and Streamable HTTP
+protocol layers are qualified; legacy HTTP+SSE remains deferred at the SDK
+boundary. The current milestone adds deterministic automatic configuration
+discovery and workspace trust. Normal commands use a private foreground local
+daemon; `--direct` is the deliberate one-shot path for testing and diagnosis.
 
 Current daemon administration is intentionally small:
 
@@ -48,6 +49,30 @@ wirecmd daemon run
 wirecmd daemon status
 wirecmd daemon reload
 ```
+
+Without `--config`, Wirecmd loads the global file at
+`$XDG_CONFIG_HOME/wirecmd/config.kdl`, or `~/.config/wirecmd/config.kdl` when
+`XDG_CONFIG_HOME` is unset or not absolute. It then composes trusted workspace `wirecmd.kdl`
+files from the trusted workspace root to the caller's current directory.
+Repeated `--config PATH` options instead provide the complete ordered source
+list and bypass discovery and trust checks.
+
+Manage recursive directory trust explicitly:
+
+```sh
+wirecmd config trust [PATH]
+wirecmd config untrust [PATH]
+wirecmd config trust status [PATH]
+wirecmd config trust list
+```
+
+`PATH` defaults to the caller's current directory. These administrative forms
+are non-interactive and reject ordinary execution flags. If a workspace
+configuration is present without a trusted root, Wirecmd returns the
+`workspace_untrusted` structured error (exit 8) with the exact trust action. If
+no configuration source exists, it returns `config_not_found` (exit 3). A
+server named `config` remains callable through `--json` or an exact-call
+envelope.
 
 Focused help is conventional text, so it can be read directly or filtered with
 ordinary shell tools. Calls and failures remain newline-terminated JSON:
@@ -91,7 +116,10 @@ not implemented yet.
 - [Validation plan](docs/validation-plan.md) records the completed first
   falsifiable implementation milestone.
 - [Compatibility plan](docs/compatibility-plan.md) defines the current
-  newest-to-oldest protocol qualification milestone.
+  supported newest-to-oldest protocol qualification and the deferred SSE
+  boundary.
+- [Discovery plan](docs/discovery-plan.md) defines the authoritative current
+  automatic configuration-discovery and workspace-trust milestone.
 - [Exploratory design notes](docs/notes/exploratory-design.md) retain ideas and
   research that are useful but not committed requirements.
 

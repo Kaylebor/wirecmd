@@ -6,7 +6,9 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 
 	kdl "github.com/njreid/gokdl2"
 	"github.com/njreid/gokdl2/document"
@@ -177,16 +179,63 @@ func Load(path string) (*Source, error) {
 	return source, nil
 }
 
+// loadDiscoveredProject rejects symlinks and pathname replacement before
+// parsing an automatically discovered workspace source.
+func loadDiscoveredProject(path string) (*Source, error) {
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, fmt.Errorf("load configuration %q: %w", path, err)
+	}
+	f := os.NewFile(uintptr(fd), path)
+	if f == nil {
+		_ = syscall.Close(fd)
+		return nil, fmt.Errorf("load configuration %q: invalid file descriptor", path)
+	}
+	defer f.Close()
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("load configuration %q: %w", path, err)
+	}
+	openInfo, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("load configuration %q: %w", path, err)
+	}
+	if pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() || !openInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openInfo) {
+		return nil, fmt.Errorf("load configuration %q: discovered workspace config must remain a regular non-symlink file", path)
+	}
+	source, err := Parse(path, f)
+	if err != nil {
+		return nil, fmt.Errorf("load configuration %q: %w", path, err)
+	}
+	return source, nil
+}
+
 // LoadEffective loads paths from weakest to strongest, composes their partial
 // sources, and validates the resulting complete configuration.
 func LoadEffective(paths []string) (*Config, error) {
+	return loadEffective(paths, false)
+}
+
+// LoadEffectiveDiscovered validates workspace wirecmd.kdl files without
+// changing the behavior of trusted global or explicitly supplied files.
+func LoadEffectiveDiscovered(paths []string) (*Config, error) {
+	return loadEffective(paths, true)
+}
+
+func loadEffective(paths []string, discovered bool) (*Config, error) {
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("configuration: at least one config file is required")
 	}
 
 	sources := make([]*Source, 0, len(paths))
 	for _, path := range paths {
-		source, err := Load(path)
+		var source *Source
+		var err error
+		if discovered && filepath.Base(path) == "wirecmd.kdl" {
+			source, err = loadDiscoveredProject(path)
+		} else {
+			source, err = Load(path)
+		}
 		if err != nil {
 			return nil, err
 		}

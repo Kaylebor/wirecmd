@@ -28,7 +28,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 1
+const daemonProtocol = 2
 
 type daemonAdmin struct {
 	command string
@@ -98,6 +98,7 @@ type daemonRequest struct {
 	Help        helpKind               `json:"help,omitempty"`
 	CWD         string                 `json:"cwd"`
 	Configs     []string               `json:"configs,omitempty"`
+	Discovered  bool                   `json:"discovered,omitempty"`
 	Fingerprint string                 `json:"fingerprint,omitempty"`
 	Execution   string                 `json:"execution_fingerprint,omitempty"`
 	Secrets     map[string]secretInput `json:"secrets,omitempty"`
@@ -132,8 +133,8 @@ func absoluteConfigPaths(cwd string, paths []string) ([]string, error) {
 	return result, nil
 }
 
-func daemonRequestFromConfig(req request, cfg *config.Config, cwd string, paths []string, secrets map[string]secretInput) daemonRequest {
-	request := daemonRequest{Operation: req.operation, Server: req.server, Tool: req.tool, Arguments: req.arguments, Projected: req.projected, Overlay: req.overlay, Help: req.help, CWD: cwd, Configs: paths, Fingerprint: configFingerprint(cfg, cwd), Secrets: secrets}
+func daemonRequestFromConfig(req request, cfg *config.Config, cwd string, paths []string, discovered bool, secrets map[string]secretInput) daemonRequest {
+	request := daemonRequest{Operation: req.operation, Server: req.server, Tool: req.tool, Arguments: req.arguments, Projected: req.projected, Overlay: req.overlay, Help: req.help, CWD: cwd, Configs: paths, Discovered: discovered, Fingerprint: configFingerprint(cfg, cwd), Secrets: secrets}
 	if req.operation != listServers {
 		if server, ok := findServer(cfg, req.server); ok {
 			request.Execution = executionFingerprint(server, cfg.Root, cwd)
@@ -654,12 +655,18 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest) daemonReply
 		}
 	}
 	generation := d.currentGeneration()
-	key := daemonConfigKey(request.CWD, request.Configs, generation)
+	key := daemonConfigKey(request.CWD, request.Configs, request.Discovered, generation)
 	d.mu.Lock()
 	cached := d.configs[key]
 	d.mu.Unlock()
 	if cached == nil {
-		loaded, err := config.LoadEffective(request.Configs)
+		var loaded *config.Config
+		var err error
+		if request.Discovered {
+			loaded, err = config.LoadEffectiveDiscovered(request.Configs)
+		} else {
+			loaded, err = config.LoadEffective(request.Configs)
+		}
 		if err != nil {
 			return errorReply(configurationError("config_invalid", err.Error(), "correct the supplied KDL configuration"))
 		}
@@ -780,8 +787,8 @@ func (d *daemon) currentGeneration() uint64 {
 	return d.generation
 }
 
-func daemonConfigKey(cwd string, paths []string, generation uint64) string {
-	return fmt.Sprintf("%d\x00%s\x00%s", generation, cwd, strings.Join(paths, "\x00"))
+func daemonConfigKey(cwd string, paths []string, discovered bool, generation uint64) string {
+	return fmt.Sprintf("%d\x00%t\x00%s\x00%s", generation, discovered, cwd, strings.Join(paths, "\x00"))
 }
 
 func validateSecretInputs(server config.Server, inputs map[string]secretInput) *appError {
