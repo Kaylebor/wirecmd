@@ -378,7 +378,6 @@ func TestHTTPConfigurationValidation(t *testing.T) {
 		{name: "relative", source: `wirecmd { server "remote" { scope "workspace"; http "/mcp" } }`, want: "absolute http or https"},
 		{name: "user info", source: `wirecmd { server "remote" { scope "workspace"; http "https://user:pass@example.test/mcp" } }`, want: "must not contain URL user information"},
 		{name: "fragment", source: `wirecmd { server "remote" { scope "workspace"; http "https://example.test/mcp#section" } }`, want: "must not contain a fragment"},
-		{name: "children deferred", source: `wirecmd { server "remote" { scope "workspace"; http "https://example.test/mcp" { header TOKEN="x" } } }`, want: "child nodes are not supported yet"},
 		{name: "same source exclusive", source: `wirecmd { server "remote" { scope "workspace"; stdio "one"; http "https://example.test/mcp" } }`, want: "mutually exclusive"},
 	}
 	for _, test := range tests {
@@ -396,6 +395,131 @@ func TestHTTPConfigurationValidation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestComposeHTTPFieldsRetainsOrderAndProvenance(t *testing.T) {
+	base, err := ParseString("base.kdl", `wirecmd {
+        server "remote" {
+            scope "workspace"
+            http "https://example.test/mcp?base=1" {
+                query tenant="base"
+                query empty=""
+                header X-API-Key=(secret)"env://API_KEY"
+                header Authorization="Bearer base"
+            }
+        }
+    }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := ParseString("local.kdl", `wirecmd {
+        server "remote" {
+            http {
+                query tenant="local"
+                query added="value"
+                header x-api-key="local"
+                header X-Trace="trace"
+            }
+        }
+    }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := Compose(base, local)
+	if err != nil {
+		t.Fatalf("Compose() error = %v", err)
+	}
+	http := config.Servers[0].HTTP
+	if http == nil {
+		t.Fatal("HTTP configuration is nil")
+	}
+	if got, want := http.Endpoint, "https://example.test/mcp?base=1"; got != want {
+		t.Fatalf("endpoint = %q, want %q", got, want)
+	}
+	if got, want := httpFieldNames(http.Query), []string{"tenant", "empty", "added"}; !sameStrings(got, want) {
+		t.Fatalf("query order = %#v, want %#v", got, want)
+	}
+	if got, want := httpFieldNames(http.Headers), []string{"x-api-key", "Authorization", "X-Trace"}; !sameStrings(got, want) {
+		t.Fatalf("header order = %#v, want %#v", got, want)
+	}
+	if http.Query[0].Value.Text != "local" || http.Query[0].File != "local.kdl" || http.Query[0].Path != `wirecmd.server["remote"].http.query["tenant"]` {
+		t.Fatalf("overridden query field = %#v", http.Query[0])
+	}
+	if http.Query[1].Value.Text != "" || http.Query[1].File != "base.kdl" {
+		t.Fatalf("present-empty query field = %#v", http.Query[1])
+	}
+	if http.Headers[0].Value.Kind != ValueLiteral || http.Headers[0].Value.Text != "local" || http.Headers[0].File != "local.kdl" {
+		t.Fatalf("case-insensitive header override = %#v", http.Headers[0])
+	}
+	if http.Headers[1].Value.Text != "Bearer base" || http.Headers[1].File != "base.kdl" {
+		t.Fatalf("retained header = %#v", http.Headers[1])
+	}
+	if http.Headers[2].Value.Text != "trace" || http.Headers[2].File != "local.kdl" {
+		t.Fatalf("added header = %#v", http.Headers[2])
+	}
+
+	secret := base.Servers[0].HTTP.Headers[0]
+	if secret.Value.Kind != ValueSecretReference || secret.Value.Text != "env://API_KEY" || secret.Value.Provenance != secret.Provenance {
+		t.Fatalf("secret header field/value provenance = %#v", secret)
+	}
+}
+
+func TestParseHTTPFieldsRequiresOnePropertyAndRejectsDuplicates(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "query arguments", source: `wirecmd { server "remote" { http "https://example.test/mcp" { query "tenant" } } }`, want: "query: expected one named value"},
+		{name: "header multiple properties", source: `wirecmd { server "remote" { http "https://example.test/mcp" { header one="1" two="2" } } }`, want: "header: expected one named value"},
+		{name: "query duplicate", source: `wirecmd { server "remote" { http "https://example.test/mcp" { query tenant="one"; query tenant="two" } } }`, want: "duplicate query name"},
+		{name: "header duplicate case insensitive", source: `wirecmd { server "remote" { http "https://example.test/mcp" { header Token="one"; header tOkEn="two" } } }`, want: "duplicate header name"},
+		{name: "unknown child", source: `wirecmd { server "remote" { http "https://example.test/mcp" { cookie value="one" } } }`, want: "unknown child node \"cookie\""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ParseString("test.kdl", test.source)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ParseString() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestHTTPHeaderValidation(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{name: "space", header: `"Bad Name"`, want: "invalid header name"},
+		{name: "control", header: `"Bad\\nName"`, want: "invalid header name"},
+		{name: "host", header: "hOsT", want: "is reserved"},
+		{name: "mcp parameter prefix", header: "Mcp-Param-User", want: "is reserved"},
+		{name: "last event id", header: "LAST-EVENT-ID", want: "is reserved"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := `wirecmd { server "remote" { scope "workspace"; http "https://example.test/mcp" { header ` + test.header + `="value" } } }`
+			parsed, err := ParseString("test.kdl", source)
+			if err != nil {
+				t.Fatalf("ParseString() error = %v", err)
+			}
+			_, err = Compose(parsed)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Compose() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func httpFieldNames(fields []HTTPField) []string {
+	result := make([]string, len(fields))
+	for i, field := range fields {
+		result[i] = field.Name
+	}
+	return result
 }
 
 func TestParseSecretReferences(t *testing.T) {

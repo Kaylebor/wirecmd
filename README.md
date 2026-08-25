@@ -38,8 +38,9 @@ website such as `wirecmd.dev` may be added independently later.
 The first agent-facing validation milestone is complete: comparative evidence
 supports continuing the project. Supported legacy stdio and Streamable HTTP
 protocol layers are qualified; legacy HTTP+SSE remains deferred at the SDK
-boundary. The current milestone adds deterministic automatic configuration
-discovery and workspace trust. Normal commands use a private foreground local
+boundary. Automatic configuration discovery and workspace trust are also
+complete. The current milestone adds typed query and header values for
+Streamable HTTP endpoints. Normal commands use a private foreground local
 daemon; `--direct` is the deliberate one-shot path for testing and diagnosis.
 
 Current daemon administration is intentionally small:
@@ -105,9 +106,27 @@ wirecmd {
 }
 ```
 
-The initial HTTP slice accepts absolute `http` or `https` endpoints only.
-Typed query/header entries, credential injection, and OAuth are deliberately
-not implemented yet.
+The HTTP endpoint accepts structural query and header entries. Values are
+literal strings by default or environment-backed secret references:
+
+```kdl
+http "https://example.test/mcp" {
+    query tenant="acme"
+    query token=(secret)"env://API_TOKEN"
+
+    header X-API-Key=(secret)"env://API_KEY"
+    header Authorization=(secret)"env://AUTHORIZATION"
+}
+```
+
+Query names are case-sensitive; header names are case-insensitive. A stronger
+configuration layer replaces a matching entry while retaining its position,
+and appends new entries. Existing endpoint query parameters remain supported;
+structural query entries replace matching keys. `Authorization` is the
+complete header value, such as `Bearer ...`; transport-owned headers are
+reserved. Templates and OAuth flows remain deferred. Only the selected
+server's secret references are resolved. In daemon mode, resolved startup
+credentials also distinguish retained instances.
 
 ## Project documents
 
@@ -118,8 +137,10 @@ not implemented yet.
 - [Compatibility plan](docs/compatibility-plan.md) defines the current
   supported newest-to-oldest protocol qualification and the deferred SSE
   boundary.
-- [Discovery plan](docs/discovery-plan.md) defines the authoritative current
+- [Discovery plan](docs/discovery-plan.md) records the completed authoritative
   automatic configuration-discovery and workspace-trust milestone.
+- [HTTP values plan](docs/http-values-plan.md) defines the authoritative
+  typed query/header configuration milestone.
 - [Exploratory design notes](docs/notes/exploratory-design.md) retain ideas and
   research that are useful but not committed requirements.
 

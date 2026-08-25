@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/Kaylebor/wirecmd/internal/config"
 	"github.com/Kaylebor/wirecmd/internal/discovery"
@@ -420,21 +422,88 @@ func serverList(cfg *config.Config) serversEnvelope {
 // the CLI and daemon independent from MCP transport construction without
 // introducing a general adapter layer.
 type connectionTarget struct {
-	command  *exec.Cmd
-	endpoint string
+	command    *exec.Cmd
+	endpoint   string
+	httpClient *http.Client
 }
 
 func (t connectionTarget) requiresToolPriming() bool { return t.endpoint != "" }
 
 func makeTarget(server config.Server, root *config.Root, callerCWD string, lookup func(string) (string, bool)) (connectionTarget, []string, *appError) {
 	if server.HTTP != nil {
-		return connectionTarget{endpoint: server.HTTP.Endpoint}, nil, nil
+		return makeHTTPTarget(*server.HTTP, lookup)
 	}
 	command, secrets, appErr := makeCommand(server, root, callerCWD, lookup)
 	if appErr != nil {
 		return connectionTarget{}, nil, appErr
 	}
 	return connectionTarget{command: command}, secrets, nil
+}
+
+func makeHTTPTarget(transport config.HTTP, lookup func(string) (string, bool)) (connectionTarget, []string, *appError) {
+	endpoint, err := url.Parse(transport.Endpoint)
+	if err != nil {
+		return connectionTarget{}, nil, configurationError("invalid_http_endpoint", err.Error(), "correct the configured HTTP endpoint")
+	}
+	secrets := make([]string, 0, len(transport.Query)+len(transport.Headers))
+	resolve := func(value config.Value) (config.ResolvedValue, *appError) {
+		resolved, err := value.ResolveEnv(lookup)
+		if err != nil {
+			return config.ResolvedValue{}, configurationError("secret_not_available", err.Error(), "set the required environment variable before invoking Wirecmd")
+		}
+		if !utf8.ValidString(resolved.Text) {
+			return config.ResolvedValue{}, configurationError("invalid_http_value", "HTTP query and header values must be valid UTF-8", "correct the configured or resolved HTTP value")
+		}
+		if resolved.Sensitive && resolved.Text != "" {
+			secrets = append(secrets, resolved.Text)
+		}
+		return resolved, nil
+	}
+	query := endpoint.Query()
+	for _, field := range transport.Query {
+		value, appErr := resolve(field.Value)
+		if appErr != nil {
+			return connectionTarget{}, nil, appErr
+		}
+		query.Set(field.Name, value.Text)
+	}
+	endpoint.RawQuery = query.Encode()
+
+	headers := make(http.Header, len(transport.Headers))
+	for _, field := range transport.Headers {
+		value, appErr := resolve(field.Value)
+		if appErr != nil {
+			return connectionTarget{}, nil, appErr
+		}
+		if strings.ContainsAny(value.Text, "\r\n") {
+			return connectionTarget{}, nil, configurationError("invalid_http_value", fmt.Sprintf("header %q contains a line break", field.Name), "correct the configured or resolved HTTP header value")
+		}
+		headers.Set(field.Name, value.Text)
+	}
+	client := &http.Client{Transport: &configuredHeaderTransport{base: http.DefaultTransport, headers: headers, scheme: endpoint.Scheme, host: endpoint.Host}}
+	return connectionTarget{endpoint: endpoint.String(), httpClient: client}, secrets, nil
+}
+
+type configuredHeaderTransport struct {
+	base    http.RoundTripper
+	headers http.Header
+	scheme  string
+	host    string
+}
+
+func (t *configuredHeaderTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if !strings.EqualFold(request.URL.Scheme, t.scheme) || !strings.EqualFold(request.URL.Host, t.host) {
+		return t.base.RoundTrip(request)
+	}
+	clone := request.Clone(request.Context())
+	clone.Header = request.Header.Clone()
+	for name, values := range t.headers {
+		clone.Header.Del(name)
+		for _, value := range values {
+			clone.Header.Add(name, value)
+		}
+	}
+	return t.base.RoundTrip(clone)
 }
 
 func makeCommand(server config.Server, root *config.Root, callerCWD string, lookup func(string) (string, bool)) (*exec.Cmd, []string, *appError) {
@@ -582,7 +651,7 @@ func connectTarget(ctx context.Context, target connectionTarget, redactor *redac
 		return connectCommand(ctx, target.command, redactor)
 	}
 	if target.endpoint != "" {
-		transport := &mcp.StreamableClientTransport{Endpoint: target.endpoint, DisableStandaloneSSE: true}
+		transport := &mcp.StreamableClientTransport{Endpoint: target.endpoint, HTTPClient: target.httpClient, DisableStandaloneSSE: true}
 		return connectSession(ctx, transport)
 	}
 	return nil, transportError("mcp_connect_failed", "server has no configured transport", "correct the server transport configuration")

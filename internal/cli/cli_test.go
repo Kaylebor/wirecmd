@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -332,6 +333,31 @@ func TestDirectStreamableHTTPContracts(t *testing.T) {
 	}
 	if fixture.requests.Load() == 0 {
 		t.Fatal("HTTP fixture did not receive MCP requests")
+	}
+}
+
+func TestDirectStreamableHTTPConfiguredQueryAndHeaders(t *testing.T) {
+	fixture := newHTTPFixture(t)
+	t.Setenv("WIRECMD_HTTP_TOKEN", "a/b c")
+	t.Setenv("WIRECMD_HTTP_KEY", "header-secret")
+	config := httpValuesConfig(t, fixture.URL+"?tenant=old&kept=yes")
+
+	code, output, stderr := invoke(t, []string{"--direct", "--config", config, "remote"})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("HTTP tool list: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	fixture.mu.Lock()
+	query := fixture.lastQuery
+	headers := fixture.lastHeaders
+	fixture.mu.Unlock()
+	if query.Get("tenant") != "acme" || query.Get("token") != "a/b c" || query.Get("kept") != "yes" {
+		t.Fatalf("configured query = %#v", query)
+	}
+	if headers.Get("X-API-Key") != "header-secret" {
+		t.Fatalf("configured header = %q", headers.Get("X-API-Key"))
+	}
+	if headers.Get("Accept") == "" || headers.Get("Content-Type") == "" || headers.Get("Mcp-Protocol-Version") == "" {
+		t.Fatalf("SDK-owned headers were lost: %#v", headers)
 	}
 }
 
@@ -838,6 +864,8 @@ type httpFixture struct {
 	holdReleaseOnce     sync.Once
 	mu                  sync.Mutex
 	methods             []string
+	lastQuery           url.Values
+	lastHeaders         http.Header
 }
 
 func newHTTPFixture(t *testing.T) *httpFixture {
@@ -879,6 +907,10 @@ func newHTTPFixtureWithBlockedToolList(t *testing.T, blockToolList bool) *httpFi
 		return server
 	}, &mcp.StreamableHTTPOptions{Stateless: true})
 	fixture.Server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		fixture.mu.Lock()
+		fixture.lastQuery = request.URL.Query()
+		fixture.lastHeaders = request.Header.Clone()
+		fixture.mu.Unlock()
 		body, err := io.ReadAll(request.Body)
 		if err == nil {
 			var message struct {
@@ -940,6 +972,11 @@ func (f *httpFixture) methodCount(want string) int {
 func httpConfig(t *testing.T, endpoint string) string {
 	t.Helper()
 	return writeConfig(t, "wirecmd { server \"remote\" { scope \"workspace\"; http "+strconv.Quote(endpoint)+" } }")
+}
+
+func httpValuesConfig(t *testing.T, endpoint string) string {
+	t.Helper()
+	return writeConfig(t, "wirecmd { server \"remote\" { scope \"workspace\"; http "+strconv.Quote(endpoint)+" { query tenant=\"acme\"; query token=(secret)\"env://WIRECMD_HTTP_TOKEN\"; header X-API-Key=(secret)\"env://WIRECMD_HTTP_KEY\" } } }")
 }
 
 func helperConfigAt(t *testing.T, path, root, env string) string {

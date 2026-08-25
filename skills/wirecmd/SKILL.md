@@ -33,6 +33,33 @@ recoverable `workspace_untrusted` error (exit 8); no discovered source is
 `config_not_found` (exit 3). These commands remain non-interactive. A server
 named `config` can still be called through `--json` or an exact-call envelope.
 
+## Configure HTTP values
+
+Streamable HTTP endpoints can declare structural query and header values:
+
+```kdl
+http "https://example.test/mcp" {
+    query tenant="acme"
+    query token=(secret)"env://API_TOKEN"
+    header X-API-Key=(secret)"env://API_KEY"
+    header Authorization=(secret)"env://AUTHORIZATION"
+}
+```
+
+Unannotated values are literals. `(secret)"env://NAME"` reads an environment
+value when the selected server is executed. Query names are case-sensitive;
+header names are case-insensitive. A stronger source replaces a matching key
+without moving it and appends new keys. Existing endpoint query parameters are
+preserved unless a structural query entry has the same key. The
+`Authorization` value is complete, for example `Bearer ...`; OAuth, templates,
+and dynamic per-request headers are not part of this slice. HTTP and MCP
+transport-owned headers are reserved and rejected; see the [HTTP values
+plan](../../docs/http-values-plan.md) for the complete list.
+
+Listing and help do not resolve secrets for unselected servers. In daemon mode,
+resolved startup credentials distinguish retained instances, so one server
+definition cannot reuse an instance started with different credentials.
+
 ## Discover before calling
 
 Start by listing configured servers, then list the selected server's tools.

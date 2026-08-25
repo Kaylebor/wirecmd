@@ -94,12 +94,21 @@ type Stdio struct {
 	Provenance
 }
 
+// HTTPField is one named HTTP query or header value. Name retains the spelling
+// from the source while composition uses the appropriate case-sensitivity for
+// the field collection.
+type HTTPField struct {
+	Name  string
+	Value Value
+	Provenance
+}
+
 // HTTP describes one complete modern Streamable HTTP transport.
-// Query and header child nodes are intentionally deferred until their typed
-// value and secret-destination semantics are implemented.
 type HTTP struct {
 	Endpoint           string
 	EndpointProvenance Provenance
+	Query              []HTTPField
+	Headers            []HTTPField
 	Provenance
 }
 
@@ -154,6 +163,8 @@ type StdioSource struct {
 type HTTPSource struct {
 	Endpoint           *string
 	EndpointProvenance Provenance
+	Query              []HTTPField
+	Headers            []HTTPField
 	Provenance
 }
 
@@ -321,6 +332,38 @@ func composeHTTP(result *HTTP, partial *HTTPSource) {
 		result.Endpoint = *partial.Endpoint
 		result.EndpointProvenance = partial.EndpointProvenance
 	}
+	result.Query = composeHTTPFields(result.Query, partial.Query, false)
+	result.Headers = composeHTTPFields(result.Headers, partial.Headers, true)
+}
+
+func composeHTTPFields(result, partial []HTTPField, caseInsensitive bool) []HTTPField {
+	if len(partial) == 0 {
+		return result
+	}
+
+	index := make(map[string]int, len(result))
+	for i, field := range result {
+		index[httpFieldKey(field.Name, caseInsensitive)] = i
+	}
+	for _, field := range partial {
+		key := httpFieldKey(field.Name, caseInsensitive)
+		if i, exists := index[key]; exists {
+			// Stronger sources replace the field in place so composition remains
+			// stable for callers that depend on declaration order.
+			result[i] = field
+			continue
+		}
+		index[key] = len(result)
+		result = append(result, field)
+	}
+	return result
+}
+
+func httpFieldKey(name string, caseInsensitive bool) string {
+	if caseInsensitive {
+		return strings.ToLower(name)
+	}
+	return name
 }
 
 func composeStdio(result *Stdio, partial *StdioSource) {
@@ -369,6 +412,9 @@ func validate(config *Config) error {
 			if err := validateHTTPEndpoint(server.HTTP.Endpoint); err != nil {
 				return validationError(server.HTTP.EndpointProvenance, path+".http", "%v", err)
 			}
+			if err := validateHTTPHeaders(server.HTTP.Headers); err != nil {
+				return validationError(err.Provenance, err.Path, "%s", err.Message)
+			}
 		} else {
 			if server.Stdio.Provenance == (Provenance{}) {
 				return validationError(server.Provenance, path+".stdio", "stdio or http is required")
@@ -379,6 +425,61 @@ func validate(config *Config) error {
 		}
 	}
 	return nil
+}
+
+type httpHeaderValidationError struct {
+	Provenance
+	Message string
+}
+
+func validateHTTPHeaders(headers []HTTPField) *httpHeaderValidationError {
+	for _, header := range headers {
+		if !validHTTPHeaderName(header.Name) {
+			return &httpHeaderValidationError{
+				Provenance: header.Provenance,
+				Message:    fmt.Sprintf("invalid header name %q", header.Name),
+			}
+		}
+		if reservedHTTPHeaderName(header.Name) {
+			return &httpHeaderValidationError{
+				Provenance: header.Provenance,
+				Message:    fmt.Sprintf("header name %q is reserved", header.Name),
+			}
+		}
+	}
+	return nil
+}
+
+// validHTTPHeaderName accepts the RFC 7230 token grammar used for HTTP field
+// names. Header values are intentionally not checked here: they are resolved
+// and validated at the request boundary, after secret lookup.
+func validHTTPHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			continue
+		}
+		switch c {
+		case '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func reservedHTTPHeaderName(name string) bool {
+	name = strings.ToLower(name)
+	switch name {
+	case "host", "content-length", "content-type", "accept", "connection", "transfer-encoding", "trailer", "upgrade", "proxy-connection", "mcp-protocol-version", "mcp-session-id", "mcp-method", "mcp-name", "last-event-id":
+		return true
+	default:
+		return strings.HasPrefix(name, "mcp-param-")
+	}
 }
 
 func validateHTTPEndpoint(endpoint string) error {
@@ -529,9 +630,6 @@ func parseHTTP(file string, node *document.Node, serverPath string) (HTTPSource,
 	if len(node.Arguments) > 1 {
 		return HTTPSource{}, fmt.Errorf("%s: expected at most one endpoint", path)
 	}
-	if len(node.Children) != 0 {
-		return HTTPSource{}, fmt.Errorf("%s: child nodes are not supported yet", path)
-	}
 	source := HTTPSource{Provenance: provenance(file, path)}
 	if len(node.Arguments) == 1 {
 		endpoint, err := literalText(node.Arguments[0], path)
@@ -541,7 +639,56 @@ func parseHTTP(file string, node *document.Node, serverPath string) (HTTPSource,
 		source.Endpoint = &endpoint
 		source.EndpointProvenance = provenance(file, path)
 	}
+	seenQuery := make(map[string]struct{})
+	seenHeader := make(map[string]struct{})
+	for _, child := range node.Children {
+		switch nodeName(child) {
+		case "query":
+			field, err := parseHTTPField(file, child, path, false)
+			if err != nil {
+				return HTTPSource{}, err
+			}
+			if _, exists := seenQuery[field.Name]; exists {
+				return HTTPSource{}, fmt.Errorf("%s: duplicate query name", field.Path)
+			}
+			seenQuery[field.Name] = struct{}{}
+			source.Query = append(source.Query, field)
+		case "header":
+			field, err := parseHTTPField(file, child, path, true)
+			if err != nil {
+				return HTTPSource{}, err
+			}
+			key := httpFieldKey(field.Name, true)
+			if _, exists := seenHeader[key]; exists {
+				return HTTPSource{}, fmt.Errorf("%s: duplicate header name", field.Path)
+			}
+			seenHeader[key] = struct{}{}
+			source.Headers = append(source.Headers, field)
+		default:
+			return HTTPSource{}, fmt.Errorf("%s: unknown child node %q", path, nodeName(child))
+		}
+	}
 	return source, nil
+}
+
+func parseHTTPField(file string, node *document.Node, httpPath string, header bool) (HTTPField, error) {
+	kind := "query"
+	if header {
+		kind = "header"
+	}
+	path := httpPath + "." + kind
+	if node.Type != "" || len(node.Arguments) != 0 || node.Properties.Len() != 1 || len(node.Children) != 0 {
+		return HTTPField{}, fmt.Errorf("%s: expected one named value", path)
+	}
+	for name, rawValue := range node.Properties.Unordered() {
+		entryPath := fmt.Sprintf("%s[%q]", path, name)
+		value, err := parseValue(rawValue, provenance(file, entryPath))
+		if err != nil {
+			return HTTPField{}, err
+		}
+		return HTTPField{Name: name, Value: value, Provenance: provenance(file, entryPath)}, nil
+	}
+	return HTTPField{}, fmt.Errorf("%s: expected one named value", path)
 }
 
 func parseScope(node *document.Node, serverPath string) (Scope, error) {

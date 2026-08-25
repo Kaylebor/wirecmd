@@ -3,9 +3,9 @@
 Status: non-authoritative working notes
 
 This note preserves accepted intent and unresolved design questions from the
-configuration discussion. It does not define the public KDL schema. Decisions
-must be promoted into `docs/product-thesis.md` or `docs/validation-plan.md`
-before they become implementation requirements.
+configuration discussion. The exact initial HTTP query/header spelling is now
+promoted in the authoritative [HTTP values plan](../http-values-plan.md);
+other ideas here remain non-authoritative until explicitly promoted.
 
 ## Governing intent
 
@@ -54,9 +54,10 @@ value-expression language for the initial implementation. Further annotations
 or richer value forms may be added when a concrete source or destination needs
 them.
 
-Exact public node names and layout remain subject to testing against real MCP
-server definitions. The selected invariant is annotated typed leaves inside
-structural commands and endpoints, not the spelling of the surrounding schema.
+For the initial HTTP slice, the promoted public spelling is `query NAME=value`
+and `header NAME=value` inside an `http "..."` node. The selected invariant is
+still annotated typed leaves inside structural commands and endpoints; broader
+destination layouts remain example-driven.
 
 For the first stdio slice, exercise only the smallest surrounding shape: a
 root, named server, workspace scope, stdio executable, ordered arguments,

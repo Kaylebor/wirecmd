@@ -8,8 +8,10 @@
   validation milestone and its acceptance criteria.
 - `docs/compatibility-plan.md` is the authoritative record of the completed
   supported-protocol qualification; legacy HTTP+SSE remains deferred there.
-- `docs/discovery-plan.md` is authoritative for the current automatic
+- `docs/discovery-plan.md` is authoritative for the completed automatic
   configuration-discovery milestone and its acceptance criteria.
+- `docs/http-values-plan.md` is authoritative for the current typed HTTP
+  query/header configuration milestone and its acceptance criteria.
 - Files under `docs/notes/` are non-authoritative working material. Do not turn
   an idea from those files into a requirement without promoting it explicitly
   into an authoritative document.

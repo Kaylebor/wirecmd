@@ -146,9 +146,20 @@ capability available to the caller.
 
 The first validation milestone found the shell interaction model viable, and
 the supported legacy stdio and Streamable HTTP layers are now qualified. Legacy
-HTTP+SSE remains deferred at the official SDK boundary. The current milestone
-adds trusted global and workspace configuration discovery; it does not expand
+HTTP+SSE remains deferred at the official SDK boundary. Trusted global and
+workspace configuration discovery is complete. The current milestone adds
+typed query and header values for Streamable HTTP endpoints; its contract is
+recorded in the [HTTP values plan](http-values-plan.md). It does not expand
 production daemon behavior, OAuth, or packaging.
+
+For this milestone, endpoint values remain structural configuration rather than
+preassembled URL or request strings. `query NAME=value` and `header NAME=value`
+children accept literal values or `(secret)"env://NAME"` references. Query
+names are case-sensitive and header names are case-insensitive. Stronger
+configuration layers replace matching keyed entries while preserving their
+position and append new entries. Only the selected server resolves its secret
+references; resolved startup credentials participate in daemon instance
+identity so retained instances cannot cross credential boundaries.
 
 ## Current non-goals
 
@@ -162,6 +173,8 @@ production daemon behavior, OAuth, or packaging.
   subsystems.
 - Supporting every MCP primitive before validating the agent-facing contract.
 - Designing future non-MCP adapters without a demonstrated consumer.
+- OAuth flows, templated or dynamically composed HTTP values, and dynamic
+  per-request headers are deferred beyond the initial typed HTTP slice.
 
 An optional future MCP-server frontend is not part of the current product
 contract. If later justified, it may expose the daemon's aggregated semantic

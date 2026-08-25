@@ -128,6 +128,40 @@ func TestDaemonStreamableHTTPContracts(t *testing.T) {
 	}
 }
 
+func TestDaemonStreamableHTTPCredentialsSelectInstances(t *testing.T) {
+	runtime := t.TempDir()
+	if err := os.Chmod(runtime, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	startTestDaemon(t)
+	fixture := newHTTPFixture(t)
+	config := httpValuesConfig(t, fixture.URL)
+	t.Setenv("WIRECMD_HTTP_KEY", "shared-key")
+	t.Setenv("WIRECMD_HTTP_TOKEN", "first-token")
+
+	for i := 0; i < 2; i++ {
+		code, output, stderr := invoke(t, []string{"--config", config, "remote"})
+		if code != exitOK || stderr != "" {
+			t.Fatalf("same credentials call %d: code=%d stderr=%q output=%s", i, code, stderr, output)
+		}
+	}
+	code, output, stderr := invoke(t, []string{"daemon", "status"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["daemon"].(map[string]any)["active_instances"].(json.Number).String() != "1" {
+		t.Fatalf("same credentials status: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	t.Setenv("WIRECMD_HTTP_TOKEN", "second-token")
+	code, output, stderr = invoke(t, []string{"--config", config, "remote"})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("different credentials call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, stderr = invoke(t, []string{"daemon", "status"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["daemon"].(map[string]any)["active_instances"].(json.Number).String() != "2" {
+		t.Fatalf("different credentials status: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+}
+
 func TestDaemonStreamableHTTPColdCallPrimesOnce(t *testing.T) {
 	runtime := t.TempDir()
 	if err := os.Chmod(runtime, 0o700); err != nil {

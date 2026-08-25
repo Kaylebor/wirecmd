@@ -28,7 +28,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 2
+const daemonProtocol = 3
 
 type daemonAdmin struct {
 	command string
@@ -145,9 +145,6 @@ func daemonRequestFromConfig(req request, cfg *config.Config, cwd string, paths 
 
 func selectedSecretInputs(server config.Server, lookup func(string) (string, bool)) map[string]secretInput {
 	result := map[string]secretInput{}
-	if server.HTTP != nil {
-		return result
-	}
 	add := func(value config.Value) {
 		if !value.IsSecret() {
 			return
@@ -159,11 +156,20 @@ func selectedSecretInputs(server config.Server, lookup func(string) (string, boo
 		resolved, present := lookup(name)
 		result[name] = secretInput{Present: present, Value: resolved}
 	}
-	for _, value := range server.Stdio.Args {
-		add(value)
-	}
-	for _, env := range server.Stdio.Env {
-		add(env.Value)
+	if server.HTTP != nil {
+		for _, field := range server.HTTP.Query {
+			add(field.Value)
+		}
+		for _, field := range server.HTTP.Headers {
+			add(field.Value)
+		}
+	} else {
+		for _, value := range server.Stdio.Args {
+			add(value)
+		}
+		for _, env := range server.Stdio.Env {
+			add(env.Value)
+		}
 	}
 	return result
 }
@@ -193,7 +199,15 @@ func executionFingerprint(server config.Server, root *config.Root, cwd string) s
 
 func semanticServer(server config.Server) any {
 	if server.HTTP != nil {
-		return map[string]any{"name": server.Name, "scope": server.Scope, "transport": "http", "endpoint": server.HTTP.Endpoint}
+		query := make([]any, 0, len(server.HTTP.Query))
+		for _, field := range server.HTTP.Query {
+			query = append(query, []any{field.Name, field.Value.Kind, field.Value.Text})
+		}
+		headers := make([]any, 0, len(server.HTTP.Headers))
+		for _, field := range server.HTTP.Headers {
+			headers = append(headers, []any{field.Name, field.Value.Kind, field.Value.Text})
+		}
+		return map[string]any{"name": server.Name, "scope": server.Scope, "transport": "http", "endpoint": server.HTTP.Endpoint, "query": query, "headers": headers}
 	}
 	args := make([]any, 0, len(server.Stdio.Args))
 	for _, arg := range server.Stdio.Args {
@@ -911,13 +925,19 @@ func (d *daemon) authIdentity(server config.Server, inputs map[string]secretInpu
 		items = append(items, destination+"\x00"+input.Value)
 	}
 	if server.HTTP != nil {
-		return hex.EncodeToString(mac.Sum(nil))
-	}
-	for i, value := range server.Stdio.Args {
-		add(fmt.Sprintf("arg[%d]", i), value)
-	}
-	for _, env := range server.Stdio.Env {
-		add("env["+env.Name+"]", env.Value)
+		for _, field := range server.HTTP.Query {
+			add("query["+field.Name+"]", field.Value)
+		}
+		for _, field := range server.HTTP.Headers {
+			add("header["+strings.ToLower(field.Name)+"]", field.Value)
+		}
+	} else {
+		for i, value := range server.Stdio.Args {
+			add(fmt.Sprintf("arg[%d]", i), value)
+		}
+		for _, env := range server.Stdio.Env {
+			add("env["+env.Name+"]", env.Value)
+		}
 	}
 	sort.Strings(items)
 	for _, item := range items {

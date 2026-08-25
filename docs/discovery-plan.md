@@ -1,8 +1,9 @@
 # Automatic Configuration Discovery and Workspace Trust
 
-Status: authoritative current milestone; supported MCP compatibility
+Status: completed authoritative milestone; supported MCP compatibility
 qualification is complete; legacy HTTP+SSE remains deferred at the SDK
-boundary
+boundary. The current typed HTTP query/header milestone is recorded in the
+[HTTP values plan](http-values-plan.md).
 
 ## Objective
 
@@ -11,6 +12,11 @@ without prompts, while keeping explicit configuration deterministic and making
 execution of workspace-defined commands an explicit same-user trust decision.
 The supported protocol qualification is recorded in the
 [compatibility plan](compatibility-plan.md).
+
+This document is the completed record for automatic configuration discovery
+and workspace trust. It remains the authority for that behavior; subsequent
+configuration work is specified separately and must preserve its source
+ordering, provenance, and explicit trust boundary.
 
 ## Discovery contract
 
