@@ -1,6 +1,18 @@
 # First Validation Milestone
 
-Status: authoritative current milestone
+Status: completed authoritative milestone, concluded 2026-08-25
+
+## Outcome
+
+The milestone passed. Isolated comparative runs showed that Wirecmd matched the
+native MCP condition's task reliability while retaining composition inside an
+ordinary shell program. It required materially less observed interaction than
+the maintained CLI comparison. The evidence is sufficient to continue product
+work, without claiming broad MCP compatibility or production readiness.
+
+The immutable run evidence, limitations, and qualification commands are
+recorded in `docs/notes/comparative-evaluation-2026-08-25.md`. The current work
+is defined by `docs/compatibility-plan.md`.
 
 ## Objective
 
@@ -114,8 +126,8 @@ artifacts, and template materialization remain deferred; their internal
 representation must remain possible without implementing them here.
 
 Focused schema help, projected arguments, the universal Agent Skill, and the
-controlled modern HTTP fixture are now implemented. The remaining work is the
-full agent-facing milestone evaluation rather than another transport baseline.
+controlled modern HTTP fixture were implemented, and the comparative evaluation
+was completed. Its outcome is summarized above.
 
 ## Explicitly deferred
 
@@ -251,12 +263,10 @@ the right capability, shell composition is less reliable than direct tool use,
 the universal instructions become server-specific, or the measured benefit is
 too small to justify a new runtime.
 
-## After the milestone
+## Follow-on decision
 
-Only after reviewing the evidence should the project commit to production
+The evidence supported continuing the project. Compatibility work now proceeds
+backward through the two legacy layers required for the full MVP, as defined in
+`docs/compatibility-plan.md`. The evaluation did not authorize production
 daemon behavior, automatic configuration discovery and templating, OAuth,
-broader schema projection, or packaging. If the interaction model remains
-viable, compatibility work then continues backward through the two legacy
-layers required for the full MVP. Promote accepted decisions into the
-authoritative documents; retain rejected and unresolved alternatives in
-`docs/notes/`.
+broader schema projection, or packaging.

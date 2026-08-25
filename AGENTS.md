@@ -4,8 +4,10 @@
 
 - `README.md` is the short public orientation.
 - `docs/product-thesis.md` is authoritative for product direction and scope.
-- `docs/validation-plan.md` is authoritative for the current milestone and its
-  acceptance criteria.
+- `docs/validation-plan.md` is the authoritative record of the completed first
+  validation milestone and its acceptance criteria.
+- `docs/compatibility-plan.md` is authoritative for the current milestone and
+  its acceptance criteria.
 - Files under `docs/notes/` are non-authoritative working material. Do not turn
   an idea from those files into a requirement without promoting it explicitly
   into an authoritative document.
@@ -37,8 +39,8 @@
 
 ## Scope discipline
 
-- Work toward the current validation milestone before expanding protocol or
-  product breadth.
+- Work toward the current compatibility milestone before expanding product
+  breadth.
 - Prefer the smallest coherent, reversible change that tests a stated
   hypothesis or satisfies an accepted contract.
 - Do not pre-build marketplaces, generic plugin systems, configuration import
