@@ -162,6 +162,55 @@ Run comparable scenarios with:
 The comparison is intended to test the thesis, not to manufacture a favorable
 feature checklist.
 
+### Comparative run protocol
+
+Freeze one outcome-based task and use the same evaluator model for every
+condition. The task must require HTTP-backed discovery, an ordinary shell
+transformation, stateful stdio creation and later retrieval, recovery from one
+intentional invalid call, cleanup, and—where the interface permits it—more than
+one MCP-backed operation composed in one parent shell program.
+
+Compare the interfaces as they actually operate:
+
+- Wirecmd receives ordinary shell access, the committed universal Skill, an
+  explicit KDL config path, and a ready foreground daemon.
+- The maintained CLI receives ordinary shell access and its normal documented
+  configuration and help surfaces, without Wirecmd-specific instructions.
+- Native harness MCP receives the same fixtures as directly registered tools,
+  without either shell client. Native inability to place MCP calls inside one
+  shell program is an observed interface property, not task failure.
+
+Each condition and repetition must use a fresh stateful fixture, workspace, and
+client or daemon state. Use identical fixture builds, a shared task wording,
+preflight fixtures separate from measured fixtures, and no condition-specific
+tool or command hints. Positively establish readiness before releasing the
+agent and independently verify state after creation, retrieval, and cleanup.
+Use fresh conversation history and equivalent pre-authorized authority for each
+condition. If approval policy, inherited user context, or sandbox escalation
+differs, record the affected run as a non-comparable harness artifact.
+
+Capture the parent-visible shell and native-tool transcript, timestamps, CWD,
+redacted inputs and outputs, exit or error outcomes, fixture request/state
+evidence, help or schemas actually inspected, and the exact Skill or initial
+tool descriptions supplied to the agent. Record cold and warm preparation
+explicitly; do not pretend eager native registration has the same cold-start
+boundary as a shell client.
+
+Before treating the outcome as repeatable evidence, run at least two fresh cold
+and two fresh warm repetitions per condition. Cold starts from new client or
+daemon state with no agent-visible discovery or call; warm may establish only
+the relevant connection and tool listing, never task graph state. Counterbalance
+condition order and record eager native registration as that interface's actual
+preparation rather than inventing an equivalent shell-client boundary. Here,
+"no discovery" means no agent-initiated discovery: a native catalog injected
+before release is part of that condition's recorded cold preparation.
+
+A run is comparative milestone evidence only when filesystem isolation prevents
+the evaluated agent from reading repository source, another condition's
+artifacts, or hidden fixture configuration. CWD placement, instructions, and
+separate directory names alone do not establish that isolation. Otherwise label
+the run as a smoke test and retain its limitations.
+
 ## Evidence to collect
 
 - Task completion and correctness.
