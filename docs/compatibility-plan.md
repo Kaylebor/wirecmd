@@ -1,6 +1,6 @@
 # MCP Compatibility Qualification Record
 
-Status: authoritative completed supported-protocol qualification; legacy HTTP+SSE deferred at the SDK boundary
+Status: authoritative completed supported-protocol qualification; legacy HTTP+SSE deferred at the SDK boundary; OAuth tracked separately
 
 ## Objective
 
@@ -22,14 +22,25 @@ pagination, calls, shutdown, authorization, and transport behavior. Protocol
 age alone does not justify local protocol implementations or parallel adapter
 stacks.
 
+OAuth is not a separate MCP wire revision. Its current contract and acceptance
+criteria are recorded in the [OAuth plan](oauth-plan.md). The SDK remains the
+owner of OAuth discovery, metadata, PKCE, registration, token exchange,
+refresh, resource indicators, scopes, issuer validation, and HTTP retry. The
+compatibility milestone adds no local revision-specific OAuth branches. The
+pinned SDK does not expose a separate stable resource/issuer identity for
+Wirecmd's credential-store boundary, so the current record identity is based
+on the resolved endpoint and configured registration inputs; collision or
+provider-specific behavior must be qualified before adding a shim.
+
 ## Current baseline
 
 Modern stdio and stateless Streamable HTTP work in direct and daemon-backed
 modes. The public CLI supports server and tool discovery, focused schema help,
 projected top-level arguments, raw JSON overlays, exact JSON calls, structured
-results and errors, and retained daemon sessions. Cold Streamable HTTP calls
-prime the SDK's schema cache through its public `Tools` iterator so SDK-owned
-features such as `x-mcp-header` work without local header logic.
+results and errors, retained daemon sessions, and the current SDK-backed OAuth
+surface for protected HTTP endpoints. Cold Streamable HTTP calls prime the
+SDK's schema cache through its public `Tools` iterator so SDK-owned features
+such as `x-mcp-header` work without local header logic.
 
 Legacy initialized stdio and stateful Streamable HTTP are qualified against the
 isolated v1.6.1 SDK fixture. Both initialized at `2025-11-25`; retained daemon
@@ -122,7 +133,8 @@ changing dependencies, configuration, or architecture.
 
 ## Explicitly deferred
 
-- OAuth and browser-based authorization flows.
+- Provider-specific OAuth qualification and compatibility guards beyond the
+  SDK-backed contract recorded in the [OAuth plan](oauth-plan.md).
 - Static typed HTTP query, header, and credential configuration is specified
   by the subsequent
   [HTTP values plan](http-values-plan.md).

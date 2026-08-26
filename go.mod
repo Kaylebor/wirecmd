@@ -5,9 +5,12 @@ go 1.25.0
 require (
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/njreid/gokdl2 v0.6.0
+	github.com/zalando/go-keyring v0.2.8
 )
 
 require (
+	github.com/danieljoos/wincred v1.2.3 // indirect
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect

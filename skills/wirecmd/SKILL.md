@@ -1,6 +1,6 @@
 ---
 name: wirecmd
-description: Discover and compose Wirecmd capabilities from the shell, including trusted workspace configuration, focused help, projected arguments, and lossless JSON calls.
+description: Discover and compose Wirecmd capabilities from the shell, including trusted workspace configuration, focused help, projected arguments, lossless JSON calls, and transparent OAuth-backed HTTP servers.
 ---
 
 # Wirecmd
@@ -51,14 +51,59 @@ value when the selected server is executed. Query names are case-sensitive;
 header names are case-insensitive. A stronger source replaces a matching key
 without moving it and appends new keys. Existing endpoint query parameters are
 preserved unless a structural query entry has the same key. The
-`Authorization` value is complete, for example `Bearer ...`; OAuth, templates,
-and dynamic per-request headers are not part of this slice. HTTP and MCP
+`Authorization` value is complete, for example `Bearer ...`. Templates and
+dynamic per-request headers are not part of this slice. HTTP and MCP
 transport-owned headers are reserved and rejected; see the [HTTP values
 plan](../../docs/http-values-plan.md) for the complete list.
 
 Listing and help do not resolve secrets for unselected servers. In daemon mode,
 resolved startup credentials distinguish retained instances, so one server
 definition cannot reuse an instance started with different credentials.
+
+## Authenticate protected HTTP servers
+
+When an HTTP server has no configured `Authorization` header, Wirecmd can use
+the official SDK's OAuth implementation. Dynamic client registration is
+automatic. Configure a preregistered client only when the provider requires
+one:
+
+```kdl
+http "https://example.test/mcp" {
+    oauth {
+        client-id "wirecmd-client"
+        client-secret (secret)"env://OAUTH_CLIENT_SECRET"
+        redirect-uri "http://127.0.0.1:8765/callback"
+    }
+}
+```
+
+The client ID and exact loopback redirect URI are required in the `oauth`
+block; the client secret is optional. A static `Authorization` header disables
+OAuth and cannot be combined with that block.
+
+Manage local credentials with:
+
+```sh
+wirecmd auth login SERVER
+wirecmd auth status SERVER
+wirecmd auth logout SERVER
+```
+
+Normal commands and auth administration use the daemon. Use `--direct` only
+for deliberate one-shot testing or diagnosis. `status` is local-only;
+`logout` removes Wirecmd's local credential and retires matching daemon
+sessions. OAuth URLs and browser diagnostics go to stderr, never stdout.
+
+When stdin and stderr are TTYs, an ordinary protected call may open a browser
+and wait for authorization. Set `WIRECMD_NONINTERACTIVE=1` for scripts, CI,
+and other callers that must receive `authorization_required` instead. Explicit
+login also requires a local interactive terminal.
+
+Wirecmd stores encrypted OAuth state using a random master key held by the
+native keyring through `go-keyring`; there is no plaintext fallback. The MCP
+SDK owns OAuth discovery, PKCE, registration, token exchange, refresh, issuer
+validation, and retry behavior. Wirecmd owns only persistence, daemon
+coordination, redaction, and shell error mapping.
 
 ## Discover before calling
 
@@ -110,11 +155,14 @@ wirecmd --config PATH SERVER '{"tool":"TOOL","arguments":{"query":"text"}}'
 ## Compose and recover
 
 Pipe ordinary JSON results through standard shell tools when it makes the next
-step clearer. Keep calls non-interactive and inspect the structured error
-envelope and exit status when one fails; its category, code, and action indicate
+step clearer. Calls are non-interactive unless both stdin and stderr are TTYs
+and `WIRECMD_NONINTERACTIVE` is not `1`; in that interactive case protected
+HTTP calls may open a browser for OAuth. Inspect the structured error envelope
+and exit status when one fails; its category, code, and action indicate
 whether to correct invocation, configuration, authentication, transport, or an
 upstream tool failure.
 
 Normal calls require the local daemon. Use `--direct` only for deliberate
 one-shot testing or diagnostics; it does not retain server state between
-invocations.
+invocations. See the [OAuth plan](../../docs/oauth-plan.md) for the accepted
+credential and provider-qualification boundary.

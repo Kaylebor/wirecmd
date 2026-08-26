@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -109,6 +110,18 @@ type HTTP struct {
 	EndpointProvenance Provenance
 	Query              []HTTPField
 	Headers            []HTTPField
+	OAuth              *OAuth
+	Provenance
+}
+
+// OAuth describes a complete preregistered OAuth client for an HTTP server.
+// When OAuth is nil, execution may use dynamic client registration instead.
+type OAuth struct {
+	ClientID              string
+	ClientIDProvenance    Provenance
+	ClientSecret          *Value
+	RedirectURI           string
+	RedirectURIProvenance Provenance
 	Provenance
 }
 
@@ -165,6 +178,18 @@ type HTTPSource struct {
 	EndpointProvenance Provenance
 	Query              []HTTPField
 	Headers            []HTTPField
+	OAuth              *OAuthSource
+	Provenance
+}
+
+// OAuthSource is a potentially partial preregistered OAuth client layer.
+// ClientSecret is optional even in a complete OAuth configuration.
+type OAuthSource struct {
+	ClientID              *string
+	ClientIDProvenance    Provenance
+	ClientSecret          *Value
+	RedirectURI           *string
+	RedirectURIProvenance Provenance
 	Provenance
 }
 
@@ -334,6 +359,28 @@ func composeHTTP(result *HTTP, partial *HTTPSource) {
 	}
 	result.Query = composeHTTPFields(result.Query, partial.Query, false)
 	result.Headers = composeHTTPFields(result.Headers, partial.Headers, true)
+	if partial.OAuth != nil {
+		if result.OAuth == nil {
+			result.OAuth = &OAuth{}
+		}
+		composeOAuth(result.OAuth, partial.OAuth)
+	}
+}
+
+func composeOAuth(result *OAuth, partial *OAuthSource) {
+	result.Provenance = partial.Provenance
+	if partial.ClientID != nil {
+		result.ClientID = *partial.ClientID
+		result.ClientIDProvenance = partial.ClientIDProvenance
+	}
+	if partial.ClientSecret != nil {
+		secret := *partial.ClientSecret
+		result.ClientSecret = &secret
+	}
+	if partial.RedirectURI != nil {
+		result.RedirectURI = *partial.RedirectURI
+		result.RedirectURIProvenance = partial.RedirectURIProvenance
+	}
 }
 
 func composeHTTPFields(result, partial []HTTPField, caseInsensitive bool) []HTTPField {
@@ -415,6 +462,20 @@ func validate(config *Config) error {
 			if err := validateHTTPHeaders(server.HTTP.Headers); err != nil {
 				return validationError(err.Provenance, err.Path, "%s", err.Message)
 			}
+			if server.HTTP.OAuth != nil {
+				if hasHTTPHeader(server.HTTP.Headers, "authorization") {
+					return validationError(server.HTTP.OAuth.Provenance, path+".http.oauth", "oauth cannot be combined with an Authorization header")
+				}
+				if server.HTTP.OAuth.ClientID == "" {
+					return validationError(server.HTTP.OAuth.Provenance, path+".http.oauth.client-id", "client-id is required")
+				}
+				if server.HTTP.OAuth.RedirectURI == "" {
+					return validationError(server.HTTP.OAuth.Provenance, path+".http.oauth.redirect-uri", "redirect-uri is required")
+				}
+				if err := validateOAuthRedirectURI(server.HTTP.OAuth.RedirectURI); err != nil {
+					return validationError(server.HTTP.OAuth.RedirectURIProvenance, path+".http.oauth.redirect-uri", "%v", err)
+				}
+			}
 		} else {
 			if server.Stdio.Provenance == (Provenance{}) {
 				return validationError(server.Provenance, path+".stdio", "stdio or http is required")
@@ -425,6 +486,15 @@ func validate(config *Config) error {
 		}
 	}
 	return nil
+}
+
+func hasHTTPHeader(headers []HTTPField, name string) bool {
+	for _, header := range headers {
+		if strings.EqualFold(header.Name, name) {
+			return true
+		}
+	}
+	return false
 }
 
 type httpHeaderValidationError struct {
@@ -492,6 +562,32 @@ func validateHTTPEndpoint(endpoint string) error {
 	}
 	if parsed.Fragment != "" {
 		return fmt.Errorf("endpoint must not contain a fragment")
+	}
+	return nil
+}
+
+func validateOAuthRedirectURI(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() || parsed.Scheme != "http" || parsed.Host == "" {
+		return fmt.Errorf("redirect-uri must be an absolute http loopback URL")
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("redirect-uri must not contain URL user information")
+	}
+	if parsed.Fragment != "" {
+		return fmt.Errorf("redirect-uri must not contain a fragment")
+	}
+	host := strings.Trim(parsed.Hostname(), "[]")
+	if host != "127.0.0.1" && host != "::1" && !strings.EqualFold(host, "localhost") {
+		return fmt.Errorf("redirect-uri host must be a loopback address")
+	}
+	port := parsed.Port()
+	if port == "" {
+		return fmt.Errorf("redirect-uri must include an explicit port")
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil || portNumber < 1 || portNumber > 65535 {
+		return fmt.Errorf("redirect-uri port must be between 1 and 65535")
 	}
 	return nil
 }
@@ -664,11 +760,78 @@ func parseHTTP(file string, node *document.Node, serverPath string) (HTTPSource,
 			}
 			seenHeader[key] = struct{}{}
 			source.Headers = append(source.Headers, field)
+		case "oauth":
+			if source.OAuth != nil {
+				return HTTPSource{}, fmt.Errorf("%s.oauth: duplicate oauth", path)
+			}
+			oauth, err := parseOAuth(file, child, path)
+			if err != nil {
+				return HTTPSource{}, err
+			}
+			source.OAuth = &oauth
 		default:
 			return HTTPSource{}, fmt.Errorf("%s: unknown child node %q", path, nodeName(child))
 		}
 	}
 	return source, nil
+}
+
+func parseOAuth(file string, node *document.Node, httpPath string) (OAuthSource, error) {
+	path := httpPath + ".oauth"
+	if err := plainNode(node, path); err != nil {
+		return OAuthSource{}, err
+	}
+	if len(node.Arguments) != 0 {
+		return OAuthSource{}, fmt.Errorf("%s: does not accept arguments", path)
+	}
+
+	source := OAuthSource{Provenance: provenance(file, path)}
+	for _, child := range node.Children {
+		switch nodeName(child) {
+		case "client-id":
+			if source.ClientID != nil {
+				return OAuthSource{}, fmt.Errorf("%s.client-id: duplicate client-id", path)
+			}
+			value, err := parseOAuthLiteral(child, path+".client-id")
+			if err != nil {
+				return OAuthSource{}, err
+			}
+			source.ClientID = &value
+			source.ClientIDProvenance = provenance(file, path+".client-id")
+		case "client-secret":
+			if source.ClientSecret != nil {
+				return OAuthSource{}, fmt.Errorf("%s.client-secret: duplicate client-secret", path)
+			}
+			value, err := parseSingleValue(file, child, path+".client-secret")
+			if err != nil {
+				return OAuthSource{}, err
+			}
+			source.ClientSecret = &value
+		case "redirect-uri":
+			if source.RedirectURI != nil {
+				return OAuthSource{}, fmt.Errorf("%s.redirect-uri: duplicate redirect-uri", path)
+			}
+			value, err := parseOAuthLiteral(child, path+".redirect-uri")
+			if err != nil {
+				return OAuthSource{}, err
+			}
+			source.RedirectURI = &value
+			source.RedirectURIProvenance = provenance(file, path+".redirect-uri")
+		default:
+			return OAuthSource{}, fmt.Errorf("%s: unknown child node %q", path, nodeName(child))
+		}
+	}
+	return source, nil
+}
+
+func parseOAuthLiteral(node *document.Node, path string) (string, error) {
+	if err := plainNode(node, path); err != nil {
+		return "", err
+	}
+	if len(node.Arguments) != 1 || len(node.Children) != 0 {
+		return "", fmt.Errorf("%s: expected one value", path)
+	}
+	return literalText(node.Arguments[0], path)
 }
 
 func parseHTTPField(file string, node *document.Node, httpPath string, header bool) (HTTPField, error) {

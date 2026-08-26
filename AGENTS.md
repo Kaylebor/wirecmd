@@ -12,6 +12,8 @@
   configuration-discovery milestone and its acceptance criteria.
 - `docs/http-values-plan.md` is authoritative for the current typed HTTP
   query/header configuration milestone and its acceptance criteria.
+- `docs/oauth-plan.md` is authoritative for the current transparent OAuth and
+  encrypted credential-persistence milestone and its acceptance criteria.
 - Files under `docs/notes/` are non-authoritative working material. Do not turn
   an idea from those files into a requirement without promoting it explicitly
   into an authoritative document.
@@ -24,9 +26,12 @@
   interface; MCP is initially an upstream adapter and implementation detail.
 - Optimize for lazy discovery and shell composition rather than eager schema
   injection into a harness.
-- Treat deterministic non-interactive behavior as canonical. Interactive
-  behavior may be an explicit convenience, never an unexpected prompt during
-  an ordinary call.
+- Treat deterministic non-interactive behavior as canonical. Ordinary calls
+  remain non-interactive when either stdin or stderr is not a TTY, or when
+  `WIRECMD_NONINTERACTIVE=1` is set. When both are TTYs, an ordinary protected
+  HTTP call may transparently open a browser for OAuth and wait for the
+  callback; this is the accepted interactive convenience and must remain
+  visible only through stderr diagnostics.
 - Keep human, agent, script, and CI invocation on the same public contract.
 - Normal operation is daemon-backed and must fail clearly when the daemon is
   unavailable. `--direct` is the explicit daemonless path for testing,
@@ -72,6 +77,14 @@
   and verify that assumption against its documentation, source, examples, and
   tests. Use the highest-level supported API. Add a local MCP-specific shim only
   for a confirmed SDK gap, keep it narrow, and record the exact limitation.
+- The official SDK also owns OAuth discovery, metadata, PKCE, registration,
+  token exchange, refresh, resource indicators, scopes, issuer validation, and
+  HTTP retry behavior. Wirecmd owns only the shell/daemon interaction,
+  persistence, redaction, and error mapping around those APIs. The pinned SDK
+  does not expose a separate stable resource/issuer identity for our storage
+  boundary, so the current credential identity is based on the resolved
+  endpoint and configured registration inputs; record evidence before adding a
+  compatibility shim or broader identity model.
 - Do not turn conceptual protocol eras into parallel local protocol stacks. The
   full MVP targets modern `2026-07-28`, legacy initialized stdio/Streamable
   HTTP, and legacy HTTP+SSE by exercising the official SDK from newest to

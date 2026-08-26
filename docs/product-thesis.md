@@ -36,6 +36,8 @@ The runtime provides:
 - composition through pipes, redirection, scripts, and standard shell tools;
 - configuration that can vary safely by invocation and workspace context; and
 - optional local lifecycle brokering that does not change command semantics.
+- transparent OAuth for protected HTTP sources when an interactive caller
+  permits browser authorization, with encrypted local credential persistence.
 
 The initial adapter consumes MCP servers. Future adapters are possible only if
 real use demonstrates their value. The initial design must not implement or
@@ -71,15 +73,20 @@ agent invoking the command through a shell.
 
 ### Non-interactive by default
 
-Ordinary commands must not unexpectedly wait for terminal input or open a
-browser. When authentication or user action is required, the runtime returns a
-structured, actionable condition. Explicit interactive commands may perform or
-wait for those actions.
+Ordinary commands remain deterministic and non-interactive when either stdin or
+stderr is not a TTY, or when `WIRECMD_NONINTERACTIVE=1` is set. When both are
+TTYs, a protected HTTP call may transparently open a browser and wait for the
+OAuth callback. Authorization URLs and browser diagnostics go to stderr; the
+machine-readable result remains the single stdout envelope. Explicit
+`wirecmd auth login SERVER` provides the deliberate credential-management
+flow, and headless callers receive an actionable structured condition instead
+of an unexpected prompt.
 
 ### Daemon-backed normal operation
 
 A local daemon may retain upstream connections, own long-lived authentication
-transactions, manage local processes, cache discovery, and reap idle resources.
+transactions, coordinate browser callbacks, manage encrypted local
+credentials, manage local processes, cache discovery, and reap idle resources.
 It is an optimization and lifecycle broker, not the agent-facing protocol.
 Equivalent invocations should retain their observable contract with or without
 the daemon, except where an upstream operation genuinely requires continuity.
@@ -121,9 +128,14 @@ request APIs.
 
 Project code should primarily implement the product outside MCP: shell UX,
 configuration and provenance, normalized output and recovery, local daemon IPC,
-managed process lifecycle, instance scope, caching policy, diagnostics, and
-Skills. It must not reimplement protocol negotiation, wire codecs, transports,
-revision gates, or authorization mechanics that the SDK handles.
+managed process lifecycle, instance scope, caching policy, diagnostics,
+encrypted credential persistence, and Skills. It must not reimplement protocol
+negotiation, wire codecs, transports, revision gates, or authorization
+mechanics that the SDK handles. The current SDK does not expose a separate
+stable resource/issuer identity for the storage boundary, so this slice uses
+the resolved endpoint plus configured registration inputs as its credential
+identity. Any collision evidence must be recorded before changing that
+boundary or adding a compatibility shim.
 
 If a required feature exposes a confirmed SDK gap, add the smallest isolated
 shim and document the exact upstream limitation. A conceptual difference
@@ -147,10 +159,13 @@ capability available to the caller.
 The first validation milestone found the shell interaction model viable, and
 the supported legacy stdio and Streamable HTTP layers are now qualified. Legacy
 HTTP+SSE remains deferred at the official SDK boundary. Trusted global and
-workspace configuration discovery is complete. The current milestone adds
-typed query and header values for Streamable HTTP endpoints; its contract is
-recorded in the [HTTP values plan](http-values-plan.md). It does not expand
-production daemon behavior, OAuth, or packaging.
+workspace configuration discovery is complete. Typed query and header values
+for Streamable HTTP endpoints are complete, and transparent OAuth with
+encrypted credential persistence is the current milestone; their contracts are
+recorded in the [HTTP values plan](http-values-plan.md) and
+[OAuth plan](oauth-plan.md). OAuth must use the official SDK's authorization
+surface, with Wirecmd adding only interaction, persistence, daemon
+coordination, redaction, and error mapping.
 
 For this milestone, endpoint values remain structural configuration rather than
 preassembled URL or request strings. `query NAME=value` and `header NAME=value`
@@ -173,8 +188,11 @@ identity so retained instances cannot cross credential boundaries.
   subsystems.
 - Supporting every MCP primitive before validating the agent-facing contract.
 - Designing future non-MCP adapters without a demonstrated consumer.
-- OAuth flows, templated or dynamically composed HTTP values, and dynamic
-  per-request headers are deferred beyond the initial typed HTTP slice.
+- Client ID Metadata Documents, device authorization, client credentials,
+  provider-side revocation, non-loopback callbacks, multiple accounts per
+  identity, and provider-specific OAuth compatibility guards are deferred.
+- Templated or dynamically composed HTTP values and dynamic per-request
+  headers remain deferred.
 
 An optional future MCP-server frontend is not part of the current product
 contract. If later justified, it may expose the daemon's aggregated semantic

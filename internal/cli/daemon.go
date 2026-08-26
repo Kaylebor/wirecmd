@@ -28,7 +28,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 3
+const daemonProtocol = 4
 
 type daemonAdmin struct {
 	command string
@@ -103,9 +103,13 @@ type daemonRequest struct {
 	Execution   string                 `json:"execution_fingerprint,omitempty"`
 	Secrets     map[string]secretInput `json:"secrets,omitempty"`
 	Admin       string                 `json:"admin,omitempty"`
+	Auth        string                 `json:"auth,omitempty"`
+	Interactive bool                   `json:"interactive,omitempty"`
 }
 
 type daemonReply struct {
+	Type     string          `json:"type,omitempty"`
+	URL      string          `json:"url,omitempty"`
 	Result   json.RawMessage `json:"result,omitempty"`
 	Error    *errorBody      `json:"error,omitempty"`
 	ExitCode int             `json:"exit_code,omitempty"`
@@ -163,6 +167,9 @@ func selectedSecretInputs(server config.Server, lookup func(string) (string, boo
 		for _, field := range server.HTTP.Headers {
 			add(field.Value)
 		}
+		if server.HTTP.OAuth != nil && server.HTTP.OAuth.ClientSecret != nil {
+			add(*server.HTTP.OAuth.ClientSecret)
+		}
 	} else {
 		for _, value := range server.Stdio.Args {
 			add(value)
@@ -207,7 +214,15 @@ func semanticServer(server config.Server) any {
 		for _, field := range server.HTTP.Headers {
 			headers = append(headers, []any{field.Name, field.Value.Kind, field.Value.Text})
 		}
-		return map[string]any{"name": server.Name, "scope": server.Scope, "transport": "http", "endpoint": server.HTTP.Endpoint, "query": query, "headers": headers}
+		var oauth any
+		if server.HTTP.OAuth != nil {
+			secret := any(nil)
+			if server.HTTP.OAuth.ClientSecret != nil {
+				secret = []any{server.HTTP.OAuth.ClientSecret.Kind, server.HTTP.OAuth.ClientSecret.Text}
+			}
+			oauth = map[string]any{"client_id": server.HTTP.OAuth.ClientID, "client_secret": secret, "redirect_uri": server.HTTP.OAuth.RedirectURI}
+		}
+		return map[string]any{"name": server.Name, "scope": server.Scope, "transport": "http", "endpoint": server.HTTP.Endpoint, "query": query, "headers": headers, "oauth": oauth}
 	}
 	args := make([]any, 0, len(server.Stdio.Args))
 	for _, arg := range server.Stdio.Args {
@@ -280,6 +295,7 @@ type daemon struct {
 	connections map[net.Conn]struct{}
 	closing     bool
 	hmacKey     []byte
+	authFlows   map[string]struct{}
 }
 
 type daemonConfig struct {
@@ -288,11 +304,13 @@ type daemonConfig struct {
 }
 
 type poolEntry struct {
-	ready    chan struct{}
-	instance *retainedInstance
-	err      *appError
-	broken   bool
-	retiring bool
+	ready       chan struct{}
+	instance    *retainedInstance
+	err         *appError
+	broken      bool
+	retiring    bool
+	authStarted chan struct{}
+	authOnce    sync.Once
 }
 
 type retainedInstance struct {
@@ -305,6 +323,7 @@ type retainedInstance struct {
 	retiring             bool
 	broken               bool
 	closed               bool
+	oauthRun             *oauthRuntime
 }
 
 func newDaemon(stderr io.Writer) (*daemon, *appError) {
@@ -352,7 +371,7 @@ func newDaemon(stderr io.Writer) (*daemon, *appError) {
 		return nil, transportError("daemon_randomness_failed", err.Error(), "restart Wirecmd after system randomness is available")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &daemon{listener: listener, socket: socket, lock: lock, stderr: stderr, ctx: ctx, cancel: cancel, configs: map[string]*daemonConfig{}, pools: map[string]*poolEntry{}, retiring: map[*retainedInstance]struct{}{}, connections: map[net.Conn]struct{}{}, hmacKey: key}, nil
+	return &daemon{listener: listener, socket: socket, lock: lock, stderr: stderr, ctx: ctx, cancel: cancel, configs: map[string]*daemonConfig{}, pools: map[string]*poolEntry{}, retiring: map[*retainedInstance]struct{}{}, connections: map[net.Conn]struct{}{}, hmacKey: key, authFlows: map[string]struct{}{}}, nil
 }
 
 func (d *daemon) close() {
@@ -384,6 +403,9 @@ func (d *daemon) close() {
 		if !instance.closed {
 			instance.closed = true
 			_ = instance.session.Close()
+			if instance.oauthRun != nil {
+				instance.oauthRun.Close()
+			}
 		}
 		instance.mu.Unlock()
 	}
@@ -444,6 +466,8 @@ func (d *daemon) serve(ctx context.Context) error {
 func (d *daemon) handle(connection net.Conn) {
 	reader := bufio.NewReader(connection)
 	encoder := json.NewEncoder(connection)
+	var encodeMu sync.Mutex
+	encode := func(value any) error { encodeMu.Lock(); defer encodeMu.Unlock(); return encoder.Encode(value) }
 	var hello daemonHello
 	if err := readDaemonFrame(reader, &hello); err != nil || hello.Type != "hello" {
 		_ = encoder.Encode(daemonHelloReply{Type: "hello_error", Error: &errorBody{Category: "transport", Code: "daemon_protocol_invalid", Message: "expected daemon hello", Action: "use a compatible Wirecmd client"}})
@@ -462,12 +486,12 @@ func (d *daemon) handle(connection net.Conn) {
 		return
 	}
 	requestCtx, cancel := d.requestContext(reader)
-	reply := d.execute(requestCtx, request)
+	reply := d.execute(requestCtx, request, func(raw string) error { return encode(daemonReply{Type: "authorization_url", URL: raw}) })
 	// Once the operation has completed, do not let the connection watcher's
 	// eventual EOF affect the completed response. Closing the connection on
 	// return releases that watcher.
 	cancel()
-	_ = encoder.Encode(reply)
+	_ = encode(reply)
 }
 
 // readDaemonFrame preserves the private protocol's one-line framing without
@@ -583,6 +607,7 @@ type daemonClient struct {
 	decoder    *json.Decoder
 	encoder    *json.Encoder
 	stopCancel func() bool
+	event      func(string)
 }
 
 func (c *daemonClient) Close() error {
@@ -646,14 +671,22 @@ func (c *daemonClient) request(request daemonRequest) (daemonReply, *appError) {
 	if err := c.encoder.Encode(request); err != nil {
 		return daemonReply{}, transportError("daemon_request_failed", err.Error(), "restart the Wirecmd daemon")
 	}
-	var reply daemonReply
-	if err := c.decoder.Decode(&reply); err != nil {
-		return daemonReply{}, transportError("daemon_response_failed", err.Error(), "restart the Wirecmd daemon")
+	for {
+		var reply daemonReply
+		if err := c.decoder.Decode(&reply); err != nil {
+			return daemonReply{}, transportError("daemon_response_failed", err.Error(), "restart the Wirecmd daemon")
+		}
+		if reply.Type == "authorization_url" {
+			if c.event != nil {
+				c.event(reply.URL)
+			}
+			continue
+		}
+		return reply, nil
 	}
-	return reply, nil
 }
 
-func (d *daemon) execute(ctx context.Context, request daemonRequest) daemonReply {
+func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL func(string) error) daemonReply {
 	if request.Admin != "" {
 		return d.executeAdmin(request.Admin)
 	}
@@ -716,11 +749,24 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest) daemonReply
 	if err := validateSecretInputs(server, request.Secrets); err != nil {
 		return errorReplyWithWarnings(err, warnings)
 	}
-	instance, appErr := d.acquire(ctx, server, cached.config.Root, request.CWD, request.Secrets, generation)
+	if request.Auth != "" {
+		return d.executeAuth(ctx, request, server, cached.config.Root, warnings, emitURL)
+	}
+	instance, appErr := d.acquire(ctx, server, cached.config.Root, request.CWD, request.Secrets, generation, request.Interactive, emitURL)
 	if appErr != nil {
 		return errorReplyWithWarnings(appErr, warnings)
 	}
 	defer d.release(instance)
+	if instance.oauthRun != nil {
+		current, err := instance.oauthRun.CredentialsCurrent()
+		if err != nil {
+			return errorReplyWithWarnings(oauthStoreError(err), warnings)
+		}
+		if !current {
+			d.retireOAuthCredential(instance.oauthRun.flowKey())
+			return errorReplyWithWarnings(transportError("instance_retired", "the stored OAuth credential changed since this session started", "retry to create a session with the current credential"), warnings)
+		}
+	}
 	instance.mu.Lock()
 	defer instance.mu.Unlock()
 	if ctx.Err() != nil {
@@ -816,7 +862,7 @@ func validateSecretInputs(server config.Server, inputs map[string]secretInput) *
 	return nil
 }
 
-func (d *daemon) acquire(ctx context.Context, server config.Server, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64) (*retainedInstance, *appError) {
+func (d *daemon) acquire(ctx context.Context, server config.Server, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64, interactive bool, emitURL func(string) error) (*retainedInstance, *appError) {
 	workspace := cwd
 	if root != nil {
 		workspace = resolveRoot(*root)
@@ -830,24 +876,37 @@ func (d *daemon) acquire(ctx context.Context, server config.Server, root *config
 	}
 	if entry := d.pools[key]; entry != nil {
 		d.mu.Unlock()
-		return d.waitForInstance(ctx, entry, generation)
+		return d.waitForInstance(ctx, entry, generation, false)
 	}
 	entry := &poolEntry{ready: make(chan struct{})}
+	if server.HTTP != nil && !hasAuthorizationHeader(*server.HTTP) {
+		entry.authStarted = make(chan struct{})
+	}
 	d.pools[key] = entry
 	d.wg.Add(1)
 	d.mu.Unlock()
-	go d.startInstance(entry, key, server, root, cwd, inputs, generation)
-	return d.waitForInstance(ctx, entry, generation)
+	go d.startInstance(ctx, entry, key, server, root, cwd, inputs, generation, interactive, emitURL)
+	return d.waitForInstance(ctx, entry, generation, true)
 }
 
 // waitForInstance gives each daemon request its own cancellation boundary. The
 // pool startup itself is daemon-owned shared work, so a departing first caller
 // must not tear it down beneath other callers that have coalesced on it.
-func (d *daemon) waitForInstance(ctx context.Context, entry *poolEntry, generation uint64) (*retainedInstance, *appError) {
-	select {
-	case <-entry.ready:
-	case <-ctx.Done():
-		return nil, transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request")
+func (d *daemon) waitForInstance(ctx context.Context, entry *poolEntry, generation uint64, owner bool) (*retainedInstance, *appError) {
+	if owner || entry.authStarted == nil {
+		select {
+		case <-entry.ready:
+		case <-ctx.Done():
+			return nil, transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request")
+		}
+	} else {
+		select {
+		case <-entry.ready:
+		case <-entry.authStarted:
+			return nil, userActionError("authorization_in_progress", "another request is completing OAuth authorization for this server", "retry after the current authorization finishes")
+		case <-ctx.Done():
+			return nil, transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request")
+		}
 	}
 	d.mu.Lock()
 	appErr := entry.err
@@ -870,20 +929,46 @@ func (d *daemon) waitForInstance(ctx context.Context, entry *poolEntry, generati
 	return instance, nil
 }
 
-func (d *daemon) startInstance(entry *poolEntry, key string, server config.Server, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64) {
+func (d *daemon) startInstance(clientCtx context.Context, entry *poolEntry, key string, server config.Server, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64, interactive bool, emitURL func(string) error) {
 	defer d.wg.Done()
 	lookup := func(name string) (string, bool) { value, ok := inputs[name]; return value.Value, ok && value.Present }
 	target, secrets, appErr := makeTarget(server, root, cwd, lookup)
+	if appErr == nil && server.HTTP != nil {
+		var oauthSecrets []string
+		target, oauthSecrets, appErr = attachOAuth(target, server.Name, *server.HTTP, lookup, interactive, false, func(raw string) {
+			if emitURL != nil {
+				_ = emitURL(raw)
+			}
+		})
+		secrets = append(secrets, oauthSecrets...)
+		if target.oauthRun != nil && entry.authStarted != nil {
+			target.oauthRun.initialCtx = clientCtx
+			target.oauthRun.onFlowStart = func() error {
+				entry.authOnce.Do(func() { close(entry.authStarted) })
+				return d.beginOAuthFlow(target.oauthRun)
+			}
+			target.oauthRun.onFlowEnd = func() { d.endOAuthFlow(target.oauthRun) }
+		}
+	}
 	var started *retainedInstance
 	if appErr == nil {
 		redactor := newRedactor(secrets, d.stderr)
+		if target.oauthRun != nil {
+			target.oauthRun.setRedactor(redactor)
+		}
 		redactor.ProtectEndpoint(target.endpoint)
 		session, connectErr := connectTarget(d.ctx, target, redactor)
 		if connectErr != nil {
+			if target.oauthRun != nil {
+				target.oauthRun.Close()
+			}
 			redactor.FlushTo(d.stderr)
 			appErr = connectErr.redacted(redactor)
 		} else {
-			started = &retainedInstance{session: session, redactor: redactor, breakOnRequestCancel: target.endpoint != ""}
+			if target.oauthRun != nil {
+				target.oauthRun.markConnected()
+			}
+			started = &retainedInstance{session: session, redactor: redactor, breakOnRequestCancel: target.endpoint != "", oauthRun: target.oauthRun}
 		}
 	}
 	d.mu.Lock()
@@ -891,6 +976,9 @@ func (d *daemon) startInstance(entry *poolEntry, key string, server config.Serve
 		d.mu.Unlock()
 		if started != nil {
 			_ = started.session.Close()
+			if started.oauthRun != nil {
+				started.oauthRun.Close()
+			}
 			started.redactor.FlushTo(d.stderr)
 		}
 		d.mu.Lock()
@@ -931,6 +1019,9 @@ func (d *daemon) authIdentity(server config.Server, inputs map[string]secretInpu
 		for _, field := range server.HTTP.Headers {
 			add("header["+strings.ToLower(field.Name)+"]", field.Value)
 		}
+		if server.HTTP.OAuth != nil && server.HTTP.OAuth.ClientSecret != nil {
+			add("oauth.client-secret", *server.HTTP.OAuth.ClientSecret)
+		}
 	} else {
 		for i, value := range server.Stdio.Args {
 			add(fmt.Sprintf("arg[%d]", i), value)
@@ -956,6 +1047,9 @@ func (d *daemon) release(instance *retainedInstance) {
 		if !instance.closed {
 			instance.closed = true
 			_ = instance.session.Close()
+			if instance.oauthRun != nil {
+				instance.oauthRun.Close()
+			}
 			instance.redactor.FlushTo(d.stderr)
 		}
 		instance.mu.Unlock()
@@ -1045,6 +1139,9 @@ func (d *daemon) executeAdmin(command string) daemonReply {
 			if !instance.closed {
 				instance.closed = true
 				_ = instance.session.Close()
+				if instance.oauthRun != nil {
+					instance.oauthRun.Close()
+				}
 				instance.redactor.FlushTo(d.stderr)
 			}
 			instance.mu.Unlock()

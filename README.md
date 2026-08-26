@@ -42,6 +42,8 @@ boundary. Automatic configuration discovery and workspace trust are also
 complete. The current milestone adds typed query and header values for
 Streamable HTTP endpoints. Normal commands use a private foreground local
 daemon; `--direct` is the deliberate one-shot path for testing and diagnosis.
+The current OAuth milestone adds SDK-owned authorization for protected HTTP
+servers and encrypted local credential persistence.
 
 Current daemon administration is intentionally small:
 
@@ -124,9 +126,56 @@ configuration layer replaces a matching entry while retaining its position,
 and appends new entries. Existing endpoint query parameters remain supported;
 structural query entries replace matching keys. `Authorization` is the
 complete header value, such as `Bearer ...`; transport-owned headers are
-reserved. Templates and OAuth flows remain deferred. Only the selected
-server's secret references are resolved. In daemon mode, resolved startup
-credentials also distinguish retained instances.
+reserved. Templates remain deferred. Only the selected server's secret
+references are resolved. In daemon mode, resolved startup credentials also
+distinguish retained instances.
+
+## OAuth
+
+Protected Streamable HTTP servers use the official SDK's OAuth implementation
+when no static `Authorization` header is configured. Dynamic client
+registration is automatic. A preregistered client can be supplied when a
+provider requires one:
+
+```kdl
+server "remote" {
+    scope "workspace"
+    http "https://example.test/mcp" {
+        oauth {
+            client-id "wirecmd-client"
+            client-secret (secret)"env://OAUTH_CLIENT_SECRET"
+            redirect-uri "http://127.0.0.1:8765/callback"
+        }
+    }
+}
+```
+
+The client ID and exact loopback redirect URI are required in a preregistered
+block; the client secret is optional. A configured `Authorization` header
+disables OAuth and cannot be combined with an `oauth` block.
+
+Normal operation remains daemon-backed. Manage local credentials with:
+
+```sh
+wirecmd auth login SERVER
+wirecmd auth status SERVER
+wirecmd auth logout SERVER
+```
+
+`--direct` performs the same operation without the daemon. `auth login`
+requires a local terminal; ordinary protected calls may open the browser when
+both stdin and stderr are TTYs. Set `WIRECMD_NONINTERACTIVE=1` to force an
+actionable structured authentication error instead. Authorization URLs and
+browser diagnostics go to stderr; stdout remains one JSON envelope.
+
+Wirecmd stores a random encryption master key in the native keyring through
+`go-keyring` and stores encrypted OAuth state in its private XDG state
+directory. There is no plaintext fallback. The SDK owns OAuth protocol
+behavior; Wirecmd owns persistence, daemon coordination, redaction, and error
+mapping. The current SDK does not expose a separate stable resource/issuer
+identity for storage, so the credential record identity uses the resolved
+endpoint plus registration inputs; any collision or provider-specific quirk
+must be qualified before changing that boundary.
 
 ## Project documents
 
@@ -141,6 +190,8 @@ credentials also distinguish retained instances.
   automatic configuration-discovery and workspace-trust milestone.
 - [HTTP values plan](docs/http-values-plan.md) defines the authoritative
   typed query/header configuration milestone.
+- [OAuth plan](docs/oauth-plan.md) defines the authoritative transparent OAuth
+  and encrypted credential-persistence milestone.
 - [Exploratory design notes](docs/notes/exploratory-design.md) retain ideas and
   research that are useful but not committed requirements.
 

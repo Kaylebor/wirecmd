@@ -23,6 +23,8 @@ import (
 
 	"github.com/Kaylebor/wirecmd/internal/config"
 	"github.com/Kaylebor/wirecmd/internal/discovery"
+	"github.com/Kaylebor/wirecmd/internal/oauthstore"
+	mcpauth "github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -58,6 +60,9 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 }
 
 const usage = "wirecmd [--config PATH] [--direct] [--json OBJECT|--stdin] [<server> [<tool>|<exact-call-object>]]"
+
+var isInteractiveTerminal = terminalIO
+var openAuthorizationURL = openBrowserURL
 
 type options struct {
 	configs []string
@@ -106,9 +111,15 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 	if admin, ok := parseConfigAdmin(positionals, opts); ok {
 		return runConfigAdmin(admin)
 	}
+	authAdmin, isAuthAdmin := parseAuthAdmin(positionals, opts)
+	if isAuthAdmin && authAdmin.err != nil {
+		return nil, authAdmin.err
+	}
 	var req request
 	var requestErr *appError
-	if opts.help {
+	if isAuthAdmin {
+		req = request{operation: listTools, server: authAdmin.server}
+	} else if opts.help {
 		req, requestErr = parseHelpRequest(positionals, opts)
 	} else {
 		req, requestErr = parseRequest(positionals, opts, in)
@@ -189,9 +200,27 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 	if !ok {
 		return nil, configurationError("server_not_found", fmt.Sprintf("configured server %q was not found", req.server), "list configured servers and choose one by name")
 	}
+	if isAuthAdmin {
+		if server.HTTP == nil || hasAuthorizationHeader(*server.HTTP) {
+			return nil, authServerError(server.Name)
+		}
+		secrets := selectedSecretInputs(server, os.LookupEnv)
+		if !opts.direct {
+			daemonRequest := daemonRequestFromConfig(req, cfg, cwd, configPaths, discovered, secrets)
+			daemonRequest.Auth = authAdmin.command
+			daemonRequest.Interactive = isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
+			daemonClient.event = browserEventHandler(errOut, daemonEventRedactor(server, secrets, errOut))
+			result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequest, errOut)
+			return result, appErr
+		}
+		return runDirectAuth(ctx, authAdmin, server, cfg.Root, cwd, in, errOut)
+	}
 	if !opts.direct {
 		secrets := selectedSecretInputs(server, os.LookupEnv)
-		result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, cwd, configPaths, discovered, secrets), errOut)
+		daemonRequest := daemonRequestFromConfig(req, cfg, cwd, configPaths, discovered, secrets)
+		daemonRequest.Interactive = isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
+		daemonClient.event = browserEventHandler(errOut, daemonEventRedactor(server, secrets, errOut))
+		result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequest, errOut)
 		if appErr != nil || req.help == noHelp {
 			return result, appErr
 		}
@@ -204,6 +233,20 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 	}
 	redactor := newRedactor(secrets, errOut)
 	redactor.ProtectEndpoint(target.endpoint)
+	if server.HTTP != nil {
+		interactive := isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
+		var oauthSecrets []string
+		target, oauthSecrets, targetErr = attachOAuth(target, server.Name, *server.HTTP, os.LookupEnv, interactive, false, browserEventHandler(errOut, redactor))
+		if targetErr != nil {
+			return nil, targetErr
+		}
+		secrets = append(secrets, oauthSecrets...)
+		redactor.ProtectSecrets(oauthSecrets...)
+		if target.oauthRun != nil {
+			target.oauthRun.setRedactor(redactor)
+			defer target.oauthRun.Close()
+		}
+	}
 	defer redactor.FlushTo(errOut)
 	if req.operation == listTools {
 		tools, runErr := directTools(ctx, target, redactor)
@@ -235,6 +278,72 @@ func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (an
 		return nil, runErr.redacted(redactor)
 	}
 	return callEnvelope{OK: true, Server: server.Name, Tool: req.tool, Result: call}, nil
+}
+
+func hasAuthorizationHeader(transport config.HTTP) bool {
+	for _, header := range transport.Headers {
+		if strings.EqualFold(header.Name, "Authorization") {
+			return true
+		}
+	}
+	return false
+}
+
+func browserEventHandler(errOut io.Writer, redactor *redactor) func(string) {
+	return func(raw string) {
+		display := raw
+		if redactor != nil {
+			display = redactAuthorizationURL(raw, redactor)
+		}
+		fmt.Fprintln(errOut, "wirecmd: open this authorization URL:", display)
+		if err := openAuthorizationURL(raw); err != nil {
+			fmt.Fprintln(errOut, "wirecmd: could not open the browser; open the URL manually")
+		}
+	}
+}
+
+func redactAuthorizationURL(raw string, redactor *redactor) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return redactor.Redact(raw)
+	}
+	query := parsed.Query()
+	for name, values := range query {
+		for index, value := range values {
+			values[index] = redactor.Redact(value)
+		}
+		query[name] = values
+	}
+	parsed.RawQuery = query.Encode()
+	return redactor.Redact(parsed.String())
+}
+
+func daemonEventRedactor(server config.Server, inputs map[string]secretInput, errOut io.Writer) *redactor {
+	values := make([]string, 0, len(inputs))
+	for _, input := range inputs {
+		if input.Present {
+			values = append(values, input.Value)
+		}
+	}
+	redactor := newRedactor(values, errOut)
+	if server.HTTP != nil {
+		lookup := func(name string) (string, bool) { value, ok := inputs[name]; return value.Value, ok && value.Present }
+		if target, _, appErr := makeHTTPTarget(*server.HTTP, lookup); appErr == nil {
+			redactor.ProtectEndpoint(target.endpoint)
+		}
+	}
+	return redactor
+}
+
+func terminalIO(in io.Reader, errOut io.Writer) bool {
+	input, inputOK := in.(*os.File)
+	output, outputOK := errOut.(*os.File)
+	if !inputOK || !outputOK {
+		return false
+	}
+	inputInfo, inputErr := input.Stat()
+	outputInfo, outputErr := output.Stat()
+	return inputErr == nil && outputErr == nil && inputInfo.Mode()&os.ModeCharDevice != 0 && outputInfo.Mode()&os.ModeCharDevice != 0
 }
 
 func parseOptions(args []string) (options, []string, error) {
@@ -425,6 +534,9 @@ type connectionTarget struct {
 	command    *exec.Cmd
 	endpoint   string
 	httpClient *http.Client
+	oauth      mcpauth.OAuthHandler
+	oauthRun   *oauthRuntime
+	authServer string
 }
 
 func (t connectionTarget) requiresToolPriming() bool { return t.endpoint != "" }
@@ -482,6 +594,29 @@ func makeHTTPTarget(transport config.HTTP, lookup func(string) (string, bool)) (
 	}
 	client := &http.Client{Transport: &configuredHeaderTransport{base: http.DefaultTransport, headers: headers, scheme: endpoint.Scheme, host: endpoint.Host}}
 	return connectionTarget{endpoint: endpoint.String(), httpClient: client}, secrets, nil
+}
+
+func attachOAuth(target connectionTarget, serverName string, transport config.HTTP, lookup func(string) (string, bool), interactive, force bool, emitURL func(string)) (connectionTarget, []string, *appError) {
+	for _, header := range transport.Headers {
+		if strings.EqualFold(header.Name, "Authorization") {
+			return target, nil, nil
+		}
+	}
+	clientSecret, secrets, appErr := resolveOAuthClientSecret(transport, lookup)
+	if appErr != nil {
+		return connectionTarget{}, nil, appErr
+	}
+	runtime, appErr := newOAuthRuntime(transport, target.endpoint, clientSecret, interactive, force, emitURL)
+	if appErr != nil {
+		return connectionTarget{}, nil, appErr
+	}
+	handler, appErr := runtime.Handler(transport, clientSecret)
+	if appErr != nil {
+		runtime.Close()
+		return connectionTarget{}, nil, appErr
+	}
+	target.oauth, target.oauthRun, target.authServer = handler, runtime, serverName
+	return target, secrets, nil
 }
 
 type configuredHeaderTransport struct {
@@ -651,8 +786,21 @@ func connectTarget(ctx context.Context, target connectionTarget, redactor *redac
 		return connectCommand(ctx, target.command, redactor)
 	}
 	if target.endpoint != "" {
-		transport := &mcp.StreamableClientTransport{Endpoint: target.endpoint, HTTPClient: target.httpClient, DisableStandaloneSSE: true}
-		return connectSession(ctx, transport)
+		transport := &mcp.StreamableClientTransport{Endpoint: target.endpoint, HTTPClient: target.httpClient, OAuthHandler: target.oauth, DisableStandaloneSSE: true}
+		session, appErr := connectSession(ctx, transport)
+		if appErr != nil && appErr.code == "authorization_required" && target.authServer != "" {
+			appErr.action = authAction(target.authServer)
+		}
+		if appErr != nil && target.oauth != nil && appErr.code == "mcp_connect_failed" {
+			lower := strings.ToLower(appErr.message)
+			switch {
+			case strings.Contains(lower, "token exchange failed"), strings.Contains(lower, "authorization provider returned"), strings.Contains(lower, "invalid_grant"):
+				appErr = authenticationError("authorization_failed", appErr.message, authAction(target.authServer))
+			case strings.Contains(lower, "protected resource metadata"), strings.Contains(lower, "authorization server metadata"), strings.Contains(lower, "failed to register client"), strings.Contains(lower, "issuer"):
+				appErr = protocolError("oauth_protocol_failed", appErr.message, "check the upstream OAuth metadata and client registration")
+			}
+		}
+		return session, appErr
 	}
 	return nil, transportError("mcp_connect_failed", "server has no configured transport", "correct the server transport configuration")
 }
@@ -677,6 +825,15 @@ func connectSession(ctx context.Context, transport mcp.Transport) (*mcp.ClientSe
 	if err != nil {
 		if tracked.connection != nil {
 			_ = tracked.connection.Close()
+		}
+		if errors.Is(err, errAuthorizationRequired) {
+			return nil, authenticationError("authorization_required", "the upstream MCP server requires authorization", "run wirecmd auth login for the selected server")
+		}
+		if errors.Is(err, errAuthorizationInProgress) {
+			return nil, userActionError("authorization_in_progress", "another request is completing OAuth authorization for this credential", "retry after the current authorization finishes")
+		}
+		if errors.Is(err, oauthstore.ErrUnavailable) || errors.Is(err, oauthstore.ErrUnsafeState) || errors.Is(err, oauthstore.ErrCorrupt) || errors.Is(err, oauthstore.ErrStale) {
+			return nil, oauthStoreError(err)
 		}
 		return nil, transportError("mcp_connect_failed", err.Error(), "check the configured transport and upstream diagnostics")
 	}
@@ -886,20 +1043,9 @@ type redactor struct {
 }
 
 func newRedactor(values []string, writer io.Writer) *redactor {
-	seen := make(map[string]struct{}, len(values))
-	secrets := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		secrets = append(secrets, value)
-	}
-	sort.Slice(secrets, func(i, j int) bool { return len(secrets[i]) > len(secrets[j]) })
-	return &redactor{secrets: secrets, writer: writer}
+	redactor := &redactor{writer: writer}
+	redactor.ProtectSecrets(values...)
+	return redactor
 }
 
 func (r *redactor) Redact(value string) string {
@@ -911,6 +1057,41 @@ func (r *redactor) Redact(value string) string {
 		value = strings.ReplaceAll(value, secret, "[REDACTED]")
 	}
 	return value
+}
+
+func (r *redactor) ProtectSecrets(values ...string) {
+	seen := make(map[string]struct{}, len(r.secrets)+len(values))
+	for _, value := range r.secrets {
+		seen[value] = struct{}{}
+	}
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		r.secrets = append(r.secrets, value)
+		variants := []string{value}
+		for depth := 0; depth < 2; depth++ {
+			current := append([]string(nil), variants...)
+			for _, item := range current {
+				variants = append(variants, url.QueryEscape(item), url.PathEscape(item))
+			}
+		}
+		for _, encoded := range variants[1:] {
+			if encoded == value || encoded == "" {
+				continue
+			}
+			if _, ok := seen[encoded]; ok {
+				continue
+			}
+			seen[encoded] = struct{}{}
+			r.secrets = append(r.secrets, encoded)
+		}
+	}
+	sort.Slice(r.secrets, func(i, j int) bool { return len(r.secrets[i]) > len(r.secrets[j]) })
 }
 
 // ProtectEndpoint makes literal query strings diagnostic-only: the endpoint

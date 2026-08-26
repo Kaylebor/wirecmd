@@ -514,6 +514,103 @@ func TestHTTPHeaderValidation(t *testing.T) {
 	}
 }
 
+func TestComposeOAuthConfigurationAndProvenance(t *testing.T) {
+	base, err := ParseString("base.kdl", `wirecmd {
+        server "remote" {
+            scope "workspace"
+            http "https://example.test/mcp" {
+                oauth {
+                    client-id "base-client"
+                    client-secret (secret)"env://BASE_SECRET"
+                    redirect-uri "http://127.0.0.1:8765/callback"
+                }
+            }
+        }
+    }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := ParseString("local.kdl", `wirecmd {
+        server "remote" {
+            http {
+                oauth {
+                    client-id "local-client"
+                    redirect-uri "http://localhost:8766/callback"
+                }
+            }
+        }
+    }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	effective, err := Compose(base, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oauth := effective.Servers[0].HTTP.OAuth
+	if oauth == nil {
+		t.Fatal("OAuth = nil")
+	}
+	if oauth.ClientID != "local-client" || oauth.ClientIDProvenance.File != "local.kdl" {
+		t.Fatalf("client ID = %#v", oauth)
+	}
+	if oauth.RedirectURI != "http://localhost:8766/callback" || oauth.RedirectURIProvenance.File != "local.kdl" {
+		t.Fatalf("redirect URI = %#v", oauth)
+	}
+	if oauth.ClientSecret == nil || oauth.ClientSecret.Kind != ValueSecretReference || oauth.ClientSecret.Text != "env://BASE_SECRET" || oauth.ClientSecret.File != "base.kdl" {
+		t.Fatalf("client secret = %#v", oauth.ClientSecret)
+	}
+	if oauth.Provenance.File != "local.kdl" || oauth.Provenance.Path != `wirecmd.server["remote"].http.oauth` {
+		t.Fatalf("OAuth provenance = %#v", oauth.Provenance)
+	}
+}
+
+func TestOAuthConfigurationValidation(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "missing client ID", source: `oauth { redirect-uri "http://127.0.0.1:8765/callback" }`, want: "client-id is required"},
+		{name: "missing redirect URI", source: `oauth { client-id "client" }`, want: "redirect-uri is required"},
+		{name: "https", source: `oauth { client-id "client"; redirect-uri "https://127.0.0.1:8765/callback" }`, want: "absolute http loopback"},
+		{name: "remote host", source: `oauth { client-id "client"; redirect-uri "http://example.test:8765/callback" }`, want: "host must be a loopback"},
+		{name: "no port", source: `oauth { client-id "client"; redirect-uri "http://localhost/callback" }`, want: "explicit port"},
+		{name: "user info", source: `oauth { client-id "client"; redirect-uri "http://user@localhost:8765/callback" }`, want: "user information"},
+		{name: "fragment", source: `oauth { client-id "client"; redirect-uri "http://localhost:8765/callback#part" }`, want: "fragment"},
+		{name: "authorization header", source: `header Authorization="Bearer configured"; oauth { client-id "client"; redirect-uri "http://localhost:8765/callback" }`, want: "cannot be combined"},
+		{name: "duplicate block", source: `oauth { client-id "one" }; oauth { client-id "two" }`, want: "duplicate oauth"},
+		{name: "unknown child", source: `oauth { scope "read" }`, want: "unknown child node"},
+		{name: "secret client ID", source: `oauth { client-id (secret)"env://CLIENT"; redirect-uri "http://localhost:8765/callback" }`, want: "value annotation"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source, err := ParseString("test.kdl", `wirecmd { server "remote" { scope "workspace"; http "https://example.test/mcp" { `+test.source+` } } }`)
+			if err == nil {
+				_, err = Compose(source)
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("OAuth configuration error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestOAuthPartialSourcesNeedOnlyEffectiveCompleteness(t *testing.T) {
+	base, err := ParseString("base.kdl", `wirecmd { server "remote" { scope "workspace"; http "https://example.test/mcp" { oauth { client-id "client" } } } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := ParseString("local.kdl", `wirecmd { server "remote" { http { oauth { redirect-uri "http://[::1]:8765/callback" } } } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compose(base, local); err != nil {
+		t.Fatalf("Compose() error = %v", err)
+	}
+}
+
 func httpFieldNames(fields []HTTPField) []string {
 	result := make([]string, len(fields))
 	for i, field := range fields {
