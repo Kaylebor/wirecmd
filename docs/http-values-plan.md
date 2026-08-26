@@ -1,6 +1,6 @@
 # Typed HTTP Query and Header Values
 
-Status: authoritative current milestone
+Status: completed authoritative milestone, concluded 2026-08-26
 
 This plan records the accepted initial configuration contract for static query
 parameters and request headers on Streamable HTTP endpoints. It extends the

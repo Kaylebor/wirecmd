@@ -1,6 +1,13 @@
 # Transparent OAuth and Credential Persistence
 
-Status: authoritative current milestone
+Status: completed authoritative milestone, concluded 2026-08-26
+
+The milestone passed. Deterministic SDK-backed fixtures cover dynamic and
+preregistered clients, PKCE and resource binding, discovery fallbacks,
+authorization denial, refresh failure, callback validation and cancellation,
+credential replacement, daemon retirement, concurrency, encrypted persistence,
+and secret-safe output. Real-provider evidence covers Cloudflare DCR and records
+Figma's catalog restriction without introducing a compatibility shim.
 
 ## Objective
 

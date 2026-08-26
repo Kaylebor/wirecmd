@@ -10,9 +10,9 @@
   supported-protocol qualification; legacy HTTP+SSE remains deferred there.
 - `docs/discovery-plan.md` is authoritative for the completed automatic
   configuration-discovery milestone and its acceptance criteria.
-- `docs/http-values-plan.md` is authoritative for the current typed HTTP
+- `docs/http-values-plan.md` is authoritative for the completed typed HTTP
   query/header configuration milestone and its acceptance criteria.
-- `docs/oauth-plan.md` is authoritative for the current transparent OAuth and
+- `docs/oauth-plan.md` is authoritative for the completed transparent OAuth and
   encrypted credential-persistence milestone and its acceptance criteria.
 - Files under `docs/notes/` are non-authoritative working material. Do not turn
   an idea from those files into a requirement without promoting it explicitly

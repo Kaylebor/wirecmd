@@ -2,7 +2,7 @@
 
 Status: completed authoritative milestone; supported MCP compatibility
 qualification is complete; legacy HTTP+SSE remains deferred at the SDK
-boundary. The current typed HTTP query/header milestone is recorded in the
+boundary. The completed typed HTTP query/header milestone is recorded in the
 [HTTP values plan](http-values-plan.md).
 
 ## Objective

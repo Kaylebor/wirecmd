@@ -160,8 +160,8 @@ The first validation milestone found the shell interaction model viable, and
 the supported legacy stdio and Streamable HTTP layers are now qualified. Legacy
 HTTP+SSE remains deferred at the official SDK boundary. Trusted global and
 workspace configuration discovery is complete. Typed query and header values
-for Streamable HTTP endpoints are complete, and transparent OAuth with
-encrypted credential persistence is the current milestone; their contracts are
+for Streamable HTTP endpoints and transparent OAuth with encrypted credential
+persistence are complete; their contracts are
 recorded in the [HTTP values plan](http-values-plan.md) and
 [OAuth plan](oauth-plan.md). OAuth must use the official SDK's authorization
 surface, with Wirecmd adding only interaction, persistence, daemon

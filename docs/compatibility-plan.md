@@ -135,9 +135,6 @@ changing dependencies, configuration, or architecture.
 
 - Provider-specific OAuth qualification and compatibility guards beyond the
   SDK-backed contract recorded in the [OAuth plan](oauth-plan.md).
-- Static typed HTTP query, header, and credential configuration is specified
-  by the subsequent
-  [HTTP values plan](http-values-plan.md).
 - Legacy HTTP+SSE, until a stable official Go SDK release includes
   `ClientSessionOptions.ProtocolVersion` (PR #1127); then requalify against the
   historical fixture before exposing it in configuration or runtime behavior.

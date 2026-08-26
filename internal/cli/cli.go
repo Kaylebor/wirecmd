@@ -796,7 +796,7 @@ func connectTarget(ctx context.Context, target connectionTarget, redactor *redac
 			switch {
 			case strings.Contains(lower, "token exchange failed"), strings.Contains(lower, "authorization provider returned"), strings.Contains(lower, "invalid_grant"):
 				appErr = authenticationError("authorization_failed", appErr.message, authAction(target.authServer))
-			case strings.Contains(lower, "protected resource metadata"), strings.Contains(lower, "authorization server metadata"), strings.Contains(lower, "failed to register client"), strings.Contains(lower, "issuer"):
+			case strings.Contains(lower, "protected resource metadata"), strings.Contains(lower, "authorization server metadata"), strings.Contains(lower, "failed to register client"), strings.Contains(lower, "issuer"), strings.Contains(lower, "state mismatch"), strings.Contains(lower, "authorization response"):
 				appErr = protocolError("oauth_protocol_failed", appErr.message, "check the upstream OAuth metadata and client registration")
 			}
 		}

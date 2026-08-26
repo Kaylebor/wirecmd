@@ -38,12 +38,10 @@ website such as `wirecmd.dev` may be added independently later.
 The first agent-facing validation milestone is complete: comparative evidence
 supports continuing the project. Supported legacy stdio and Streamable HTTP
 protocol layers are qualified; legacy HTTP+SSE remains deferred at the SDK
-boundary. Automatic configuration discovery and workspace trust are also
-complete. The current milestone adds typed query and header values for
-Streamable HTTP endpoints. Normal commands use a private foreground local
-daemon; `--direct` is the deliberate one-shot path for testing and diagnosis.
-The current OAuth milestone adds SDK-owned authorization for protected HTTP
-servers and encrypted local credential persistence.
+boundary. Automatic configuration discovery, workspace trust, typed HTTP query
+and header values, and SDK-owned OAuth with encrypted credential persistence
+are also complete. Normal commands use a private foreground local daemon;
+`--direct` is the deliberate one-shot path for testing and diagnosis.
 
 Current daemon administration is intentionally small:
 
