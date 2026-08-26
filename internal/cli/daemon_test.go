@@ -22,10 +22,7 @@ import (
 
 func TestDaemonRetainsSessionAndReloads(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	d := startTestDaemon(t)
 	configPath := helperConfig(t, "", "")
@@ -73,10 +70,7 @@ func TestClientDaemonHelloUsesBuildVersion(t *testing.T) {
 
 func TestDaemonFocusedHelpAndProjectedCall(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	configPath := helperConfig(t, "", "")
@@ -100,10 +94,7 @@ func TestDaemonFocusedHelpAndProjectedCall(t *testing.T) {
 }
 
 func TestDaemonStreamableHTTPContracts(t *testing.T) {
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	fixture := newHTTPFixture(t)
@@ -138,10 +129,7 @@ func TestDaemonStreamableHTTPContracts(t *testing.T) {
 }
 
 func TestDaemonStreamableHTTPCredentialsSelectInstances(t *testing.T) {
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	fixture := newHTTPFixture(t)
@@ -172,10 +160,7 @@ func TestDaemonStreamableHTTPCredentialsSelectInstances(t *testing.T) {
 }
 
 func TestDaemonStreamableHTTPColdCallPrimesOnce(t *testing.T) {
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	fixture := newHTTPFixture(t)
@@ -205,10 +190,7 @@ func TestDaemonStreamableHTTPColdCallPrimesOnce(t *testing.T) {
 }
 
 func TestDaemonMarksClosedHTTPInstanceBroken(t *testing.T) {
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	fixture := newHTTPFixture(t)
@@ -229,10 +211,7 @@ func TestDaemonMarksClosedHTTPInstanceBroken(t *testing.T) {
 }
 
 func TestDaemonCancellationReleasesHTTPInstance(t *testing.T) {
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	fixture := newHTTPFixture(t)
@@ -302,10 +281,7 @@ func TestDaemonCanceledAfterLocalPostSDKErrorsKeepsHTTPInstanceHealthy(t *testin
 
 func assertDaemonCanceledHTTPToolListBreaksInstance(t *testing.T, operation []string) {
 	t.Helper()
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	fixture := newHTTPFixtureWithBlockedToolList(t, true)
@@ -341,10 +317,7 @@ func assertDaemonCanceledHTTPToolListBreaksInstance(t *testing.T, operation []st
 }
 
 func TestDaemonCanceledQueuedHTTPRequestDoesNotBreakInstance(t *testing.T) {
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	fixture := newHTTPFixture(t)
@@ -394,10 +367,7 @@ func TestDaemonCanceledQueuedHTTPRequestDoesNotBreakInstance(t *testing.T) {
 }
 
 func TestDaemonRedactsHTTPQueryInConnectionDiagnostics(t *testing.T) {
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -440,10 +410,7 @@ func TestDaemonProjectedErrorsRedactSecretsAndUsePrivateSchema(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
 	const secret = "daemon-projected-secret"
 	t.Setenv("WIRECMD_DAEMON_PROJECTED_SECRET", secret)
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	config := helperConfig(t, "", `env SECRET=(secret)"env://WIRECMD_DAEMON_PROJECTED_SECRET"`)
@@ -469,10 +436,7 @@ func TestDaemonProjectedErrorsRedactSecretsAndUsePrivateSchema(t *testing.T) {
 
 func TestDaemonConfigMismatchAndSecretIsolation(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	directory := t.TempDir()
@@ -495,10 +459,7 @@ func TestDaemonConfigMismatchAndSecretIsolation(t *testing.T) {
 
 func TestDaemonRejectsMovedRelativeRootWithoutReload(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	baseDirectory := t.TempDir()
@@ -507,9 +468,13 @@ func TestDaemonRejectsMovedRelativeRootWithoutReload(t *testing.T) {
 	local := filepath.Join(localDirectory, "local.kdl")
 	writeSource(t, base, helperSourceWithRoot("."))
 	writeSource(t, local, "wirecmd {}\n")
+	canonicalBaseDirectory, err := filepath.EvalSymlinks(baseDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	code, output, stderr := invoke(t, []string{"--config", base, "--config", local, "helper", "working_directory"})
-	if code != exitOK || stderr != "" || callCWD(t, output) != baseDirectory {
+	if code != exitOK || stderr != "" || callCWD(t, output) != canonicalBaseDirectory {
 		t.Fatalf("initial root: code=%d stderr=%q output=%s", code, stderr, output)
 	}
 
@@ -525,10 +490,7 @@ func TestDaemonRejectsMovedRelativeRootWithoutReload(t *testing.T) {
 
 func TestDaemonCoalescesConcurrentStartup(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	configPath := helperConfig(t, "", "")
@@ -558,10 +520,7 @@ func TestDaemonCoalescesConcurrentStartup(t *testing.T) {
 
 func TestDaemonCoalescedStartupSurvivesInitiatorCancellation(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	d := startTestDaemon(t)
 	started := filepath.Join(t.TempDir(), "started")
@@ -617,10 +576,7 @@ func TestDaemonCoalescedStartupSurvivesInitiatorCancellation(t *testing.T) {
 
 func TestDaemonClientCancellationCancelsUpstreamOperation(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	started := filepath.Join(t.TempDir(), "started")
@@ -673,10 +629,7 @@ func TestOfficialMemoryFixture(t *testing.T) {
 	if binary == "" {
 		t.Skip("set WIRECMD_OFFICIAL_MEMORY_BINARY to qualify the official SDK memory example")
 	}
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	configPath := filepath.Join(t.TempDir(), "memory.kdl")
@@ -706,10 +659,7 @@ func TestOfficialMemoryFixture(t *testing.T) {
 
 func TestDaemonAdminGrammarAndRuntimeSafety(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	code, output, _ := invoke(t, []string{"daemon", "status"})
 	if code != exitTransport || decodeOutput(t, output)["error"].(map[string]any)["code"] != "daemon_unavailable" {
@@ -732,11 +682,52 @@ func TestDaemonAdminGrammarAndRuntimeSafety(t *testing.T) {
 	}
 }
 
-func TestDaemonSocketSafetyAndStaleRecovery(t *testing.T) {
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
+func TestRuntimePathsValidateExplicitRuntimeDirectory(t *testing.T) {
+	valid := t.TempDir()
+	if err := os.Chmod(valid, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	unsafe := filepath.Join(t.TempDir(), "unsafe")
+	if err := os.Mkdir(unsafe, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	symlink := filepath.Join(t.TempDir(), "runtime-link")
+	if err := os.Symlink(valid, symlink); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(t.TempDir(), "missing")
+
+	for _, test := range []struct {
+		name string
+		path string
+		code string
+		want string
+	}{
+		{name: "empty", path: "", code: "runtime_dir_unavailable"},
+		{name: "relative", path: "runtime", code: "runtime_dir_unavailable"},
+		{name: "missing", path: missing, code: "runtime_dir_unavailable"},
+		{name: "unsafe", path: unsafe, code: "runtime_dir_unsafe"},
+		{name: "symlink", path: symlink, want: filepath.Join(symlink, "wirecmd")},
+		{name: "valid", path: valid, want: filepath.Join(valid, "wirecmd")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("XDG_RUNTIME_DIR", test.path)
+			directory, _, _, appErr := runtimePaths()
+			if test.code != "" {
+				if appErr == nil || appErr.code != test.code {
+					t.Fatalf("runtimePaths() error = %#v, want code %q", appErr, test.code)
+				}
+				return
+			}
+			if appErr != nil || directory != test.want {
+				t.Fatalf("runtimePaths() = %q, %#v", directory, appErr)
+			}
+		})
+	}
+}
+
+func TestDaemonSocketSafetyAndStaleRecovery(t *testing.T) {
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	directory, socket, _, appErr := openRuntimeDirectory()
 	if appErr != nil {
@@ -779,10 +770,7 @@ func TestDaemonSocketSafetyAndStaleRecovery(t *testing.T) {
 }
 
 func TestDaemonHandshakeCancellation(t *testing.T) {
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	_, socket, _, appErr := openRuntimeDirectory()
 	if appErr != nil {
@@ -828,10 +816,7 @@ func TestDaemonHandshakeCancellation(t *testing.T) {
 }
 
 func TestDaemonShutdownClosesHeldPeerConnections(t *testing.T) {
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	d := startTestDaemon(t)
 	_, socket, _, appErr := runtimePaths()
@@ -871,10 +856,7 @@ func TestDaemonShutdownClosesHeldPeerConnections(t *testing.T) {
 
 func TestForegroundDaemonCancellationClosesRetainedChildAndSocket(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	pidFile := filepath.Join(t.TempDir(), "helper.pid")
 	configPath := helperConfig(t, "", "env WIRECMD_CHILD_PID_FILE="+strconv.Quote(pidFile))

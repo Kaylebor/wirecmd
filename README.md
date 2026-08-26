@@ -50,6 +50,12 @@ and header values, and SDK-owned OAuth with encrypted credential persistence
 are also complete. Normal commands use a private foreground local daemon;
 `--direct` is the deliberate one-shot path for testing and diagnosis.
 
+The published `v0.1.0-alpha.1` checkpoint is Linux-only. Native macOS 15
+qualification is the next milestone: Apple Silicon is the physical target and
+Intel receives native CI compatibility coverage. The candidate contract and
+M2 validation gate are recorded in the
+[macOS plan](docs/macos-plan.md).
+
 Current daemon administration is intentionally small:
 
 ```sh
@@ -205,6 +211,8 @@ qualification, and runtime details.
   and encrypted credential-persistence milestone.
 - [Release readiness](docs/release-readiness.md) defines the authoritative
   first-alpha installation, qualification, and manual publication contract.
+- [macOS plan](docs/macos-plan.md) defines the authoritative Apple Silicon
+  qualification milestone and Intel CI boundary.
 - [Exploratory design notes](docs/notes/exploratory-design.md) retain ideas and
   research that are useful but not committed requirements.
 

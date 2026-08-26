@@ -733,10 +733,7 @@ func TestOAuthFixtureExplicitLoginReusesRegistrationAndReplacesCredential(t *tes
 
 func TestOAuthFixtureDaemonLogoutRetiresCredentialSession(t *testing.T) {
 	useTestOAuthStore(t, &testKeyring{})
-	runtimeDir := t.TempDir()
-	if err := os.Chmod(runtimeDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtimeDir := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 	startTestDaemon(t)
 	fixture := newOAuthFixture(t, oauthFixtureOptions{IssuerInCallback: true})
@@ -779,10 +776,7 @@ func TestOAuthFixtureDirectCredentialChangesRetireDaemonSession(t *testing.T) {
 	for _, action := range []string{"logout", "login"} {
 		t.Run(action, func(t *testing.T) {
 			useTestOAuthStore(t, &testKeyring{})
-			runtimeDir := t.TempDir()
-			if err := os.Chmod(runtimeDir, 0o700); err != nil {
-				t.Fatal(err)
-			}
+			runtimeDir := testRuntimeDirectory(t)
 			t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 			startTestDaemon(t)
 			fixture := newOAuthFixture(t, oauthFixtureOptions{IssuerInCallback: true})

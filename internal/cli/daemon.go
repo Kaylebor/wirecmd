@@ -247,15 +247,26 @@ func fingerprint(value any) string {
 }
 
 func runtimePaths() (string, string, string, *appError) {
-	runtime := os.Getenv("XDG_RUNTIME_DIR")
+	runtime, configured := os.LookupEnv("XDG_RUNTIME_DIR")
+	if !configured {
+		runtime = defaultRuntimeDirectory()
+	}
+	return runtimePathsFor(runtime, !configured)
+}
+
+func runtimePathsFor(runtime string, rejectSymlink bool) (string, string, string, *appError) {
 	if runtime == "" || !filepath.IsAbs(runtime) {
 		return "", "", "", transportError("runtime_dir_unavailable", "XDG_RUNTIME_DIR must name an absolute private runtime directory", "set XDG_RUNTIME_DIR or use --direct deliberately")
 	}
-	info, err := os.Stat(runtime)
+	stat := os.Stat
+	if rejectSymlink {
+		stat = os.Lstat
+	}
+	info, err := stat(runtime)
 	if err != nil {
 		return "", "", "", transportError("runtime_dir_unavailable", err.Error(), "use an accessible private XDG_RUNTIME_DIR or --direct deliberately")
 	}
-	if !info.IsDir() || info.Mode().Perm()&0o077 != 0 || !ownedByCurrentUser(info) {
+	if !info.IsDir() || (rejectSymlink && info.Mode()&os.ModeSymlink != 0) || info.Mode().Perm()&0o077 != 0 || !ownedByCurrentUser(info) {
 		return "", "", "", transportError("runtime_dir_unsafe", "XDG_RUNTIME_DIR is not a private directory owned by the current user", "correct XDG_RUNTIME_DIR permissions or use --direct deliberately")
 	}
 	directory := filepath.Join(runtime, "wirecmd")

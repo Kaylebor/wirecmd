@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -722,7 +721,10 @@ func openBrowserURL(raw string) error {
 	if strings.TrimSpace(raw) == "" {
 		return errors.New("empty authorization URL")
 	}
-	command := exec.Command("xdg-open", raw)
+	command, err := browserOpenCommand(raw)
+	if err != nil {
+		return err
+	}
 	if err := command.Start(); err != nil {
 		return err
 	}

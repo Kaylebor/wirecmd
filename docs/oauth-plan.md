@@ -164,7 +164,7 @@ tokens.
   policy.
 - Remote/headless callback relays, custom browser commands, and non-loopback
   redirect URIs.
-- Cross-platform browser and daemon transport qualification beyond the current
-  Unix/Linux target.
+- Physical macOS Keychain and browser qualification, tracked by the
+  [macOS plan](macos-plan.md), plus platforms beyond Linux and macOS.
 - OAuth behavior that requires a stable SDK-exposed resource/issuer identity
   beyond the resolved endpoint identity described above.

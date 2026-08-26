@@ -1,6 +1,6 @@
 # First Alpha Release Readiness
 
-Status: authoritative release preparation for `v0.1.0-alpha.1`; tag and GitHub prerelease not yet created
+Status: completed authoritative first-alpha release, published 2026-08-26
 
 ## Objective
 
@@ -9,6 +9,12 @@ Wirecmd's first alpha without implying stable compatibility or broader platform
 support. Release preparation adds version reporting, continuous qualification,
 installation and runtime prerequisites, and a repeatable manual release
 procedure. It does not add a packaging framework or automatic publication.
+
+The annotated `v0.1.0-alpha.1` tag and private GitHub prerelease were published
+from CI-qualified commit `84c1d37`. Clean explicit-version and `@latest`
+installations both reported `wirecmd v0.1.0-alpha.1`; installed-binary direct
+and daemon-backed smoke operations passed. Publication remains manual for later
+releases.
 
 ## Supported release surface
 
@@ -110,5 +116,6 @@ passes its preparation checks. They require a separate explicit release action.
   attestations.
 - Homebrew, distribution packages, containers, and service-manager units.
 - Automated tagging or GitHub Release publication.
-- macOS and Windows build or runtime qualification.
+- Windows build or runtime qualification. macOS qualification is tracked in
+  the [macOS plan](macos-plan.md).
 - Stable-version compatibility promises.

@@ -102,20 +102,24 @@ func TestHelperProcess(t *testing.T) {
 	}
 }
 
-func TestMCPOperationErrorCapturesOnlyRawCancellation(t *testing.T) {
+func TestMCPOperationErrorClassifiesCancellation(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		err  error
-		want bool
+		name         string
+		err          error
+		wantCanceled bool
+		wantCategory string
+		wantCode     string
+		wantExit     int
 	}{
-		{name: "ordinary protocol error", err: errors.New("invalid response"), want: false},
-		{name: "canceled", err: context.Canceled, want: true},
-		{name: "deadline", err: context.DeadlineExceeded, want: true},
-		{name: "wrapped canceled", err: fmt.Errorf("request: %w", context.Canceled), want: true},
+		{name: "ordinary protocol error", err: errors.New("invalid response"), wantCategory: "upstream_protocol", wantCode: "tool_list_failed", wantExit: exitProtocol},
+		{name: "canceled", err: context.Canceled, wantCanceled: true, wantCategory: "transport", wantCode: "operation_canceled", wantExit: exitTransport},
+		{name: "deadline", err: context.DeadlineExceeded, wantCanceled: true, wantCategory: "transport", wantCode: "operation_canceled", wantExit: exitTransport},
+		{name: "wrapped canceled", err: fmt.Errorf("request: %w", context.Canceled), wantCanceled: true, wantCategory: "transport", wantCode: "operation_canceled", wantExit: exitTransport},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := mcpOperationError(test.err, "tool_list_failed").sdkCanceled; got != test.want {
-				t.Fatalf("sdkCanceled = %v, want %v", got, test.want)
+			got := mcpOperationError(test.err, "tool_list_failed")
+			if got.sdkCanceled != test.wantCanceled || got.category != test.wantCategory || got.code != test.wantCode || got.exitCode != test.wantExit {
+				t.Fatalf("mcpOperationError() = {sdkCanceled:%v category:%q code:%q exit:%d}, want {%v %q %q %d}", got.sdkCanceled, got.category, got.code, got.exitCode, test.wantCanceled, test.wantCategory, test.wantCode, test.wantExit)
 			}
 		})
 	}
@@ -678,6 +682,10 @@ func TestDirectExecutionEnvironmentRootAndRedaction(t *testing.T) {
 	if err := os.Mkdir(project, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	canonicalProject, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
 	config := helperConfigAt(t, filepath.Join(directory, "config.kdl"), "project", `
                 env INHERITED="configured"
                 env EMPTY=""
@@ -697,8 +705,8 @@ func TestDirectExecutionEnvironmentRootAndRedaction(t *testing.T) {
 		t.Fatalf("working directory: code=%d output=%s", code, output)
 	}
 	data = decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)
-	if data["cwd"] != project {
-		t.Fatalf("cwd = %q, want %q", data["cwd"], project)
+	if data["cwd"] != canonicalProject {
+		t.Fatalf("cwd = %q, want %q", data["cwd"], canonicalProject)
 	}
 
 	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "helper", "secret"})

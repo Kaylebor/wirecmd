@@ -129,10 +129,7 @@ func TestTrustActionShellQuoteRoundTrips(t *testing.T) {
 func TestDaemonDiscoveryKeepsCallerWorkspacesSeparate(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
 	discoveryEnvironment(t)
-	runtime := t.TempDir()
-	if err := os.Chmod(runtime, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	source := helperConfig(t, "", "")
 	first := t.TempDir()

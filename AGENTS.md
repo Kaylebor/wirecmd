@@ -16,6 +16,8 @@
   encrypted credential-persistence milestone and its acceptance criteria.
 - `docs/release-readiness.md` is authoritative for first-alpha installation,
   Linux qualification, versioning, and the manual publication boundary.
+- `docs/macos-plan.md` is authoritative for the current macOS Apple Silicon
+  qualification milestone, Intel CI boundary, and physical M2 release gate.
 - Files under `docs/notes/` are non-authoritative working material. Do not turn
   an idea from those files into a requirement without promoting it explicitly
   into an authoritative document.
@@ -138,6 +140,8 @@
 - Apply the release gates and manual publication boundary in
   `docs/release-readiness.md`; passing preparation checks does not authorize a
   tag or GitHub Release.
+- Treat macOS CI as necessary but insufficient for Apple Silicon support; the
+  physical checks and visibility gate are defined in `docs/macos-plan.md`.
 - Exercise real agent-facing discovery and composition, not only unit tests or
   direct SDK calls.
 - Record exact commands, server fixtures, observed outputs, latency conditions,

@@ -786,13 +786,16 @@ func isTransportFailure(err error) bool {
 // may be poisoned by the SDK's cancellation notification, from a local error
 // produced after a successful SDK operation. It is never serialized.
 func mcpOperationError(err error, protocolCode string) *appError {
+	sdkCanceled := errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 	var appErr *appError
-	if isTransportFailure(err) {
+	if sdkCanceled {
+		appErr = transportError("operation_canceled", err.Error(), "retry if the cancellation was unintended")
+	} else if isTransportFailure(err) {
 		appErr = transportError("connection_closed", err.Error(), "check the upstream MCP server diagnostics")
 	} else {
 		appErr = protocolError(protocolCode, err.Error(), "check the upstream MCP server diagnostics")
 	}
-	appErr.sdkCanceled = errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+	appErr.sdkCanceled = sdkCanceled
 	return appErr
 }
 

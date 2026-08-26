@@ -30,6 +30,15 @@ func writeFile(t *testing.T, path string) {
 	}
 }
 
+func canonicalTestPath(t *testing.T, path string) string {
+	t.Helper()
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Clean(canonical)
+}
+
 func TestTrustedDiscoveryOrderAndBoundary(t *testing.T) {
 	configHome, _ := testEnvironment(t)
 	workspace := filepath.Join(t.TempDir(), "workspace")
@@ -45,23 +54,27 @@ func TestTrustedDiscoveryOrderAndBoundary(t *testing.T) {
 	writeFile(t, nearConfig)
 	writeFile(t, filepath.Join(filepath.Dir(workspace), projectConfig)) // outside the trust boundary
 
+	canonicalWorkspace := canonicalTestPath(t, workspace)
+	canonicalChild := canonicalTestPath(t, child)
+	canonicalRootConfig := canonicalTestPath(t, rootConfig)
+	canonicalNearConfig := canonicalTestPath(t, nearConfig)
 	trusted, err := Trust(workspace)
-	if err != nil || trusted != workspace {
+	if err != nil || trusted != canonicalWorkspace {
 		t.Fatalf("Trust() = %q, %v", trusted, err)
 	}
 	paths, err := Paths(child)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{global, rootConfig, nearConfig}
+	want := []string{global, canonicalRootConfig, canonicalNearConfig}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("Paths() = %#v, want %#v", paths, want)
 	}
 	canonical, ok, root, err := Status(child)
-	if err != nil || !ok || root != workspace || canonical != child {
+	if err != nil || !ok || root != canonicalWorkspace || canonical != canonicalChild {
 		t.Fatalf("Status() = %q, %v, %q, %v", canonical, ok, root, err)
 	}
-	if roots, err := List(); err != nil || !reflect.DeepEqual(roots, []string{workspace}) {
+	if roots, err := List(); err != nil || !reflect.DeepEqual(roots, []string{canonicalWorkspace}) {
 		t.Fatalf("List() = %#v, %v", roots, err)
 	}
 }
@@ -76,7 +89,7 @@ func TestUntrustedAndNotFound(t *testing.T) {
 	writeFile(t, filepath.Join(workspace, projectConfig))
 	_, err := Paths(child)
 	var untrusted *UntrustedError
-	if !errors.As(err, &untrusted) || untrusted.Workspace != workspace {
+	if !errors.As(err, &untrusted) || untrusted.Workspace != canonicalTestPath(t, workspace) {
 		t.Fatalf("Paths() error = %#v", err)
 	}
 	if err := os.Remove(filepath.Join(workspace, projectConfig)); err != nil {
@@ -211,14 +224,23 @@ func TestNearestNestedTrustRootWins(t *testing.T) {
 		t.Fatal(err)
 	}
 	paths, err := Paths(child)
-	if err != nil || !reflect.DeepEqual(paths, []string{nestedConfig}) {
+	if err != nil || !reflect.DeepEqual(paths, []string{canonicalTestPath(t, nestedConfig)}) {
 		t.Fatalf("nested Paths() = %#v, %v", paths, err)
 	}
 }
 
 func TestDeletedWorkspaceCanBeUntrusted(t *testing.T) {
 	testEnvironment(t)
-	workspace := filepath.Join(t.TempDir(), "workspace")
+	directory := t.TempDir()
+	realParent := filepath.Join(directory, "real")
+	if err := os.Mkdir(realParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(directory, "alias")
+	if err := os.Symlink(realParent, alias); err != nil {
+		t.Fatal(err)
+	}
+	workspace := filepath.Join(alias, "workspace")
 	if err := os.Mkdir(workspace, 0o700); err != nil {
 		t.Fatal(err)
 	}
