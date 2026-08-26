@@ -21,6 +21,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Kaylebor/wirecmd/internal/buildinfo"
 	"github.com/Kaylebor/wirecmd/internal/config"
 	"github.com/Kaylebor/wirecmd/internal/discovery"
 	"github.com/Kaylebor/wirecmd/internal/oauthstore"
@@ -51,6 +52,10 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		_, _ = io.WriteString(out, string(help))
 		return exitOK
 	}
+	if version, ok := result.(versionText); ok {
+		_, _ = fmt.Fprintf(out, "wirecmd %s\n", version)
+		return exitOK
+	}
 	if appErr != nil {
 		writeJSON(out, failureEnvelope(appErr))
 		return appErr.exitCode
@@ -71,6 +76,7 @@ type options struct {
 	jsonSet bool
 	stdin   bool
 	help    bool
+	version bool
 }
 
 type stringList []string
@@ -103,10 +109,18 @@ const (
 	inspectTool
 )
 
+type versionText string
+
 func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (any, *appError) {
 	opts, positionals, parseErr := parseOptions(args)
 	if parseErr != nil {
 		return nil, invocationError("invalid_flags", parseErr.Error(), "place Wirecmd flags before the server and tool names")
+	}
+	if opts.version {
+		if opts.direct || len(opts.configs) != 0 || opts.jsonSet || opts.stdin || opts.help || len(positionals) != 0 {
+			return nil, invocationError("version_usage", "--version must be used by itself", "run wirecmd --version")
+		}
+		return versionText(buildinfo.Version()), nil
 	}
 	if admin, ok := parseConfigAdmin(positionals, opts); ok {
 		return runConfigAdmin(admin)
@@ -360,6 +374,7 @@ func parseOptions(args []string) (options, []string, error) {
 	flags.BoolVar(&opts.stdin, "stdin", false, "read exact JSON tool arguments from stdin")
 	flags.BoolVar(&opts.help, "help", false, "show usage")
 	flags.BoolVar(&opts.help, "h", false, "show usage")
+	flags.BoolVar(&opts.version, "version", false, "show version")
 	if err := flags.Parse(args); err != nil {
 		return options{}, nil, err
 	}
@@ -818,7 +833,7 @@ func connect(ctx context.Context, command *exec.Cmd, redactor *redactor) (*mcp.C
 
 func connectSession(ctx context.Context, transport mcp.Transport) (*mcp.ClientSession, *appError) {
 	tracked := &trackedTransport{transport: transport}
-	client := mcp.NewClient(&mcp.Implementation{Name: "wirecmd", Version: "dev"}, &mcp.ClientOptions{
+	client := mcp.NewClient(&mcp.Implementation{Name: "wirecmd", Version: buildinfo.Version()}, &mcp.ClientOptions{
 		MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true},
 	})
 	session, err := client.Connect(ctx, tracked, nil)

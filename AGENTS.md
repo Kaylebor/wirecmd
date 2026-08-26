@@ -14,6 +14,8 @@
   query/header configuration milestone and its acceptance criteria.
 - `docs/oauth-plan.md` is authoritative for the completed transparent OAuth and
   encrypted credential-persistence milestone and its acceptance criteria.
+- `docs/release-readiness.md` is authoritative for first-alpha installation,
+  Linux qualification, versioning, and the manual publication boundary.
 - Files under `docs/notes/` are non-authoritative working material. Do not turn
   an idea from those files into a requirement without promoting it explicitly
   into an authoritative document.
@@ -99,6 +101,8 @@
   distinct exact-JSON invocation path rather than a global reserved-name list.
 - Keep stdout machine-composable. Send diagnostics to stderr and never print
   secrets, tokens, credentials, or unredacted secret-bearing URLs.
+- Keep `wirecmd --version` independent of configuration, daemon, keyring, and
+  upstream state. Do not reserve the positional form `wirecmd version`.
 - Structured errors must distinguish user action, authentication, invocation,
   upstream protocol, transport, configuration, and internal failures where an
   agent would recover differently.
@@ -131,6 +135,9 @@
 
 - Tie tests and demonstrations to the acceptance criteria in
   `docs/validation-plan.md`.
+- Apply the release gates and manual publication boundary in
+  `docs/release-readiness.md`; passing preparation checks does not authorize a
+  tag or GitHub Release.
 - Exercise real agent-facing discovery and composition, not only unit tests or
   direct SDK calls.
 - Record exact commands, server fixtures, observed outputs, latency conditions,

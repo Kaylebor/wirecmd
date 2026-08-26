@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/Kaylebor/wirecmd/internal/buildinfo"
 )
 
 func TestDaemonRetainsSessionAndReloads(t *testing.T) {
@@ -60,6 +62,13 @@ func TestDaemonRetainsSessionAndReloads(t *testing.T) {
 		t.Fatalf("direct recall: code=%d output=%s", code, output)
 	}
 	_ = d
+}
+
+func TestClientDaemonHelloUsesBuildVersion(t *testing.T) {
+	hello := clientDaemonHello()
+	if hello.Type != "hello" || hello.Protocol != daemonProtocol || hello.Version != buildinfo.Version() {
+		t.Fatalf("client daemon hello = %#v", hello)
+	}
 }
 
 func TestDaemonFocusedHelpAndProjectedCall(t *testing.T) {

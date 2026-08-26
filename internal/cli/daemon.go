@@ -24,6 +24,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Kaylebor/wirecmd/internal/buildinfo"
 	"github.com/Kaylebor/wirecmd/internal/config"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -81,6 +82,10 @@ type daemonHelloReply struct {
 	Type     string     `json:"type"`
 	Protocol int        `json:"protocol,omitempty"`
 	Error    *errorBody `json:"error,omitempty"`
+}
+
+func clientDaemonHello() daemonHello {
+	return daemonHello{Type: "hello", Protocol: daemonProtocol, Version: buildinfo.Version()}
 }
 
 type secretInput struct {
@@ -629,7 +634,7 @@ func openDaemonClient(ctx context.Context) (*daemonClient, *appError) {
 	encoder := json.NewEncoder(connection)
 	decoder := json.NewDecoder(bufio.NewReader(connection))
 	decoder.UseNumber()
-	if err := encoder.Encode(daemonHello{Type: "hello", Protocol: daemonProtocol, Version: "dev"}); err != nil {
+	if err := encoder.Encode(clientDaemonHello()); err != nil {
 		stopCancel()
 		_ = connection.Close()
 		return nil, daemonUnavailable()

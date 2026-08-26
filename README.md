@@ -25,12 +25,19 @@ results with ordinary shell tools. A harness should not need native MCP
 integration or eager injection of every configured tool schema.
 
 The canonical Go module and repository path is
-`github.com/Kaylebor/wirecmd`. Once releases exist, the command is intended to
-be installable with:
+`github.com/Kaylebor/wirecmd`. The first intended prerelease is
+`v0.1.0-alpha.1`; once that release exists, install it with Go 1.25 or newer:
 
 ```sh
 go install github.com/Kaylebor/wirecmd@latest
 ```
+
+Until the repository is public, installation also requires authenticated
+GitHub access and appropriate `GOPRIVATE` configuration. The exact prerelease
+can be selected with
+`go install github.com/Kaylebor/wirecmd@v0.1.0-alpha.1`. Run
+`wirecmd --version` to identify an installed binary; local development builds
+report `wirecmd dev`.
 
 The module path deliberately does not depend on a vanity domain. A project
 website such as `wirecmd.dev` may be added independently later.
@@ -175,6 +182,12 @@ identity for storage, so the credential record identity uses the resolved
 endpoint plus registration inputs; any collision or provider-specific quirk
 must be qualified before changing that boundary.
 
+On Linux, the daemon requires an absolute same-user `XDG_RUNTIME_DIR`.
+OAuth-backed servers additionally require an available Secret Service, and
+interactive browser authorization uses `xdg-open`. See the
+[release-readiness record](docs/release-readiness.md) for installation,
+qualification, and runtime details.
+
 ## Project documents
 
 - [Product thesis](docs/product-thesis.md) defines the authoritative product
@@ -190,6 +203,8 @@ must be qualified before changing that boundary.
   typed query/header configuration milestone.
 - [OAuth plan](docs/oauth-plan.md) defines the authoritative transparent OAuth
   and encrypted credential-persistence milestone.
+- [Release readiness](docs/release-readiness.md) defines the authoritative
+  first-alpha installation, qualification, and manual publication contract.
 - [Exploratory design notes](docs/notes/exploratory-design.md) retain ideas and
   research that are useful but not committed requirements.
 

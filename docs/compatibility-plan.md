@@ -143,7 +143,9 @@ changing dependencies, configuration, or architecture.
   eviction, automatic recovery, and pool widths above one.
 - Resources, prompts, subscriptions, Tasks, sampling, and richer elicitation.
 - MCP server/proxy mode and non-MCP upstream adapters.
-- Packaging and release automation.
+- Binary archives, distribution packaging, and automated release publication;
+  the source-installable first-alpha contract is recorded in
+  [release readiness](release-readiness.md).
 
 These remain valid future slices but are not prerequisites for the completed
 supported-protocol qualification or the current configuration-discovery

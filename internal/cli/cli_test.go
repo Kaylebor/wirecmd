@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kaylebor/wirecmd/internal/buildinfo"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -117,6 +118,35 @@ func TestMCPOperationErrorCapturesOnlyRawCancellation(t *testing.T) {
 				t.Fatalf("sdkCanceled = %v, want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestVersionCommandIsStandaloneAndDoesNotReserveServerName(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "relative-path-is-invalid-for-discovery")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+
+	code, output, stderr := invoke(t, []string{"--version"})
+	if code != exitOK || output != "wirecmd "+buildinfo.Version()+"\n" || stderr != "" {
+		t.Fatalf("version: code=%d stdout=%q stderr=%q", code, output, stderr)
+	}
+
+	for _, args := range [][]string{
+		{"--version", "--direct"},
+		{"--version", "--config", "wirecmd.kdl"},
+		{"--version", "--json", `{}`},
+		{"--version", "version"},
+	} {
+		code, output, stderr = invoke(t, args)
+		if code != exitInvocation || stderr != "" || decodeOutput(t, output)["error"].(map[string]any)["code"] != "version_usage" {
+			t.Fatalf("version combination %v: code=%d stdout=%q stderr=%q", args, code, output, stderr)
+		}
+	}
+
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	config := writeConfig(t, "wirecmd { server \"version\" { scope \"workspace\"; stdio "+strconv.Quote(os.Args[0])+" { arg \"-test.run=TestHelperProcess\"; arg \"--\" } } }")
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "version"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["server"] != "version" {
+		t.Fatalf("version server alias: code=%d stdout=%q stderr=%q", code, output, stderr)
 	}
 }
 
