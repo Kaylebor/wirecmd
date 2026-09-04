@@ -89,7 +89,26 @@ server named `config` remains callable through `--json` or an exact-call
 envelope.
 
 Focused help is conventional text, so it can be read directly or filtered with
-ordinary shell tools. Calls and failures remain newline-terminated JSON:
+ordinary shell tools. Output defaults to readable discovery, administration,
+and errors on a terminal, with indented JSON for tool results. Pipes retain
+compact newline-terminated JSON. Override presentation with prefix flags:
+
+```sh
+wirecmd --format pretty --color never daemon status
+wirecmd --format json --color never SERVER TOOL
+```
+
+`--format auto|json|pretty` and `--color auto|always|never` default to `auto`.
+`--colour` is an exact alias; the last supplied setting wins. Automatic color
+requires stdout to be a TTY, non-`dumb` `TERM`, and no non-empty `NO_COLOR`.
+Explicit color settings override detection, independently of format. Agents
+using a PTY should select `--format json --color never` for machine output.
+Output detection does not change OAuth's separate stdin/stderr TTY checks.
+Successful help stays plain text and `--version` remains standalone.
+
+Client presentation flags must precede server/tool names; flags after the tool
+name belong to the tool. `--json` still supplies tool input, not output format.
+See the [output contract](docs/output-plan.md) for details.
 
 ```sh
 # Discover a server's tools, then inspect the one needed.
@@ -209,6 +228,8 @@ qualification, and runtime details.
   typed query/header configuration milestone.
 - [OAuth plan](docs/oauth-plan.md) defines the authoritative transparent OAuth
   and encrypted credential-persistence milestone.
+- [Output contract](docs/output-plan.md) defines contextual terminal output,
+  explicit machine output, and color policy.
 - [Release readiness](docs/release-readiness.md) defines the authoritative
   first-alpha installation, qualification, and manual publication contract.
 - [macOS plan](docs/macos-plan.md) defines the authoritative Apple Silicon

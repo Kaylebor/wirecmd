@@ -71,13 +71,19 @@ Agents and humans should not use separate semantic interfaces. Scripts and CI
 must receive the same operation, output, error, and exit-code behavior as an
 agent invoking the command through a shell.
 
+Presentation may adapt to stdout: terminals default to readable discovery,
+administration, and errors, and indented JSON tool results; pipes default to
+compact JSON. `--format json --color never` selects machine output even in a
+PTY. This does not change semantic envelopes, exit codes, or OAuth interaction
+rules. The [output contract](output-plan.md) defines this presentation boundary.
+
 ### Non-interactive by default
 
 Ordinary commands remain deterministic and non-interactive when either stdin or
 stderr is not a TTY, or when `WIRECMD_NONINTERACTIVE=1` is set. When both are
 TTYs, a protected HTTP call may transparently open a browser and wait for the
 OAuth callback. Authorization URLs and browser diagnostics go to stderr; the
-machine-readable result remains the single stdout envelope. Explicit
+result remains a single stdout response in the selected presentation. Explicit
 `wirecmd auth login SERVER` provides the deliberate credential-management
 flow, and headless callers receive an actionable structured condition instead
 of an unexpected prompt.

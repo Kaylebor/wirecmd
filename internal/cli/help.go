@@ -344,17 +344,19 @@ func parseProjectedValue(property projectedProperty, raw projectedArgument) (any
 }
 
 func globalHelpText() string {
-	return "Usage:\n  " + usage + "\n  wirecmd --version\n\nDiscover configured servers, inspect focused help, then invoke tools. Configuration is discovered automatically unless --config is supplied.\n\nFocused help:\n  wirecmd [client flags] --help <server>\n  wirecmd [client flags] --help <server> <tool>\n\nWorkspace trust:\n  wirecmd config trust [PATH]\n  wirecmd config untrust [PATH]\n  wirecmd config trust status [PATH]\n  wirecmd config trust list\n\nOAuth credentials:\n  wirecmd auth login <server>\n  wirecmd auth status <server>\n  wirecmd auth logout <server>\n\nProtected HTTP calls may open a browser when stdin and stderr are TTYs. Set WIRECMD_NONINTERACTIVE=1 to require an actionable structured authentication error. Use --direct for deliberate daemonless testing; normal commands are daemon-backed.\n\nTool arguments follow <server> <tool>. Use -- JSON_OBJECT for a raw argument overlay.\n"
+	return "Usage:\n  " + usage + "\n  wirecmd --version\n\nDiscover configured servers, inspect focused help, then invoke tools. Configuration is discovered automatically unless --config is supplied.\n\nOutput:\n  --format auto|json|pretty     terminal-aware output format\n  --color auto|always|never     color output independently of format\n  --colour auto|always|never    alias for --color\n  --format json --color never   exact machine output in any terminal\n\nIn auto mode, a stdout TTY receives pretty output; pipes receive JSON. Automatic color is disabled by NO_COLOR or TERM=dumb.\n\nFocused help:\n  wirecmd [client flags] --help <server>\n  wirecmd [client flags] --help <server> <tool>\n\nWorkspace trust:\n  wirecmd config trust [PATH]\n  wirecmd config untrust [PATH]\n  wirecmd config trust status [PATH]\n  wirecmd config trust list\n\nOAuth credentials:\n  wirecmd auth login <server>\n  wirecmd auth status <server>\n  wirecmd auth logout <server>\n\nProtected HTTP calls may open a browser when stdin and stderr are TTYs. Set WIRECMD_NONINTERACTIVE=1 to require an actionable structured authentication error. Use --direct for deliberate daemonless testing; normal commands are daemon-backed.\n\nTool arguments follow <server> <tool>. Use -- JSON_OBJECT for a raw argument overlay.\n"
 }
 
 func renderServerHelp(server string, tools []toolSummary) string {
 	var text strings.Builder
+	server = singleLine(server)
 	fmt.Fprintf(&text, "Usage:\n  wirecmd [client flags] %s <tool> [tool arguments]\n\nTools for %s:\n", server, server)
 	for _, tool := range tools {
-		if tool.Description == "" {
-			fmt.Fprintf(&text, "  %s\n", tool.Name)
+		name, description := singleLine(tool.Name), readableText(tool.Description)
+		if description == "" {
+			fmt.Fprintf(&text, "  %s\n", name)
 		} else {
-			fmt.Fprintf(&text, "  %-24s %s\n", tool.Name, tool.Description)
+			fmt.Fprintf(&text, "  %-24s %s\n", name, description)
 		}
 	}
 	fmt.Fprintf(&text, "\nInspect one tool:\n  wirecmd [client flags] --help %s <tool>\n", server)
@@ -363,7 +365,9 @@ func renderServerHelp(server string, tools []toolSummary) string {
 
 func renderToolHelp(server string, tool toolDescription) string {
 	var text strings.Builder
-	fmt.Fprintf(&text, "Usage:\n  wirecmd [client flags] %s %s [tool arguments]\n", server, tool.Name)
+	displayServer, displayTool := singleLine(server), singleLine(tool.Name)
+	tool.Title, tool.Description = singleLine(tool.Title), readableText(tool.Description)
+	fmt.Fprintf(&text, "Usage:\n  wirecmd [client flags] %s %s [tool arguments]\n", displayServer, displayTool)
 	if tool.Title != "" || tool.Description != "" {
 		fmt.Fprint(&text, "\nTool:\n")
 		if tool.Title != "" {
@@ -377,6 +381,7 @@ func renderToolHelp(server string, tool toolDescription) string {
 	if safe && len(properties) != 0 {
 		fmt.Fprint(&text, "\nArguments:\n")
 		for _, property := range properties {
+			property.Name, property.Flag = singleLine(property.Name), singleLine(property.Flag)
 			if property.Projectable {
 				fmt.Fprintf(&text, "  --%-22s %s", property.Flag, displayType(property.Schema))
 				if property.Required {
@@ -408,8 +413,9 @@ func renderToolHelp(server string, tool toolDescription) string {
 	} else {
 		fmt.Fprint(&text, "\nArguments:\n  The input schema cannot be safely projected; use exact JSON.\n")
 	}
-	fmt.Fprintf(&text, "\nRaw overlay:\n  wirecmd [client flags] %s %s [projected arguments] -- '{\"property\": \"value\"}'\n", server, tool.Name)
-	fmt.Fprintf(&text, "\nExact JSON fallback:\n  wirecmd [client flags] %s '{\"tool\":%s,\"arguments\":%s}'\n", server, strconv.Quote(tool.Name), exactArgumentsTemplate(tool))
+	fmt.Fprintf(&text, "\nRaw overlay:\n  wirecmd [client flags] %s %s [projected arguments] -- '{\"property\": \"value\"}'\n", displayServer, displayTool)
+	envelope := `{"tool":` + compactJSON(tool.Name) + `,"arguments":` + exactArgumentsTemplate(tool) + `}`
+	fmt.Fprintf(&text, "\nExact JSON fallback:\n  wirecmd [client flags] %s %s\n", displayServer, shellQuote(envelope))
 	fmt.Fprint(&text, "\nInput schema:\n")
 	text.WriteString(prettyJSON(tool.InputSchema))
 	if len(tool.OutputSchema) != 0 {
@@ -421,7 +427,7 @@ func renderToolHelp(server string, tool toolDescription) string {
 
 func displayType(schema map[string]any) string {
 	if typeName, ok := schema["type"].(string); ok {
-		return typeName
+		return singleLine(typeName)
 	}
 	return "JSON"
 }
@@ -436,7 +442,7 @@ func compactJSON(value any) string {
 	if err != nil {
 		return "<unavailable>"
 	}
-	return string(encoded)
+	return escapeTerminalControlsJSON(string(encoded))
 }
 
 func prettyJSON(raw json.RawMessage) string {
@@ -447,7 +453,7 @@ func prettyJSON(raw json.RawMessage) string {
 	if err := json.Indent(&text, raw, "  ", "  "); err != nil {
 		return "  <unavailable>\n"
 	}
-	return "  " + text.String() + "\n"
+	return "  " + escapeTerminalControlsJSON(text.String()) + "\n"
 }
 
 func exactArgumentsTemplate(tool toolDescription) string {

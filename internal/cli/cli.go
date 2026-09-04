@@ -41,12 +41,15 @@ const (
 	exitInternal       = 70
 )
 
-// Run executes Wirecmd with args. Ordinary operations and failures write one
-// JSON envelope; successful help is deliberately conventional plain text.
+// Run executes Wirecmd with args. Successful help and version output are
+// deliberately conventional plain text; other output is rendered according to
+// the selected presentation mode.
 func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
-	result, appErr := run(ctx, args, in, errOut)
+	opts, positionals, parseErr := parseOptions(args)
+	presentation := presentationFor(opts, out)
+	result, appErr := run(ctx, opts, positionals, parseErr, in, errOut)
 	if runner, ok := result.(foregroundDaemon); ok {
-		return runner.run(ctx, out, errOut)
+		return runner.run(ctx, out, errOut, presentation)
 	}
 	if help, ok := result.(helpText); ok {
 		_, _ = io.WriteString(out, string(help))
@@ -57,26 +60,30 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 		return exitOK
 	}
 	if appErr != nil {
-		writeJSON(out, failureEnvelope(appErr))
+		writeOutput(out, failureEnvelope(appErr), presentation)
 		return appErr.exitCode
 	}
-	writeJSON(out, result)
+	writeOutput(out, result, presentation)
 	return exitOK
 }
 
-const usage = "wirecmd [--config PATH] [--direct] [--json OBJECT|--stdin] [<server> [<tool>|<exact-call-object>]]"
+const usage = "wirecmd [--config PATH] [--direct] [--format auto|json|pretty] [--color auto|always|never] [--json OBJECT|--stdin] [<server> [<tool>|<exact-call-object>]]"
 
 var isInteractiveTerminal = terminalIO
 var openAuthorizationURL = openBrowserURL
 
 type options struct {
-	configs []string
-	direct  bool
-	json    string
-	jsonSet bool
-	stdin   bool
-	help    bool
-	version bool
+	configs   []string
+	direct    bool
+	json      string
+	jsonSet   bool
+	stdin     bool
+	help      bool
+	version   bool
+	format    outputFormat
+	color     colorMode
+	formatSet bool
+	colorSet  bool
 }
 
 type stringList []string
@@ -111,13 +118,12 @@ const (
 
 type versionText string
 
-func run(ctx context.Context, args []string, in io.Reader, errOut io.Writer) (any, *appError) {
-	opts, positionals, parseErr := parseOptions(args)
+func run(ctx context.Context, opts options, positionals []string, parseErr error, in io.Reader, errOut io.Writer) (any, *appError) {
 	if parseErr != nil {
 		return nil, invocationError("invalid_flags", parseErr.Error(), "place Wirecmd flags before the server and tool names")
 	}
 	if opts.version {
-		if opts.direct || len(opts.configs) != 0 || opts.jsonSet || opts.stdin || opts.help || len(positionals) != 0 {
+		if opts.direct || len(opts.configs) != 0 || opts.jsonSet || opts.stdin || opts.help || opts.formatSet || opts.colorSet || len(positionals) != 0 {
 			return nil, invocationError("version_usage", "--version must be used by itself", "run wirecmd --version")
 		}
 		return versionText(buildinfo.Version()), nil
@@ -375,8 +381,26 @@ func parseOptions(args []string) (options, []string, error) {
 	flags.BoolVar(&opts.help, "help", false, "show usage")
 	flags.BoolVar(&opts.help, "h", false, "show usage")
 	flags.BoolVar(&opts.version, "version", false, "show version")
+	flags.Func("format", "output format: auto, json, or pretty", func(value string) error {
+		format, err := parseOutputFormat(value)
+		if err != nil {
+			return err
+		}
+		opts.format, opts.formatSet = format, true
+		return nil
+	})
+	setColor := func(value string) error {
+		color, err := parseColorMode(value)
+		if err != nil {
+			return err
+		}
+		opts.color, opts.colorSet = color, true
+		return nil
+	}
+	flags.Func("color", "color mode: auto, always, or never", setColor)
+	flags.Func("colour", "alias for --color", setColor)
 	if err := flags.Parse(args); err != nil {
-		return options{}, nil, err
+		return opts, nil, err
 	}
 	return opts, flags.Args(), nil
 }

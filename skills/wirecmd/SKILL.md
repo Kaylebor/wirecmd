@@ -6,9 +6,17 @@ description: Discover and compose Wirecmd capabilities from the shell, including
 # Wirecmd
 
 Use Wirecmd as a shell-native capability interface. Keep client flags before
-the server and tool names. Treat ordinary operation output as JSON suitable for
-inspection, piping, and scripting; send no assumptions about the upstream
+the server and tool names. Pipes default to compact JSON; terminals default to
+readable discovery/administration/errors and indented JSON tool results. Use
+`--format json --color never` before positional names whenever machine output
+is required, especially in a PTY. Send no assumptions about the upstream
 protocol into a call.
+
+`--format pretty` requests readable output without requiring a terminal.
+`--color` (alias `--colour`) independently accepts `auto`, `always`, or `never`;
+do not rely on a harness setting `NO_COLOR`. Successful help remains plain
+text. Output choices do not disable OAuth: use `WIRECMD_NONINTERACTIVE=1`
+separately when browser interaction is not permitted.
 
 ## Select configuration
 

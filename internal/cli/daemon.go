@@ -57,14 +57,14 @@ func parseDaemonAdmin(positionals []string, opts options) (daemonAdmin, bool) {
 
 type foregroundDaemon struct{}
 
-func (foregroundDaemon) run(ctx context.Context, out, errOut io.Writer) int {
+func (foregroundDaemon) run(ctx context.Context, out, errOut io.Writer, presentation presentation) int {
 	d, err := newDaemon(errOut)
 	if err != nil {
-		writeJSON(out, failureEnvelope(err))
+		writeOutput(out, failureEnvelope(err), presentation)
 		return err.exitCode
 	}
 	defer d.close()
-	writeJSON(out, map[string]any{"ok": true, "daemon": map[string]any{"status": "running", "protocol": daemonProtocol, "pid": os.Getpid()}})
+	writeOutput(out, map[string]any{"ok": true, "daemon": map[string]any{"status": "running", "protocol": daemonProtocol, "pid": os.Getpid()}}, presentation)
 	if err := d.serve(ctx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) {
 		fmt.Fprintln(errOut, "wirecmd daemon:", err)
 		return exitInternal

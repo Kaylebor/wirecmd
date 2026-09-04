@@ -4,6 +4,8 @@
 
 - `README.md` is the short public orientation.
 - `docs/product-thesis.md` is authoritative for product direction and scope.
+- `docs/output-plan.md` is authoritative for contextual presentation and color;
+  it supersedes earlier milestones' always-JSON presentation wording.
 - `docs/validation-plan.md` is the authoritative record of the completed first
   validation milestone and its acceptance criteria.
 - `docs/compatibility-plan.md` is the authoritative record of the completed
@@ -103,6 +105,10 @@
   distinct exact-JSON invocation path rather than a global reserved-name list.
 - Keep stdout machine-composable. Send diagnostics to stderr and never print
   secrets, tokens, credentials, or unredacted secret-bearing URLs.
+- Preserve compact JSON for non-terminal defaults and explicit
+  `--format json --color never`. Terminal defaults use contextual pretty
+  presentation without changing semantic envelopes or exit codes. Determine
+  presentation from stdout independently of OAuth's stdin/stderr checks.
 - Keep `wirecmd --version` independent of configuration, daemon, keyring, and
   upstream state. Do not reserve the positional form `wirecmd version`.
 - Structured errors must distinguish user action, authentication, invocation,

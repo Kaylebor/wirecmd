@@ -46,9 +46,11 @@ provider and never prints tokens, client secrets, key identifiers, or
 sensitive URLs. `logout` deletes Wirecmd's local record and retires matching
 daemon sessions; it does not claim provider-side token revocation.
 
-Every operation writes exactly one final newline-terminated JSON envelope to
-stdout. Authorization URLs, browser diagnostics, and upstream diagnostics go
-to stderr only.
+Every operation writes exactly one final response to stdout. The
+[output contract](output-plan.md) adds contextual terminal presentation;
+`--format json --color never` preserves newline-terminated JSON envelopes.
+Authorization URLs, browser diagnostics, and upstream diagnostics go to stderr
+only. Presentation does not alter OAuth interaction detection.
 
 For ordinary protected HTTP calls, a stored token is used and refreshed by the
 SDK. If authorization is required, Wirecmd may begin browser authorization
