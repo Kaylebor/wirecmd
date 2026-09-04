@@ -772,6 +772,50 @@ func TestOAuthFixtureDaemonLogoutRetiresCredentialSession(t *testing.T) {
 	}
 }
 
+func TestOAuthFixtureDaemonReusesAutomaticAuthorizationSession(t *testing.T) {
+	useTestOAuthStore(t, &testKeyring{})
+	runtimeDir := testRuntimeDirectory(t)
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+	startTestDaemon(t)
+	fixture := newOAuthFixture(t, oauthFixtureOptions{IssuerInCallback: true})
+	path := writeConfig(t, `wirecmd { server "remote" { scope "workspace"; http "`+fixture.Server.URL+`/mcp" } }`)
+	previousTerminal, previousOpen := isInteractiveTerminal, openAuthorizationURL
+	isInteractiveTerminal = func(io.Reader, io.Writer) bool { return true }
+	openAuthorizationURL = func(raw string) error { completeFixtureAuthorization(raw); return nil }
+	t.Cleanup(func() {
+		isInteractiveTerminal, openAuthorizationURL = previousTerminal, previousOpen
+	})
+
+	if code, stdout, stderr := invoke(t, []string{"--config", path, "remote"}); code != exitOK {
+		t.Fatalf("initial automatic authorization: code=%d stdout=%s stderr=%s", code, stdout, stderr)
+	}
+	for attempt := 0; attempt < 32; attempt++ {
+		code, stdout, stderr := invoke(t, []string{"--config", path, "remote"})
+		if code != exitOK {
+			t.Fatalf("reused automatic authorization %d: code=%d stdout=%s stderr=%s", attempt+1, code, stdout, stderr)
+		}
+	}
+	if got := fixture.authorizations.Load(); got != 1 {
+		t.Fatalf("authorizations=%d, want one", got)
+	}
+}
+
+func TestDaemonOAuthStartupWaitDistinguishesActiveAndCompletedFlows(t *testing.T) {
+	d := &daemon{}
+	active := &poolEntry{ready: make(chan struct{}), authStarted: make(chan struct{})}
+	close(active.authStarted)
+	if _, appErr := d.waitForInstance(context.Background(), active, 0, false); appErr == nil || appErr.code != "authorization_in_progress" {
+		t.Fatalf("active authorization error=%#v", appErr)
+	}
+
+	completed := &poolEntry{ready: make(chan struct{}), authStarted: make(chan struct{}), err: transportError("startup_failed", "fixture startup failure", "retry")}
+	close(completed.authStarted)
+	close(completed.ready)
+	if _, appErr := d.waitForInstance(context.Background(), completed, 0, false); appErr == nil || appErr.code != "startup_failed" {
+		t.Fatalf("completed authorization error=%#v", appErr)
+	}
+}
+
 func TestOAuthFixtureDirectCredentialChangesRetireDaemonSession(t *testing.T) {
 	for _, action := range []string{"logout", "login"} {
 		t.Run(action, func(t *testing.T) {

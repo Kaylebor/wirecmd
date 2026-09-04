@@ -919,7 +919,13 @@ func (d *daemon) waitForInstance(ctx context.Context, entry *poolEntry, generati
 		select {
 		case <-entry.ready:
 		case <-entry.authStarted:
-			return nil, userActionError("authorization_in_progress", "another request is completing OAuth authorization for this server", "retry after the current authorization finishes")
+			// Startup may have completed while this select chose authStarted.
+			// Recheck readiness before reporting an in-progress authorization.
+			select {
+			case <-entry.ready:
+			default:
+				return nil, userActionError("authorization_in_progress", "another request is completing OAuth authorization for this server", "retry after the current authorization finishes")
+			}
 		case <-ctx.Done():
 			return nil, transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request")
 		}
