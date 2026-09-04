@@ -24,8 +24,16 @@ jobs:
       - name: Verify modules
         run: go mod verify
 
+      - name: Install Fish
+        run: sudo apt-get update && sudo apt-get install --yes fish
+
       - name: Test
         run: go test -count=1 ./...
+
+      - name: Fish completion
+        run: |
+          fish --version
+          fish scripts/test-fish-completion.fish
 
       - name: Race test
         run: go test -race -count=1 ./...

@@ -344,7 +344,61 @@ func parseProjectedValue(property projectedProperty, raw projectedArgument) (any
 }
 
 func globalHelpText() string {
-	return "Usage:\n  " + usage + "\n  wirecmd --version\n\nDiscover configured servers, inspect focused help, then invoke tools. Configuration is discovered automatically unless --config is supplied.\n\nOutput:\n  --format auto|json|pretty     terminal-aware output format\n  --color auto|always|never     color output independently of format\n  --colour auto|always|never    alias for --color\n  --format json --color never   exact machine output in any terminal\n\nIn auto mode, a stdout TTY receives pretty output; pipes receive JSON. Automatic color is disabled by NO_COLOR or TERM=dumb.\n\nFocused help:\n  wirecmd [client flags] --help <server>\n  wirecmd [client flags] --help <server> <tool>\n\nWorkspace trust:\n  wirecmd config trust [PATH]\n  wirecmd config untrust [PATH]\n  wirecmd config trust status [PATH]\n  wirecmd config trust list\n\nOAuth credentials:\n  wirecmd auth login <server>\n  wirecmd auth status <server>\n  wirecmd auth logout <server>\n\nProtected HTTP calls may open a browser when stdin and stderr are TTYs. Set WIRECMD_NONINTERACTIVE=1 to require an actionable structured authentication error. Use --direct for deliberate daemonless testing; normal commands are daemon-backed.\n\nTool arguments follow <server> <tool>. Use -- JSON_OBJECT for a raw argument overlay.\n"
+	return "Usage:\n  " + usage + `
+
+Start here:
+  wirecmd daemon run                 keep running in a separate terminal
+  wirecmd                            list configured servers
+  wirecmd SERVER                     list that server's tools
+  wirecmd --help SERVER TOOL          inspect arguments before calling
+
+Prefix flags (before server/tool names):
+  --config PATH                      repeatable; later files override earlier
+  --direct                           one-shot operation without the daemon
+  --json OBJECT                      supply the complete tool argument object
+  --stdin                            read that object from stdin, not --json
+  --help, -h                         global, administrative, or focused help
+  --version                          standalone version; no other arguments
+  --format auto|json|pretty           terminal-aware output format
+  --color auto|always|never           color output independently of format
+  --colour auto|always|never          alias for --color
+
+Without --config, discover global configuration and trusted workspace files.
+Supply configuration to calls, not daemon run. Normal calls are daemon-backed;
+there is no automatic direct fallback. Linux requires a private absolute
+XDG_RUNTIME_DIR; macOS can use its validated per-user temporary directory.
+
+Administration (offline help: wirecmd --help daemon|config|auth):
+  wirecmd daemon run|status|reload
+  wirecmd config trust [PATH]
+  wirecmd config untrust [PATH]
+  wirecmd config trust status [PATH]
+  wirecmd config trust list
+  wirecmd [--config PATH] [--direct] auth login|status|logout SERVER
+
+Focused help:
+  wirecmd [client flags] --help SERVER [TOOL]
+  wirecmd [client flags] --help -- SERVER [TOOL]
+The second form forces server help for names such as daemon, config, or auth.
+
+Tool input examples (use the names and types from focused help):
+  wirecmd SERVER TOOL --query 'text'
+  wirecmd --json '{"query":"text"}' SERVER TOOL
+  printf '%s\n' '{"query":"text"}' | wirecmd --stdin SERVER TOOL
+  wirecmd SERVER '{"tool":"TOOL","arguments":{"query":"text"}}'
+  wirecmd SERVER TOOL --query 'text' -- '{"extra":42}'
+Flags after TOOL belong to the tool. The tool-side -- takes one raw JSON object;
+do not repeat keys already supplied by flags. Without arguments, calls use {}.
+
+Output and authentication:
+  --format json --color never         machine output, including in a PTY
+Auto format is pretty on stdout TTYs and JSON in pipes. Automatic color is
+disabled by non-empty NO_COLOR or TERM=dumb. Successful help stays plain text.
+Protected HTTP calls may open a browser when stdin and stderr are TTYs; set
+WIRECMD_NONINTERACTIVE=1 to receive an authentication error instead. OAuth needs
+a native keyring. Browser handoffs and diagnostics go to stderr; results and
+structured errors go to stdout. Follow the error's recovery action.
+`
 }
 
 func renderServerHelp(server string, tools []toolSummary) string {
@@ -410,6 +464,8 @@ func renderToolHelp(server string, tool toolDescription) string {
 				fmt.Fprint(&text, "\n")
 			}
 		}
+	} else if safe {
+		fmt.Fprint(&text, "\nArguments:\n  No named arguments declared; invoke without arguments for {}.\n")
 	} else {
 		fmt.Fprint(&text, "\nArguments:\n  The input schema cannot be safely projected; use exact JSON.\n")
 	}

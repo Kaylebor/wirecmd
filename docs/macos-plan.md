@@ -1,6 +1,8 @@
 # macOS Apple Silicon Qualification
 
-Status: authoritative current milestone; native CI and physical M2 qualification pending
+Status: implemented; native CI passed and user-reported M2 release smoke passed.
+The full physical checklist below remains the qualification reference, not an
+assertion that every item has been exercised.
 
 ## Objective
 
@@ -9,9 +11,10 @@ or shell contracts already qualified on Linux. Apple Silicon is the physical
 support target. Intel receives the same native CI gates, but no physical-device
 claim.
 
-This milestone is implemented through a separate pull request and is intended
-for private prerelease `v0.1.0-alpha.2`. The repository remains private until
-the tagged build passes the physical M2 checklist.
+This milestone was introduced for private prerelease `v0.1.0-alpha.2`.
+As of 2026-09-04, `v0.1.0-alpha.4` is published and the user has reported M2
+daemon/Cloudflare OAuth and terminal-output smoke success. The repository is
+still private; publication remains a separate user decision.
 
 ## Runtime contract
 

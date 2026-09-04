@@ -23,9 +23,11 @@ go build -o legacy-mcp .
 Configure the resulting executable as a stdio MCP server, for example:
 
 ```kdl
-server "legacy" {
-  scope "workspace"
-  stdio "./testdata/legacy-mcp/legacy-mcp"
+wirecmd {
+  server "legacy" {
+    scope "workspace"
+    stdio "/absolute/path/to/legacy-mcp"
+  }
 }
 ```
 

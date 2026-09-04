@@ -24,20 +24,27 @@ only the help and schemas it needs, invoke them deterministically, and compose
 results with ordinary shell tools. A harness should not need native MCP
 integration or eager injection of every configured tool schema.
 
-The canonical Go module and repository path is
-`github.com/Kaylebor/wirecmd`. The first intended prerelease is
-`v0.1.0-alpha.1`; once that release exists, install it with Go 1.25 or newer:
+## Install
+
+The canonical Go module is `github.com/Kaylebor/wirecmd`. The latest published
+prerelease verified on 2026-09-04 is `v0.1.0-alpha.4`. Install that checkpoint
+with Go 1.25 or newer:
 
 ```sh
-go install github.com/Kaylebor/wirecmd@latest
+go install github.com/Kaylebor/wirecmd@v0.1.0-alpha.4
 ```
 
 Until the repository is public, installation also requires authenticated
 GitHub access and appropriate `GOPRIVATE` configuration. The exact prerelease
-can be selected with
-`go install github.com/Kaylebor/wirecmd@v0.1.0-alpha.1`. Run
+is also available from the [GitHub releases](https://github.com/Kaylebor/wirecmd/releases).
+For example, download the Darwin arm64 artifact for Apple Silicon. Run
 `wirecmd --version` to identify an installed binary; local development builds
 report `wirecmd dev`.
+
+The administrative-help and Fish-completion improvements described here are
+unreleased changes in this checkout, not features of alpha.4. To try them,
+run `go build -o ./wirecmd .` and substitute `./wirecmd` in the examples (or put
+that development binary on your PATH).
 
 The module path deliberately does not depend on a vanity domain. A project
 website such as `wirecmd.dev` may be added independently later.
@@ -50,19 +57,71 @@ and header values, and SDK-owned OAuth with encrypted credential persistence
 are also complete. Normal commands use a private foreground local daemon;
 `--direct` is the deliberate one-shot path for testing and diagnosis.
 
-The published `v0.1.0-alpha.1` checkpoint is Linux-only. Native macOS 15
-qualification is the next milestone: Apple Silicon is the physical target and
-Intel receives native CI compatibility coverage. The candidate contract and
-M2 validation gate are recorded in the
+Linux and macOS builds are available. Native macOS CI covers Apple Silicon and
+Intel; the user has smoke-tested the released Apple Silicon build on an M2,
+including daemon-backed Cloudflare OAuth and readable terminal output. This is
+not a claim of exhaustive physical-device qualification. The checklist remains in the
 [macOS plan](docs/macos-plan.md).
 
-Current daemon administration is intentionally small:
+## First call
+
+Save this complete KDL 2 document as `wirecmd.kdl`, replacing the command with
+an installed stdio MCP server executable and its actual arguments:
+
+```kdl
+wirecmd {
+    server "local" {
+        scope "workspace"
+        stdio "/absolute/path/to/mcp-server" {
+            arg "--server-option"
+        }
+    }
+}
+```
+
+For a locally buildable dummy server, follow the
+[test fixture instructions](testdata/legacy-mcp/README.md), use its absolute
+executable path, and omit the `arg` line. That fixture provides `set_value`
+and `read_value`, used below.
+
+In one terminal, start the daemon and leave it running:
+
+```sh
+wirecmd daemon run
+```
+
+Linux requires an absolute, private, same-user `XDG_RUNTIME_DIR`, normally set
+by the login session. On macOS, leaving it unset uses the validated per-user
+temporary directory. An invalid explicit value is an error on either platform.
+Do not pass `--config` to `daemon run`: callers select configuration.
+
+In another terminal, discover and invoke the configured fixture:
+
+```sh
+wirecmd --config ./wirecmd.kdl
+wirecmd --config ./wirecmd.kdl local
+wirecmd --config ./wirecmd.kdl --help local set_value
+wirecmd --config ./wirecmd.kdl local set_value --value hello
+wirecmd --config ./wirecmd.kdl local read_value
+```
+
+For other servers, use their discovered tool names and focused-help arguments.
+The daemon retains initialized sessions; separate `--direct` invocations do
+not retain process-local state. Nothing silently falls back to direct mode.
+
+Daemon administration and offline help:
 
 ```sh
 wirecmd daemon run
 wirecmd daemon status
 wirecmd daemon reload
+wirecmd --help daemon
 ```
+
+Reload after configuration edits; it retires cached configuration and sessions
+while allowing active calls to finish. Ctrl-C in the daemon terminal stops it.
+
+## Configuration and trust
 
 Without `--config`, Wirecmd loads the global file at
 `$XDG_CONFIG_HOME/wirecmd/config.kdl`, or `~/.config/wirecmd/config.kdl` when
@@ -87,6 +146,14 @@ configuration is present without a trusted root, Wirecmd returns the
 no configuration source exists, it returns `config_not_found` (exit 3). A
 server named `config` remains callable through `--json` or an exact-call
 envelope.
+
+Use `wirecmd --help config` for offline trust help and `wirecmd --help auth`
+for credential help. Administrative help never executes the command. To inspect
+a server whose name collides with administration, use
+`wirecmd --help -- daemon [TOOL]` (likewise `config` or `auth`). This prefix
+separator is distinct from the tool-side `--` raw JSON overlay.
+
+## Invocation and output
 
 Focused help is conventional text, so it can be read directly or filtered with
 ordinary shell tools. Output defaults to readable discovery, administration,
@@ -196,7 +263,8 @@ wirecmd auth logout SERVER
 requires a local terminal; ordinary protected calls may open the browser when
 both stdin and stderr are TTYs. Set `WIRECMD_NONINTERACTIVE=1` to force an
 actionable structured authentication error instead. Authorization URLs and
-browser diagnostics go to stderr; stdout remains one JSON envelope.
+browser diagnostics go to stderr; stdout contains one final result, rendered
+according to the selected output format.
 
 Wirecmd stores a random encryption master key in the native keyring through
 `go-keyring` and stores encrypted OAuth state in its private XDG state
@@ -213,8 +281,50 @@ interactive browser authorization uses `xdg-open`. See the
 [release-readiness record](docs/release-readiness.md) for installation,
 qualification, and runtime details.
 
+On macOS, OAuth uses Keychain and `/usr/bin/open`. On either platform,
+`credential_store_unavailable` requires making the native keyring available;
+there is no plaintext fallback. `authorization_required` directs a
+non-interactive caller to perform login from a local interactive terminal.
+
+## Recovering from common errors
+
+- `daemon_unavailable`: start `wirecmd daemon run`; use `--direct` only for a
+  deliberate one-shot call.
+- `config_not_found`: supply `--config PATH`, or create the global/workspace file.
+- `workspace_untrusted`: review the configuration, then run the exact trust
+  command from the error's action field.
+- `config_mismatch`: reload the daemon after configuration edits.
+- Argument errors: read `wirecmd --help SERVER TOOL`; pass complex flag values
+  as the value itself, not an object wrapping its property name.
+
+Errors preserve category, code, message, action, and a nonzero exit status.
+Use `--format json --color never` for machine-readable results in any terminal.
+
+## Fish completion
+
+From a checkout of this version, install completion manually:
+
+```fish
+mkdir -p ~/.config/fish/completions
+cp completions/wirecmd.fish ~/.config/fish/completions/wirecmd.fish
+```
+
+For a custom Fish configuration directory, use its `completions` directory
+instead. Start a new Fish session after installation. `go install` installs
+the binary only; it does not install shell completion.
+
+Completion covers client flags, administration, paths, and locally configured
+server names. It respects ordered `--config` flags and workspace trust, but
+never contacts the daemon, resolves secrets, starts an MCP, or opens OAuth.
+Invalid/untrusted configuration yields no server suggestions; use an ordinary
+command to obtain diagnostics. Completion reads disk configuration, which may
+differ from daemon-cached configuration until reload. Tool names, projected
+flags, and JSON contents are not completed. Bash/Zsh support is deferred.
+
 ## Project documents
 
+- [Onboarding and completion](docs/onboarding-plan.md) defines administrative
+  help, the reserved-name escape, and local-only Fish completion.
 - [Product thesis](docs/product-thesis.md) defines the authoritative product
   direction and boundaries.
 - [Validation plan](docs/validation-plan.md) records the completed first

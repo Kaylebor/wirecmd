@@ -46,6 +46,9 @@ const (
 // the selected presentation mode.
 func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
 	opts, positionals, parseErr := parseOptions(args)
+	if opts.completionServers {
+		return runServerCompletion(opts, positionals, parseErr, out)
+	}
 	presentation := presentationFor(opts, out)
 	result, appErr := run(ctx, opts, positionals, parseErr, in, errOut)
 	if runner, ok := result.(foregroundDaemon); ok {
@@ -73,17 +76,19 @@ var isInteractiveTerminal = terminalIO
 var openAuthorizationURL = openBrowserURL
 
 type options struct {
-	configs   []string
-	direct    bool
-	json      string
-	jsonSet   bool
-	stdin     bool
-	help      bool
-	version   bool
-	format    outputFormat
-	color     colorMode
-	formatSet bool
-	colorSet  bool
+	configs           []string
+	direct            bool
+	json              string
+	jsonSet           bool
+	stdin             bool
+	help              bool
+	version           bool
+	format            outputFormat
+	color             colorMode
+	formatSet         bool
+	colorSet          bool
+	helpServer        bool // a prefix -- explicitly selects server/tool help
+	completionServers bool
 }
 
 type stringList []string
@@ -128,10 +133,21 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		}
 		return versionText(buildinfo.Version()), nil
 	}
-	if admin, ok := parseConfigAdmin(positionals, opts); ok {
+	if opts.help {
+		if result, err, handled := administrativeHelp(positionals, opts); handled {
+			if err != nil {
+				return nil, err
+			}
+			return result, err
+		}
+	}
+	if admin, ok := parseConfigAdmin(positionals, opts); ok && !opts.help {
 		return runConfigAdmin(admin)
 	}
 	authAdmin, isAuthAdmin := parseAuthAdmin(positionals, opts)
+	if opts.help {
+		isAuthAdmin = false
+	}
 	if isAuthAdmin && authAdmin.err != nil {
 		return nil, authAdmin.err
 	}
@@ -150,7 +166,7 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	if req.help == globalHelp {
 		return helpText(globalHelpText()), nil
 	}
-	if admin, ok := parseDaemonAdmin(positionals, opts); ok {
+	if admin, ok := parseDaemonAdmin(positionals, opts); ok && !opts.help {
 		if admin.err != nil {
 			return nil, admin.err
 		}
@@ -370,6 +386,7 @@ func parseOptions(args []string) (options, []string, error) {
 	var opts options
 	flags := flag.NewFlagSet("wirecmd", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
+	flags.BoolVar(&opts.completionServers, "completion-servers", false, "internal completion helper")
 	flags.Var((*stringList)(&opts.configs), "config", "KDL configuration file")
 	flags.BoolVar(&opts.direct, "direct", false, "run without the local daemon")
 	flags.Func("json", "exact JSON tool arguments", func(value string) error {
@@ -401,6 +418,21 @@ func parseOptions(args []string) (options, []string, error) {
 	flags.Func("colour", "alias for --color", setColor)
 	if err := flags.Parse(args); err != nil {
 		return opts, nil, err
+	}
+	// Walk only consumed prefix tokens. A -- used as a flag value is not the
+	// separator, and tool-side tokens must never influence help ownership.
+	for i := 0; i < len(args)-flags.NArg(); i++ {
+		if args[i] == "--" {
+			opts.helpServer = true
+			break
+		}
+		name, _, assigned := strings.Cut(strings.TrimLeft(args[i], "-"), "=")
+		if !assigned {
+			f := flags.Lookup(name)
+			if boolean, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !boolean.IsBoolFlag() {
+				i++
+			}
+		}
 	}
 	return opts, flags.Args(), nil
 }

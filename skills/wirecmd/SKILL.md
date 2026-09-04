@@ -20,6 +20,14 @@ separately when browser interaction is not permitted.
 
 ## Select configuration
 
+Normal calls need `wirecmd daemon run` in a persistent foreground terminal or
+process session. Do not pass it --config; configuration is selected by each
+caller. On Linux, XDG_RUNTIME_DIR must be absolute, private, and same-user;
+macOS can use its validated per-user temporary directory when unset.
+`wirecmd daemon reload` refreshes cached configuration and retires sessions.
+Use offline `wirecmd --help daemon`, `--help config`, or `--help auth` before
+guessing administrative syntax. Do not replace a user's daemon without approval.
+
 When `--config` is omitted, Wirecmd loads the global KDL file at
 an absolute `$XDG_CONFIG_HOME/wirecmd/config.kdl`, falling back to
 `~/.config/wirecmd/config.kdl`, then composes trusted workspace `wirecmd.kdl`
@@ -125,6 +133,9 @@ wirecmd --help SERVER TOOL
 ```
 
 Use `--config PATH` in these forms when an explicit source list is required.
+For servers named daemon/config/auth, use `wirecmd --help -- SERVER [TOOL]`
+to bypass administrative help. Only the prefix separator selects help scope;
+the later tool-side separator remains the raw argument overlay.
 
 Focused help is readable text. It identifies simple projected flags, the
 original JSON names and types, and properties that need JSON input or a

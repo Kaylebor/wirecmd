@@ -3,6 +3,10 @@
 ## Authority and document roles
 
 - `README.md` is the short public orientation.
+- `docs/onboarding-plan.md` defines administrative help and private Fish
+  completion. Completion must remain local, read-only, secret-free and must not
+  contact the daemon or upstream servers. Prefix `--help --` selects server help;
+  tool-side `--` retains raw-overlay ownership.
 - `docs/product-thesis.md` is authoritative for product direction and scope.
 - `docs/output-plan.md` is authoritative for contextual presentation and color;
   it supersedes earlier milestones' always-JSON presentation wording.
