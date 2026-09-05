@@ -40,10 +40,7 @@ type daemonAdmin struct {
 // --json/--stdin and an exact-call object remain an escape hatch for a server
 // named daemon.
 func parseDaemonAdmin(positionals []string, opts options) (daemonAdmin, bool) {
-	if len(positionals) != 2 || positionals[0] != "daemon" {
-		return daemonAdmin{}, false
-	}
-	if positionals[1] != "run" && positionals[1] != "status" && positionals[1] != "reload" {
+	if len(positionals) != 2 || positionals[0] != "daemon" || !isDaemonAdminCommand(positionals[1]) {
 		return daemonAdmin{}, false
 	}
 	if opts.jsonSet || opts.stdin || startsJSONObject(positionals[1]) {
@@ -53,6 +50,10 @@ func parseDaemonAdmin(positionals []string, opts options) (daemonAdmin, bool) {
 		return daemonAdmin{err: invocationError("daemon_admin_flags", "daemon administration does not accept --direct or --config", "run wirecmd daemon run, status, or reload without client flags")}, true
 	}
 	return daemonAdmin{command: positionals[1]}, true
+}
+
+func isDaemonAdminCommand(command string) bool {
+	return command == "run" || command == "status" || command == "reload"
 }
 
 type foregroundDaemon struct{}

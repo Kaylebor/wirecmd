@@ -19,6 +19,9 @@ func parseConfigAdmin(positionals []string, opts options) (configAdmin, bool) {
 	if len(positionals) < 2 || positionals[0] != "config" || (opts.jsonSet || opts.stdin) {
 		return configAdmin{}, false
 	}
+	if flag, command, found := misplacedConfigAdminFlag(positionals); found {
+		return configAdmin{err: misplacedAdministrativeFlagError("config", command, flag)}, true
+	}
 	admin := configAdmin{}
 	switch positionals[1] {
 	case "trust":
@@ -53,6 +56,41 @@ func parseConfigAdmin(positionals []string, opts options) (configAdmin, bool) {
 		admin.err = invocationError("config_admin_flags", "configuration administration does not accept --direct, --config, or --help", "run the configuration administration command without client flags")
 	}
 	return admin, true
+}
+
+// misplacedConfigAdminFlag inspects only the optional-path slot of a known
+// configuration administration form. In particular, it avoids treating a
+// client flag as a path that could mutate local trust state.
+func misplacedConfigAdminFlag(positionals []string) (flag, command string, found bool) {
+	if len(positionals) < 3 || positionals[0] != "config" {
+		return "", "", false
+	}
+	switch positionals[1] {
+	case "trust":
+		switch positionals[2] {
+		case "list":
+		case "status":
+			if len(positionals) == 4 {
+				if flag, found := knownWirecmdFlag(positionals[3]); found {
+					return flag, "status", true
+				}
+			}
+		default:
+			if len(positionals) == 3 {
+				flag, found := knownWirecmdFlag(positionals[2])
+				if found {
+					return flag, "trust", true
+				}
+			}
+		}
+	case "untrust":
+		if len(positionals) == 3 {
+			if flag, found := knownWirecmdFlag(positionals[2]); found {
+				return flag, "untrust", true
+			}
+		}
+	}
+	return "", "", false
 }
 
 func runConfigAdmin(admin configAdmin) (any, *appError) {

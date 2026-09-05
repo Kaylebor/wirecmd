@@ -27,24 +27,18 @@ integration or eager injection of every configured tool schema.
 ## Install
 
 The canonical Go module is `github.com/Kaylebor/wirecmd`. The latest published
-prerelease verified on 2026-09-04 is `v0.1.0-alpha.4`. Install that checkpoint
+prerelease verified on 2026-09-05 is `v0.1.0-alpha.5`. Install that checkpoint
 with Go 1.25 or newer:
 
 ```sh
-go install github.com/Kaylebor/wirecmd@v0.1.0-alpha.4
+go install github.com/Kaylebor/wirecmd@v0.1.0-alpha.5
 ```
 
 Until the repository is public, installation also requires authenticated
 GitHub access and appropriate `GOPRIVATE` configuration. The exact prerelease
-is also available from the [GitHub releases](https://github.com/Kaylebor/wirecmd/releases).
-For example, download the Darwin arm64 artifact for Apple Silicon. Run
-`wirecmd --version` to identify an installed binary; local development builds
-report `wirecmd dev`.
-
-The administrative-help and Fish-completion improvements described here are
-unreleased changes in this checkout, not features of alpha.4. To try them,
-run `go build -o ./wirecmd .` and substitute `./wirecmd` in the examples (or put
-that development binary on your PATH).
+is also recorded in [GitHub releases](https://github.com/Kaylebor/wirecmd/releases).
+Run `wirecmd --version` to identify an installed binary; local development
+builds report `wirecmd dev`.
 
 The module path deliberately does not depend on a vanity domain. A project
 website such as `wirecmd.dev` may be added independently later.
@@ -147,11 +141,15 @@ no configuration source exists, it returns `config_not_found` (exit 3). A
 server named `config` remains callable through `--json` or an exact-call
 envelope.
 
-Use `wirecmd --help config` for offline trust help and `wirecmd --help auth`
-for credential help. Administrative help never executes the command. To inspect
-a server whose name collides with administration, use
-`wirecmd --help -- daemon [TOOL]` (likewise `config` or `auth`). This prefix
-separator is distinct from the tool-side `--` raw JSON overlay.
+Use `wirecmd --help daemon|config|auth` for an offline overview, or name an
+administrative command for focused help, such as `wirecmd --help daemon reload`,
+`wirecmd --help config trust status`, or `wirecmd --help auth login`.
+Administrative help never executes the command. Known Wirecmd flags placed in
+an administrative path position are rejected with ownership guidance rather
+than being interpreted as paths. To inspect a server whose name collides with
+administration, use `wirecmd --help -- daemon [TOOL]` (likewise `config` or
+`auth`). This prefix separator is distinct from the tool-side `--` raw JSON
+overlay.
 
 ## Invocation and output
 

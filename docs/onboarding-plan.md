@@ -11,9 +11,14 @@ all public prefix flags and input forms; the agent Skill keeps only operational
 guidance. Dedicated administrative help is offline and side-effect-free.
 
 `wirecmd --help daemon|config|auth` describes that administrative group;
-recognized subcommands also return help. Auth help accepts configuration/direct
-selection without resolving it. Daemon/config help retains restrictions on those
-flags. All help rejects tool input modes and remains plain text.
+recognized subcommands return focused leaf help rather than repeating the whole
+group page. Auth help accepts configuration/direct selection without resolving
+it. Daemon/config help retains restrictions on those flags. Known Wirecmd flags
+in a reserved administrative path position produce contextual ownership errors
+instead of being interpreted as paths. This recognition remains narrow so
+ordinary tool suffixes keep their existing ownership outside the documented
+administrative-name collisions, whose JSON and explicit-help escapes remain
+available. All help rejects tool input modes and remains plain text.
 
 `wirecmd --help -- SERVER [TOOL]` forces server/tool interpretation. Only a
 separator consumed in the flag prefix has this meaning; later `--` still belongs
@@ -37,7 +42,9 @@ waiting for stream input; ordinary explicit-config loading is unchanged.
 No cache, dependency or generic completion framework is introduced.
 
 Disk configuration may differ from daemon-cached configuration until reload.
-Dynamic upstream completion and Bash/Zsh support remain deferred.
+Dynamic upstream completion and Bash/Zsh support remain deferred. No command
+cache, refresh policy, or additional edge-case machinery is part of this
+milestone.
 
 ## Acceptance
 

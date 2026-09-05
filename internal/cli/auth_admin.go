@@ -17,7 +17,12 @@ func parseAuthAdmin(positionals []string, opts options) (authAdmin, bool) {
 	if opts.jsonSet || opts.stdin || (len(positionals) == 2 && startsJSONObject(positionals[1])) {
 		return authAdmin{}, false
 	}
-	if len(positionals) != 3 || (positionals[1] != "login" && positionals[1] != "status" && positionals[1] != "logout") {
+	if len(positionals) >= 2 && isAuthAdminCommand(positionals[1]) {
+		if flag, command, found := misplacedAdministrativeFlag(positionals); found {
+			return authAdmin{err: misplacedAdministrativeFlagError("auth", command, flag)}, true
+		}
+	}
+	if len(positionals) != 3 || !isAuthAdminCommand(positionals[1]) {
 		return authAdmin{err: invocationError("auth_admin_arity", "auth administration requires login, status, or logout and one server name", "use wirecmd auth login|status|logout <server>")}, true
 	}
 	if opts.help {
@@ -27,6 +32,10 @@ func parseAuthAdmin(positionals []string, opts options) (authAdmin, bool) {
 		return authAdmin{err: invocationError("server_required", "auth administration requires a non-empty server name", "supply a configured HTTP server name")}, true
 	}
 	return authAdmin{command: positionals[1], server: positionals[2]}, true
+}
+
+func isAuthAdminCommand(command string) bool {
+	return command == "login" || command == "status" || command == "logout"
 }
 
 type authEnvelope struct {
