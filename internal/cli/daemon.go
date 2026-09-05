@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
@@ -26,10 +27,11 @@ import (
 
 	"github.com/Kaylebor/wirecmd/internal/buildinfo"
 	"github.com/Kaylebor/wirecmd/internal/config"
+	"github.com/Kaylebor/wirecmd/internal/lspclient"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 4
+const daemonProtocol = 5
 
 type daemonAdmin struct {
 	command string
@@ -111,6 +113,9 @@ type daemonRequest struct {
 	Admin       string                 `json:"admin,omitempty"`
 	Auth        string                 `json:"auth,omitempty"`
 	Interactive bool                   `json:"interactive,omitempty"`
+	LSPFile     string                 `json:"lsp_file,omitempty"`
+	LSPLine     int                    `json:"lsp_line,omitempty"`
+	LSPColumn   int                    `json:"lsp_column,omitempty"`
 }
 
 type daemonReply struct {
@@ -177,12 +182,7 @@ func selectedSecretInputs(server config.Server, lookup func(string) (string, boo
 			add(*server.HTTP.OAuth.ClientSecret)
 		}
 	} else {
-		for _, value := range server.Stdio.Args {
-			add(value)
-		}
-		for _, env := range server.Stdio.Env {
-			add(env.Value)
-		}
+		return selectedStdioSecretInputs(server.Stdio, lookup)
 	}
 	return result
 }
@@ -199,7 +199,31 @@ func configFingerprint(cfg *config.Config, cwd string) string {
 	if cfg.Root != nil {
 		root = resolveRoot(*cfg.Root)
 	}
-	return fingerprint(map[string]any{"v": 1, "root": root, "servers": servers})
+	lsps := make([]any, 0, len(cfg.LSPs))
+	for _, definition := range cfg.LSPs {
+		lsps = append(lsps, semanticLSP(definition))
+	}
+	return fingerprint(map[string]any{"v": 2, "root": root, "servers": servers, "lsps": lsps})
+}
+
+func lspExecutionFingerprint(definition config.LSP, root *config.Root, cwd string) string {
+	resolvedRoot := cwd
+	if root != nil {
+		resolvedRoot = resolveRoot(*root)
+	}
+	return fingerprint(map[string]any{"v": 2, "root": resolvedRoot, "lsp": semanticLSP(definition)})
+}
+
+func semanticLSP(definition config.LSP) any {
+	args := make([]any, 0, len(definition.Stdio.Args))
+	for _, arg := range definition.Stdio.Args {
+		args = append(args, []any{arg.Kind, arg.Text})
+	}
+	env := make([]any, 0, len(definition.Stdio.Env))
+	for _, entry := range definition.Stdio.Env {
+		env = append(env, []any{entry.Name, entry.Value.Kind, entry.Value.Text})
+	}
+	return map[string]any{"name": definition.Name, "scope": definition.Scope, "language_id": definition.LanguageID, "command": definition.Stdio.Command, "args": args, "env": env}
 }
 
 func executionFingerprint(server config.Server, root *config.Root, cwd string) string {
@@ -333,6 +357,7 @@ type poolEntry struct {
 type retainedInstance struct {
 	mu                   sync.Mutex
 	session              *mcp.ClientSession
+	lspSession           *lspclient.Session
 	redactor             *redactor
 	breakOnRequestCancel bool
 	toolsPrimed          bool
@@ -341,6 +366,25 @@ type retainedInstance struct {
 	broken               bool
 	closed               bool
 	oauthRun             *oauthRuntime
+}
+
+func (instance *retainedInstance) close() {
+	if instance.closed {
+		return
+	}
+	instance.closed = true
+	if instance.session != nil {
+		_ = instance.session.Close()
+	}
+	if instance.lspSession != nil {
+		_ = instance.lspSession.Close()
+	}
+	if instance.oauthRun != nil {
+		instance.oauthRun.Close()
+	}
+	if instance.redactor != nil {
+		instance.redactor.FlushTo(instance.redactor.writer)
+	}
 }
 
 func newDaemon(stderr io.Writer) (*daemon, *appError) {
@@ -417,13 +461,7 @@ func (d *daemon) close() {
 	}
 	for _, instance := range instances {
 		instance.mu.Lock()
-		if !instance.closed {
-			instance.closed = true
-			_ = instance.session.Close()
-			if instance.oauthRun != nil {
-				instance.oauthRun.Close()
-			}
-		}
+		instance.close()
 		instance.mu.Unlock()
 	}
 	d.wg.Wait()
@@ -707,7 +745,7 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	if request.Admin != "" {
 		return d.executeAdmin(request.Admin)
 	}
-	if request.Operation != listServers && request.Operation != listTools && request.Operation != callTool && request.Operation != inspectTool {
+	if request.Operation != listServers && request.Operation != listTools && request.Operation != callTool && request.Operation != inspectTool && request.Operation != defineLSP {
 		return errorReply(invocationError("daemon_operation_invalid", "invalid daemon operation", "use a compatible Wirecmd client"))
 	}
 	if !filepath.IsAbs(request.CWD) || len(request.Configs) == 0 {
@@ -755,6 +793,52 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	}
 	if request.Operation == listServers {
 		return resultReply(serverList(cached.config), warnings)
+	}
+	if request.Operation == defineLSP {
+		if !filepath.IsAbs(request.LSPFile) || request.LSPLine < 1 || request.LSPColumn < 1 || uint64(request.LSPLine) > math.MaxUint32 || uint64(request.LSPColumn) > math.MaxUint32 {
+			return errorReplyWithWarnings(invocationError("lsp_position_invalid", "daemon LSP requests require an absolute file and positive line and column", "use the Wirecmd CLI"), warnings)
+		}
+		definition, appErr := selectLSP(cached.config)
+		if appErr != nil {
+			return errorReplyWithWarnings(appErr, warnings)
+		}
+		if request.Fingerprint != cached.fingerprint && request.Execution != lspExecutionFingerprint(definition, cached.config.Root, request.CWD) {
+			return errorReplyWithWarnings(configurationError("config_mismatch", "selected LSP execution configuration differs from the daemon cache", "run wirecmd daemon reload and retry"), warnings)
+		}
+		if appErr := validateLSPSecretInputs(definition, request.Secrets); appErr != nil {
+			return errorReplyWithWarnings(appErr, warnings)
+		}
+		target, err := lspclient.PrepareDefinition(request.LSPFile, uint32(request.LSPLine), uint32(request.LSPColumn))
+		if err != nil {
+			return errorReplyWithWarnings(lspOperationError(err, "definition"), warnings)
+		}
+		instance, appErr := d.acquireLSP(ctx, definition, cached.config.Root, request.CWD, request.Secrets, generation)
+		if appErr != nil {
+			return errorReplyWithWarnings(appErr, warnings)
+		}
+		defer d.release(instance)
+		instance.mu.Lock()
+		defer instance.mu.Unlock()
+		if ctx.Err() != nil {
+			return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
+		}
+		if instance.closed || instance.lspSession == nil || instance.broken {
+			return errorReplyWithWarnings(transportError("lsp_instance_unavailable", "the retained LSP instance is unavailable", "run wirecmd daemon reload or restart the daemon"), warnings)
+		}
+		locations, err := instance.lspSession.Definition(ctx, target)
+		if err != nil {
+			mapped := lspOperationError(err, "definition").redacted(instance.redactor)
+			broken := instance.lspSession.Broken()
+			if broken == nil && (errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed)) {
+				broken = err
+			}
+			if broken != nil {
+				d.markBroken(instance)
+				mapped = transportError("lsp_instance_unavailable", broken.Error(), "run wirecmd daemon reload or restart the daemon").redacted(instance.redactor)
+			}
+			return errorReplyWithWarnings(mapped, warnings)
+		}
+		return resultReply(makeLSPDefinitionEnvelope(request.LSPFile, locations), warnings)
 	}
 	server, ok := findServer(cached.config, request.Server)
 	if !ok {
@@ -879,13 +963,116 @@ func validateSecretInputs(server config.Server, inputs map[string]secretInput) *
 	return nil
 }
 
+func validateLSPSecretInputs(definition config.LSP, inputs map[string]secretInput) *appError {
+	expected := selectedLSPSecretInputs(definition, func(string) (string, bool) { return "", false })
+	for name := range expected {
+		input, ok := inputs[name]
+		if !ok || !input.Present {
+			return configurationError("secret_not_available", fmt.Sprintf("configured environment variable %q is not set", name), "set the required environment variable before invoking Wirecmd")
+		}
+	}
+	return nil
+}
+
+func (d *daemon) acquireLSP(ctx context.Context, definition config.LSP, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64) (*retainedInstance, *appError) {
+	workspace := cwd
+	if root != nil {
+		workspace = resolveRoot(*root)
+	}
+	key := strings.Join([]string{"lsp", definition.Name, workspace, lspExecutionFingerprint(definition, root, cwd), fmt.Sprint(generation), d.lspAuthIdentity(definition, inputs)}, "\x00")
+	d.mu.Lock()
+	if d.closing || d.generation != generation {
+		d.mu.Unlock()
+		return nil, transportError("instance_retired", "the daemon configuration generation changed before the LSP instance started", "retry after daemon reload completes")
+	}
+	if entry := d.pools[key]; entry != nil {
+		d.mu.Unlock()
+		return d.waitForLSPInstance(ctx, entry, generation, false)
+	}
+	entry := &poolEntry{ready: make(chan struct{})}
+	d.pools[key] = entry
+	d.wg.Add(1)
+	d.mu.Unlock()
+	go d.startLSPInstance(entry, key, definition, root, cwd, inputs, generation)
+	return d.waitForLSPInstance(ctx, entry, generation, true)
+}
+
+func (d *daemon) waitForLSPInstance(ctx context.Context, entry *poolEntry, generation uint64, owner bool) (*retainedInstance, *appError) {
+	instance, appErr := d.waitForInstance(ctx, entry, generation, owner)
+	if appErr != nil && appErr.code == "instance_unavailable" {
+		return nil, transportError("lsp_instance_unavailable", "the retained LSP instance is unavailable", "run wirecmd daemon reload or restart the daemon")
+	}
+	return instance, appErr
+}
+
+func (d *daemon) startLSPInstance(entry *poolEntry, key string, definition config.LSP, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64) {
+	defer d.wg.Done()
+	lookup := func(name string) (string, bool) { value, ok := inputs[name]; return value.Value, ok && value.Present }
+	command, secrets, appErr := makeStdioCommand(definition.Stdio, root, cwd, lookup)
+	var started *retainedInstance
+	if appErr == nil {
+		redactor := newRedactor(secrets, d.stderr)
+		workspace := cwd
+		if root != nil {
+			workspace = resolveRoot(*root)
+		}
+		session, err := lspclient.Start(d.ctx, lspclient.Command{Path: command.Path, Args: command.Args[1:], Env: command.Env, Dir: command.Dir, Stderr: redactor}, definition.LanguageID, workspace, buildinfo.Version())
+		if err != nil {
+			redactor.FlushTo(d.stderr)
+			appErr = lspOperationError(err, "initialize").redacted(redactor)
+		} else {
+			started = &retainedInstance{lspSession: session, redactor: redactor}
+		}
+	}
+	d.mu.Lock()
+	if appErr == nil && (entry.retiring || d.closing || d.generation != generation) {
+		d.mu.Unlock()
+		if started != nil {
+			started.close()
+		}
+		d.mu.Lock()
+		appErr = transportError("instance_retired", "the LSP instance was retired while starting", "retry after daemon reload completes")
+	} else if appErr == nil {
+		entry.instance = started
+	}
+	entry.err = appErr
+	close(entry.ready)
+	if appErr != nil && d.pools[key] == entry {
+		delete(d.pools, key)
+	}
+	d.mu.Unlock()
+}
+
+func (d *daemon) lspAuthIdentity(definition config.LSP, inputs map[string]secretInput) string {
+	mac := hmac.New(sha256.New, d.hmacKey)
+	items := make([]string, 0)
+	add := func(destination string, value config.Value) {
+		if !value.IsSecret() {
+			return
+		}
+		name := strings.TrimPrefix(value.Text, "env://")
+		items = append(items, destination+"\x00"+inputs[name].Value)
+	}
+	for index, value := range definition.Stdio.Args {
+		add(fmt.Sprintf("arg[%d]", index), value)
+	}
+	for _, assignment := range definition.Stdio.Env {
+		add("env["+assignment.Name+"]", assignment.Value)
+	}
+	sort.Strings(items)
+	for _, item := range items {
+		_, _ = fmt.Fprintf(mac, "%d:%s", len(item), item)
+	}
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 func (d *daemon) acquire(ctx context.Context, server config.Server, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64, interactive bool, emitURL func(string) error) (*retainedInstance, *appError) {
 	workspace := cwd
 	if root != nil {
 		workspace = resolveRoot(*root)
 	}
 	auth := d.authIdentity(server, inputs)
-	key := strings.Join([]string{server.Name, workspace, executionFingerprint(server, root, cwd), fmt.Sprint(generation), auth}, "\x00")
+	key := strings.Join([]string{"mcp", server.Name, workspace, executionFingerprint(server, root, cwd), fmt.Sprint(generation), auth}, "\x00")
 	d.mu.Lock()
 	if d.closing || d.generation != generation {
 		d.mu.Unlock()
@@ -998,10 +1185,7 @@ func (d *daemon) startInstance(clientCtx context.Context, entry *poolEntry, key 
 	if appErr == nil && (entry.retiring || d.closing || d.generation != generation) {
 		d.mu.Unlock()
 		if started != nil {
-			_ = started.session.Close()
-			if started.oauthRun != nil {
-				started.oauthRun.Close()
-			}
+			started.close()
 			started.redactor.FlushTo(d.stderr)
 		}
 		d.mu.Lock()
@@ -1067,14 +1251,7 @@ func (d *daemon) release(instance *retainedInstance) {
 	d.mu.Unlock()
 	if closeNow {
 		instance.mu.Lock()
-		if !instance.closed {
-			instance.closed = true
-			_ = instance.session.Close()
-			if instance.oauthRun != nil {
-				instance.oauthRun.Close()
-			}
-			instance.redactor.FlushTo(d.stderr)
-		}
+		instance.close()
 		instance.mu.Unlock()
 		d.mu.Lock()
 		delete(d.retiring, instance)
@@ -1159,14 +1336,7 @@ func (d *daemon) executeAdmin(command string) daemonReply {
 		d.mu.Unlock()
 		for _, instance := range toClose {
 			instance.mu.Lock()
-			if !instance.closed {
-				instance.closed = true
-				_ = instance.session.Close()
-				if instance.oauthRun != nil {
-					instance.oauthRun.Close()
-				}
-				instance.redactor.FlushTo(d.stderr)
-			}
+			instance.close()
 			instance.mu.Unlock()
 			d.mu.Lock()
 			delete(d.retiring, instance)

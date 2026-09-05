@@ -351,6 +351,7 @@ Start here:
   wirecmd                            list configured servers
   wirecmd SERVER                     list that server's tools
   wirecmd --help SERVER TOOL          inspect arguments before calling
+  wirecmd lsp definition --file PATH --line N --column N
 
 Prefix flags (before server/tool names):
   --config PATH                      repeatable; later files override earlier
@@ -368,18 +369,20 @@ Supply configuration to calls, not daemon run. Normal calls are daemon-backed;
 there is no automatic direct fallback. Linux requires a private absolute
 XDG_RUNTIME_DIR; macOS can use its validated per-user temporary directory.
 
-Administration (offline help: wirecmd --help daemon|config|auth):
+Static help (offline: wirecmd --help daemon|config|auth|lsp):
   wirecmd daemon run|status|reload
   wirecmd config trust [PATH]
   wirecmd config untrust [PATH]
   wirecmd config trust status [PATH]
   wirecmd config trust list
   wirecmd [--config PATH] [--direct] auth login|status|logout SERVER
+  wirecmd [client flags] lsp definition --file PATH --line N --column N
 
 Focused help:
   wirecmd [client flags] --help SERVER [TOOL]
   wirecmd [client flags] --help -- SERVER [TOOL]
 The second form forces server help for names such as daemon, config, or auth.
+It also reaches a configured MCP server named lsp; bare lsp is native help.
 
 Tool input examples (use the names and types from focused help):
   wirecmd SERVER TOOL --query 'text'

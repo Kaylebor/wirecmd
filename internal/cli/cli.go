@@ -119,6 +119,7 @@ const (
 	listTools
 	callTool
 	inspectTool
+	defineLSP
 )
 
 type versionText string
@@ -134,11 +135,25 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		return versionText(buildinfo.Version()), nil
 	}
 	if opts.help {
+		if result, err, handled := lspHelp(positionals, opts); handled {
+			return result, err
+		}
 		if result, err, handled := administrativeHelp(positionals, opts); handled {
 			if err != nil {
 				return nil, err
 			}
 			return result, err
+		}
+	}
+	if !opts.help && !opts.helpServer && len(positionals) == 1 && positionals[0] == "lsp" && !opts.jsonSet && !opts.stdin {
+		return helpText(lspHelpText()), nil
+	}
+	if !opts.help {
+		if definition, err, handled := parseLSPDefinitionCommand(positionals, opts); handled {
+			if err != nil {
+				return nil, err
+			}
+			return executeLSPDefinition(ctx, opts, definition, in, errOut)
 		}
 	}
 	if admin, ok := parseConfigAdmin(positionals, opts); ok && !opts.help {
@@ -713,9 +728,13 @@ func (t *configuredHeaderTransport) RoundTrip(request *http.Request) (*http.Resp
 }
 
 func makeCommand(server config.Server, root *config.Root, callerCWD string, lookup func(string) (string, bool)) (*exec.Cmd, []string, *appError) {
-	arguments := make([]string, 0, len(server.Stdio.Args))
-	secrets := make([]string, 0, len(server.Stdio.Env)+len(server.Stdio.Args))
-	for _, arg := range server.Stdio.Args {
+	return makeStdioCommand(server.Stdio, root, callerCWD, lookup)
+}
+
+func makeStdioCommand(stdio config.Stdio, root *config.Root, callerCWD string, lookup func(string) (string, bool)) (*exec.Cmd, []string, *appError) {
+	arguments := make([]string, 0, len(stdio.Args))
+	secrets := make([]string, 0, len(stdio.Env)+len(stdio.Args))
+	for _, arg := range stdio.Args {
 		value, err := arg.ResolveEnv(lookup)
 		if err != nil {
 			return nil, nil, configurationError("secret_not_available", err.Error(), "set the required environment variable before invoking Wirecmd")
@@ -726,7 +745,7 @@ func makeCommand(server config.Server, root *config.Root, callerCWD string, look
 		}
 	}
 	env := os.Environ()
-	for _, assignment := range server.Stdio.Env {
+	for _, assignment := range stdio.Env {
 		value, err := assignment.Value.ResolveEnv(lookup)
 		if err != nil {
 			return nil, nil, configurationError("secret_not_available", err.Error(), "set the required environment variable before invoking Wirecmd")
@@ -736,7 +755,7 @@ func makeCommand(server config.Server, root *config.Root, callerCWD string, look
 			secrets = append(secrets, value.Text)
 		}
 	}
-	command := exec.Command(server.Stdio.Command, arguments...)
+	command := exec.Command(stdio.Command, arguments...)
 	command.Env = env
 	if root != nil {
 		command.Dir = resolveRoot(*root)

@@ -1,6 +1,6 @@
 ---
 name: wirecmd
-description: Discover and compose Wirecmd capabilities from the shell, including trusted workspace configuration, focused help, projected arguments, lossless JSON calls, and transparent OAuth-backed HTTP servers.
+description: Discover and compose Wirecmd capabilities from the shell, including trusted workspace configuration, focused help, native LSP definition lookup, projected arguments, lossless JSON calls, and transparent OAuth-backed HTTP servers.
 ---
 
 # Wirecmd
@@ -48,6 +48,49 @@ The optional path defaults to the current directory. A missing approval is the
 recoverable `workspace_untrusted` error (exit 8); no discovered source is
 `config_not_found` (exit 3). These commands remain non-interactive. A server
 named `config` can still be called through `--json` or an exact-call envelope.
+
+## Use native LSP definition lookup
+
+`wirecmd lsp definition` is a native, static capability rather than an MCP
+tool. Begin with offline help:
+
+```sh
+wirecmd --help lsp
+wirecmd --help lsp definition
+```
+
+It requires exactly one complete workspace-scoped `lsp` block in the effective
+KDL configuration. The workspace config, not Wirecmd, supplies the language
+server executable, arguments, environment, and language ID:
+
+```kdl
+lsp "primary" {
+    scope "workspace"
+    language-id "your-language-id"
+    stdio "/absolute/path/to/your-language-server" {
+        arg "--server-specific-option"
+    }
+}
+```
+
+Query a saved UTF-8 file with one-based coordinates:
+
+```sh
+wirecmd lsp definition --file ./main.go --line 21 --column 13
+```
+
+Normal calls retain the selected LSP session through the daemon; use `--direct`
+only for one-shot diagnosis. Results are normalized file locations with
+one-based ranges. `lsp_not_configured` and `lsp_ambiguous_configuration` mean
+the workspace needs exactly one complete LSP definition. An
+`lsp_capability_unavailable` error means the configured server does not support
+definition lookup; `lsp_encoding_unsupported` means it cannot use UTF-16.
+
+The bare `lsp` form is native help. A configured MCP server named `lsp` remains
+callable through `--json`, `--stdin`, an exact-call object, or
+`wirecmd --help -- lsp [TOOL]`. Do not assume any language/server catalog,
+initialization options, unsaved-buffer support, routing among multiple servers,
+or other LSP operations.
 
 ## Configure HTTP values
 

@@ -20,6 +20,8 @@
   query/header configuration milestone and its acceptance criteria.
 - `docs/oauth-plan.md` is authoritative for the completed transparent OAuth and
   encrypted credential-persistence milestone and its acceptance criteria.
+- `docs/lsp-plan.md` is authoritative for the completed native LSP definition
+  milestone, its server-neutral contract, and its qualification criteria.
 - `docs/release-readiness.md` is authoritative for first-alpha installation,
   Linux qualification, versioning, and the manual publication boundary.
 - `docs/macos-plan.md` is authoritative for the current macOS Apple Silicon
@@ -55,6 +57,10 @@
   it, not a general service-management subsystem.
 - MCP proxy/server compatibility is optional. Do not let it shape or delay the
   agent-facing shell contract.
+- Native LSP definition is the accepted first non-MCP capability. Keep it
+  server-neutral: configuration owns the executable, arguments, environment,
+  language ID, and workspace selection; Wirecmd must not add a language-server
+  catalog, executable inference, presets, or server-specific behavior.
 
 ## Scope discipline
 
@@ -101,6 +107,13 @@
   oldest.
 - Keep upstream adapters behind a narrow semantic boundary, but do not build
   unused adapters or a speculative extension framework.
+- The native LSP client owns only standard framing and lifecycle, conservative
+  initialization, disk-backed document synchronization, position conversion,
+  normalized results, and daemon retention. Keep its public command/result
+  contract independent of generated LSP SDK types. Do not add additional LSP
+  operations, routing, initialization options, unsaved buffers, dynamic
+  registration, workspace settings, edits, or raw protocol access without a
+  separate accepted milestone.
 - Preserve a lossless structured invocation path even when ergonomic flags are
   projected from schemas.
 - Preserve structural argument ownership: client flags precede the
@@ -158,6 +171,10 @@
   and token/context measurements used for comparisons.
 - Treat comparisons with existing clients and direct harness MCP exposure as
   evidence, not as requirements to copy their feature sets.
+- Do not claim native LSP qualification from fixture tests alone. Record a
+  real configured-server demonstration before marking the LSP milestone
+  qualified; `gopls` is a test fixture, never a production dependency or
+  default.
 - Validate both one-shot and daemon-backed paths where the current milestone
   requires them, including observable-contract equivalence and real continuity
   across separate CLI invocations.

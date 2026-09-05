@@ -147,6 +147,7 @@ type Root struct {
 type Source struct {
 	Root    *Root
 	Servers []ServerSource
+	LSPs    []LSPSource
 	Provenance
 }
 
@@ -157,6 +158,30 @@ type ServerSource struct {
 	ScopeProvenance Provenance
 	Stdio           *StdioSource
 	HTTP            *HTTPSource
+	Provenance
+}
+
+// LSP is a named complete local language-server definition. Its name is a
+// configuration and instance identity; routine LSP operations select the
+// effective workspace definition rather than exposing it as a CLI argument.
+type LSP struct {
+	Name                 string
+	Scope                Scope
+	ScopeProvenance      Provenance
+	LanguageID           string
+	LanguageIDProvenance Provenance
+	Stdio                Stdio
+	Provenance
+}
+
+// LSPSource is a potentially partial language-server layer.
+type LSPSource struct {
+	Name                 string
+	Scope                *Scope
+	ScopeProvenance      Provenance
+	LanguageID           *string
+	LanguageIDProvenance Provenance
+	Stdio                *StdioSource
 	Provenance
 }
 
@@ -198,6 +223,7 @@ type OAuthSource struct {
 type Config struct {
 	Root    *Root
 	Servers []Server
+	LSPs    []LSP
 }
 
 // Load parses one KDL 2 configuration source file.
@@ -301,6 +327,7 @@ func ParseString(file, source string) (*Source, error) {
 func Compose(sources ...*Source) (*Config, error) {
 	config := &Config{}
 	serverIndex := make(map[string]int)
+	lspIndex := make(map[string]int)
 
 	for _, source := range sources {
 		if source.Root != nil {
@@ -341,6 +368,32 @@ func Compose(sources ...*Source) (*Config, error) {
 					server.HTTP = &HTTP{}
 				}
 				composeHTTP(server.HTTP, partial.HTTP)
+			}
+		}
+
+		for _, partial := range source.LSPs {
+			index, exists := lspIndex[partial.Name]
+			if !exists {
+				index = len(config.LSPs)
+				lspIndex[partial.Name] = index
+				config.LSPs = append(config.LSPs, LSP{
+					Name:       partial.Name,
+					Provenance: partial.Provenance,
+				})
+			}
+
+			lsp := &config.LSPs[index]
+			lsp.Provenance = partial.Provenance
+			if partial.Scope != nil {
+				lsp.Scope = *partial.Scope
+				lsp.ScopeProvenance = partial.ScopeProvenance
+			}
+			if partial.LanguageID != nil {
+				lsp.LanguageID = *partial.LanguageID
+				lsp.LanguageIDProvenance = partial.LanguageIDProvenance
+			}
+			if partial.Stdio != nil {
+				composeStdio(&lsp.Stdio, partial.Stdio)
 			}
 		}
 	}
@@ -441,7 +494,7 @@ func validate(config *Config) error {
 	if config.Root != nil && config.Root.Path == "" {
 		return validationError(config.Root.Provenance, config.Root.Provenance.Path, "path must not be empty")
 	}
-	if len(config.Servers) == 0 {
+	if len(config.Servers) == 0 && len(config.LSPs) == 0 {
 		return fmt.Errorf("configuration: expected at least one server")
 	}
 	for _, server := range config.Servers {
@@ -483,6 +536,24 @@ func validate(config *Config) error {
 			if server.Stdio.Command == "" {
 				return validationError(server.Stdio.Provenance, path+".stdio", "executable is required")
 			}
+		}
+	}
+	for _, lsp := range config.LSPs {
+		path := lspPath(lsp.Name)
+		if lsp.Scope == "" {
+			return validationError(lsp.Provenance, path+".scope", "scope is required")
+		}
+		if lsp.Scope != ScopeWorkspace {
+			return validationError(lsp.ScopeProvenance, path+".scope", "unsupported scope %q", lsp.Scope)
+		}
+		if lsp.LanguageID == "" {
+			return validationError(lsp.Provenance, path+".language-id", "language-id is required")
+		}
+		if lsp.Stdio.Provenance == (Provenance{}) {
+			return validationError(lsp.Provenance, path+".stdio", "stdio is required")
+		}
+		if lsp.Stdio.Command == "" {
+			return validationError(lsp.Stdio.Provenance, path+".stdio", "executable is required")
 		}
 	}
 	return nil
@@ -618,6 +689,7 @@ func parseDocument(file string, doc *document.Document) (*Source, error) {
 
 	source := &Source{Provenance: provenance(file, "wirecmd")}
 	seenServers := make(map[string]struct{}, len(root.Children))
+	seenLSPs := make(map[string]struct{}, len(root.Children))
 	for _, child := range root.Children {
 		switch nodeName(child) {
 		case "root":
@@ -639,6 +711,16 @@ func parseDocument(file string, doc *document.Document) (*Source, error) {
 			}
 			seenServers[server.Name] = struct{}{}
 			source.Servers = append(source.Servers, server)
+		case "lsp":
+			lsp, err := parseLSP(file, child)
+			if err != nil {
+				return nil, err
+			}
+			if _, exists := seenLSPs[lsp.Name]; exists {
+				return nil, fmt.Errorf("%s: duplicate lsp", lsp.Path)
+			}
+			seenLSPs[lsp.Name] = struct{}{}
+			source.LSPs = append(source.LSPs, lsp)
 		default:
 			return nil, fmt.Errorf("wirecmd: unknown child node %q", nodeName(child))
 		}
@@ -718,6 +800,58 @@ func parseServer(file string, node *document.Node) (ServerSource, error) {
 	return server, nil
 }
 
+func parseLSP(file string, node *document.Node) (LSPSource, error) {
+	if err := plainNode(node, "lsp"); err != nil {
+		return LSPSource{}, err
+	}
+	if len(node.Arguments) != 1 {
+		return LSPSource{}, fmt.Errorf("wirecmd.lsp: expected one name")
+	}
+	name, err := literalText(node.Arguments[0], "wirecmd.lsp")
+	if err != nil {
+		return LSPSource{}, err
+	}
+	path := lspPath(name)
+	lsp := LSPSource{Name: name, Provenance: provenance(file, path)}
+
+	for _, child := range node.Children {
+		switch nodeName(child) {
+		case "scope":
+			if lsp.Scope != nil {
+				return LSPSource{}, fmt.Errorf("%s.scope: duplicate scope", path)
+			}
+			scope, err := parseScope(child, path)
+			if err != nil {
+				return LSPSource{}, err
+			}
+			lsp.Scope = &scope
+			lsp.ScopeProvenance = provenance(file, path+".scope")
+		case "language-id":
+			if lsp.LanguageID != nil {
+				return LSPSource{}, fmt.Errorf("%s.language-id: duplicate language-id", path)
+			}
+			languageID, err := parseLiteral(child, path+".language-id")
+			if err != nil {
+				return LSPSource{}, err
+			}
+			lsp.LanguageID = &languageID
+			lsp.LanguageIDProvenance = provenance(file, path+".language-id")
+		case "stdio":
+			if lsp.Stdio != nil {
+				return LSPSource{}, fmt.Errorf("%s.stdio: duplicate stdio", path)
+			}
+			stdio, err := parseStdio(file, child, path)
+			if err != nil {
+				return LSPSource{}, err
+			}
+			lsp.Stdio = &stdio
+		default:
+			return LSPSource{}, fmt.Errorf("%s: unknown child node %q", path, nodeName(child))
+		}
+	}
+	return lsp, nil
+}
+
 func parseHTTP(file string, node *document.Node, serverPath string) (HTTPSource, error) {
 	path := serverPath + ".http"
 	if err := plainNode(node, path); err != nil {
@@ -792,7 +926,7 @@ func parseOAuth(file string, node *document.Node, httpPath string) (OAuthSource,
 			if source.ClientID != nil {
 				return OAuthSource{}, fmt.Errorf("%s.client-id: duplicate client-id", path)
 			}
-			value, err := parseOAuthLiteral(child, path+".client-id")
+			value, err := parseLiteral(child, path+".client-id")
 			if err != nil {
 				return OAuthSource{}, err
 			}
@@ -811,7 +945,7 @@ func parseOAuth(file string, node *document.Node, httpPath string) (OAuthSource,
 			if source.RedirectURI != nil {
 				return OAuthSource{}, fmt.Errorf("%s.redirect-uri: duplicate redirect-uri", path)
 			}
-			value, err := parseOAuthLiteral(child, path+".redirect-uri")
+			value, err := parseLiteral(child, path+".redirect-uri")
 			if err != nil {
 				return OAuthSource{}, err
 			}
@@ -824,7 +958,7 @@ func parseOAuth(file string, node *document.Node, httpPath string) (OAuthSource,
 	return source, nil
 }
 
-func parseOAuthLiteral(node *document.Node, path string) (string, error) {
+func parseLiteral(node *document.Node, path string) (string, error) {
 	if err := plainNode(node, path); err != nil {
 		return "", err
 	}
@@ -991,4 +1125,8 @@ func nodeName(node *document.Node) string {
 
 func serverPath(name string) string {
 	return fmt.Sprintf("wirecmd.server[%q]", name)
+}
+
+func lspPath(name string) string {
+	return fmt.Sprintf("wirecmd.lsp[%q]", name)
 }

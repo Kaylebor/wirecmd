@@ -18,8 +18,8 @@ releases.
 
 ## Supported release surface
 
-The first release target is Linux with Go 1.25 or newer. The supported source
-installation path is:
+The supported source-build baseline is Go 1.26 or newer. The first release
+target was Linux. The supported source installation path is:
 
 ```sh
 go install github.com/Kaylebor/wirecmd@latest

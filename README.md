@@ -26,9 +26,9 @@ integration or eager injection of every configured tool schema.
 
 ## Install
 
-The canonical Go module is `github.com/Kaylebor/wirecmd`. The latest published
-prerelease verified on 2026-09-05 is `v0.1.0-alpha.5`. Install that checkpoint
-with Go 1.25 or newer:
+The canonical Go module is `github.com/Kaylebor/wirecmd`. Build the current
+source checkout with Go 1.26 or newer. The latest published prerelease verified
+on 2026-09-05 is the pre-LSP checkpoint `v0.1.0-alpha.5`; install it with:
 
 ```sh
 go install github.com/Kaylebor/wirecmd@v0.1.0-alpha.5
@@ -150,6 +150,48 @@ than being interpreted as paths. To inspect a server whose name collides with
 administration, use `wirecmd --help -- daemon [TOOL]` (likewise `config` or
 `auth`). This prefix separator is distinct from the tool-side `--` raw JSON
 overlay.
+
+## Native LSP definition
+
+Wirecmd also provides one native, workspace-scoped definition lookup through a
+configured Language Server Protocol process. It does not supply language
+servers, infer executables, or maintain a language catalog. Configure the
+actual server command and its language ID alongside MCP servers:
+
+```kdl
+wirecmd {
+    root "."
+
+    lsp "primary" {
+        scope "workspace"
+        language-id "your-language-id"
+        stdio "/absolute/path/to/your-language-server" {
+            arg "--server-specific-option"
+        }
+    }
+}
+```
+
+The effective workspace must contain exactly one complete `lsp` definition.
+Partial source layers compose using the same named-definition, argv-replacement,
+environment-override, provenance, discovery, and trust rules as MCP stdio
+servers. `initializationOptions`, language presets, and routing between several
+language servers are not supported yet.
+
+Start the daemon as usual, then use static help or query a disk-backed file:
+
+```sh
+wirecmd --help lsp
+wirecmd --help lsp definition
+wirecmd lsp definition --file ./main.go --line 21 --column 13
+```
+
+Line and column are one-based. Results contain zero or more one-based file
+locations. The daemon retains the configured LSP session; `--direct` starts a
+one-shot session. The bare `lsp` form is native help, but an MCP server named
+`lsp` remains available via `--json`, `--stdin`, an exact-call object, or
+`wirecmd --help -- lsp [TOOL]`. See the [LSP plan](docs/lsp-plan.md) for the
+complete contract and current qualification boundary.
 
 ## Invocation and output
 
@@ -292,6 +334,10 @@ non-interactive caller to perform login from a local interactive terminal.
 - `workspace_untrusted`: review the configuration, then run the exact trust
   command from the error's action field.
 - `config_mismatch`: reload the daemon after configuration edits.
+- `lsp_not_configured` or `lsp_ambiguous_configuration`: configure exactly one
+  complete workspace `lsp` definition.
+- `lsp_capability_unavailable`: select an LSP server that supports definition
+  lookup; `lsp_encoding_unsupported` requires UTF-16 support.
 - Argument errors: read `wirecmd --help SERVER TOOL`; pass complex flag values
   as the value itself, not an object wrapping its property name.
 
@@ -336,6 +382,8 @@ flags, and JSON contents are not completed. Bash/Zsh support is deferred.
   typed query/header configuration milestone.
 - [OAuth plan](docs/oauth-plan.md) defines the authoritative transparent OAuth
   and encrypted credential-persistence milestone.
+- [LSP plan](docs/lsp-plan.md) defines the completed, real-server-qualified
+  native LSP definition milestone.
 - [Output contract](docs/output-plan.md) defines contextual terminal output,
   explicit machine output, and color policy.
 - [Release readiness](docs/release-readiness.md) defines the authoritative

@@ -4,12 +4,14 @@ Status: authoritative product direction
 
 ## Thesis
 
-Make capabilities supplied by MCP servers available to any shell-capable agent
-without requiring native MCP support in its harness, eager tool-schema
-injection, or loss of ordinary shell composition.
+Make useful capabilities available to any shell-capable agent without requiring
+native protocol support in its harness, eager tool-schema injection, or loss
+of ordinary shell composition.
 
 The shell is the agent-facing capability interface. MCP is the first upstream
 adapter and should normally be invisible outside configuration and diagnostics.
+Native LSP definition lookup is a deliberately narrow local capability, not a
+language-server catalog or a competing editor client.
 
 ## Problem
 
@@ -38,10 +40,12 @@ The runtime provides:
 - optional local lifecycle brokering that does not change command semantics.
 - transparent OAuth for protected HTTP sources when an interactive caller
   permits browser authorization, with encrypted local credential persistence.
+- workspace-scoped native LSP definition lookup when the workspace config
+  supplies one compatible language-server process.
 
-The initial adapter consumes MCP servers. Future adapters are possible only if
-real use demonstrates their value. The initial design must not implement or
-publicly commit to them.
+The initial upstream adapter consumes MCP servers. Native LSP definition is the
+one accepted non-MCP slice. Future adapter families are possible only if real
+use demonstrates their value; this does not commit the product to them.
 
 ## Interaction principles
 
@@ -147,6 +151,22 @@ If a required feature exposes a confirmed SDK gap, add the smallest isolated
 shim and document the exact upstream limitation. A conceptual difference
 between protocol eras does not by itself justify a local adapter or abstraction.
 
+## Native LSP boundary
+
+The first LSP capability is `wirecmd lsp definition`. Its process command,
+arguments, environment, language ID, and workspace root are entirely
+configuration-owned; Wirecmd does not name, discover, construct, or special-case
+language servers. It provides standard JSON-RPC framing and lifecycle,
+conservative initialization, disk-backed document synchronization, UTF-16
+position conversion, normalized definition locations, retained daemon sessions,
+and actionable errors. The authoritative contract and qualification boundary
+are recorded in the [LSP plan](lsp-plan.md).
+
+This is not a general LSP client commitment. Multiple-server routing,
+initialization options, unsaved buffers, language-specific behavior, dynamic
+registration, workspace settings, edits, and additional semantic operations
+need their own demonstrated use and deliberate decision.
+
 ## MVP compatibility direction
 
 The first full MVP should support three deployed MCP compatibility layers:
@@ -173,6 +193,11 @@ recorded in the [HTTP values plan](http-values-plan.md) and
 surface, with Wirecmd adding only interaction, persistence, daemon
 coordination, redaction, and error mapping.
 
+The native LSP definition implementation completed direct and retained-daemon
+qualification with a configured real server. It remains server-neutral and
+requires exactly one complete workspace definition; `gopls` was only the
+qualification fixture, not a product dependency or default.
+
 For this milestone, endpoint values remain structural configuration rather than
 preassembled URL or request strings. `query NAME=value` and `header NAME=value`
 children accept literal values or `(secret)"env://NAME"` references. Query
@@ -194,6 +219,8 @@ identity so retained instances cannot cross credential boundaries.
   subsystems.
 - Supporting every MCP primitive before validating the agent-facing contract.
 - Designing future non-MCP adapters without a demonstrated consumer.
+- Expanding the native LSP definition slice into a language-server catalog,
+  editor integration, or general LSP client without separate evidence.
 - Client ID Metadata Documents, device authorization, client credentials,
   provider-side revocation, non-loopback callbacks, multiple accounts per
   identity, and provider-specific OAuth compatibility guards are deferred.
