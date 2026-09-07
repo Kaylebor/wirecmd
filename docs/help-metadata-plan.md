@@ -9,11 +9,14 @@ recognized native or administrative command. Native and administrative suffix
 help is offline and side-effect-free. `SERVER --help` follows the same
 configuration, trust, daemon, and `--direct` behavior as `--help SERVER`.
 
-The suffix exception stops at the tool boundary. `SERVER TOOL --help` remains a
-projected tool argument, and focused tool help remains `--help SERVER TOOL`.
-JSON and stdin input disable server-suffix help, preserving an escape for an
-MCP tool literally named `--help`. Prefix `--help -- SERVER [TOOL]` continues to
-select MCP help when a server name collides with administration or native LSP.
+At the tool boundary, a final `--help` or `-h` is resolved against the live
+input schema. An explicitly projectable `help` property owns the argument;
+otherwise Wirecmd renders focused tool help. Generic additional properties do
+not claim the flag. This fallback never uses cached schemas, so an offline
+daemon still fails normally; prefix `--help SERVER TOOL` remains the form that
+can use cached metadata. Exact JSON remains the lossless escape for a literal
+`help` property. Prefix `--help -- SERVER [TOOL]` continues to select MCP help
+when a server name collides with administration or native LSP.
 
 ## Metadata cache
 
@@ -28,8 +31,8 @@ an exact cache entry only when the daemon is unavailable. Server help requires
 a complete catalog, tool help requires detailed metadata for that tool, and no
 stale-data banner is added. Authentication, configuration, protocol, upstream,
 incompatible-daemon, and broken-session failures are never hidden by cached
-help. Cached data never validates projected arguments or participates in a
-call.
+help. Cached data never validates projected arguments, decides trailing-help
+ownership, or participates in a call.
 
 Metadata persists across reload and daemon restart and is replaced lazily by
 the next successful discovery. Dynamic tool completion, expiry, pruning,
@@ -46,11 +49,11 @@ turn a successful live operation into a failure.
 
 ## Qualification
 
-Tests cover suffix ownership and collisions, offline administrative behavior,
-direct and daemon refresh, exact offline fallback, replacement and targeted
-merging, semantic identity isolation, private-state defenses, concurrent
-writes, redaction, and unchanged call/projection behavior. Local qualification
-includes the full and race-enabled suites, vet, module verification, builds,
-Fish integration, an official SDK memory-fixture smoke test, and independent
-parser/security review. CI qualification remains required on the release
-commit before publication.
+Tests cover suffix ownership, live-schema fallback and collisions, offline
+administrative behavior, direct and daemon refresh, exact offline fallback,
+replacement and targeted merging, semantic identity isolation, private-state
+defenses, concurrent writes, redaction, and unchanged call/projection behavior.
+Local qualification includes the full and race-enabled suites, vet, module
+verification, builds, Fish integration, an official SDK memory-fixture smoke
+test, and independent parser/security review. CI qualification remains required
+on the release commit before publication.

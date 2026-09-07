@@ -124,8 +124,11 @@
   projected from schemas.
 - Preserve structural argument ownership: client flags precede the
   `<server> <tool>` pair, while arguments after the tool name belong to that
-  tool. Handle rare projected-name collisions with warnings and a structurally
-  distinct exact-JSON invocation path rather than a global reserved-name list.
+  tool. The narrow trailing-help exception is schema-aware: an explicit
+  projected `help` property owns `--help`/`-h`, otherwise Wirecmd renders live
+  focused help. Never use cached schemas to decide that ownership. Handle other
+  rare projected-name collisions with warnings and a structurally distinct
+  exact-JSON invocation path rather than a global reserved-name list.
 - Keep stdout machine-composable. Send diagnostics to stderr and never print
   secrets, tokens, credentials, or unredacted secret-bearing URLs.
 - Preserve compact JSON for non-terminal defaults and explicit

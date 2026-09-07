@@ -6,8 +6,10 @@ package cli
 // parsing; no configuration, daemon, or upstream operation is touched here.
 //
 // A trailing help token is only special when it is the final, exact token.
-// Tool-side suffixes remain owned by the tool, and explicit prefix help or
-// the -- separator keeps its existing ownership.
+// Tool-side suffixes are resolved later against the live tool schema: an
+// explicitly projected help property wins, otherwise the token becomes
+// focused tool help. Explicit prefix help and the -- separator keep their
+// existing ownership.
 func normalizeTrailingHelp(positionals []string, opts options) ([]string, options, *appError, bool) {
 	if len(positionals) == 0 || opts.help || opts.helpServer || opts.jsonSet || opts.stdin {
 		return positionals, opts, nil, false
@@ -18,9 +20,8 @@ func normalizeTrailingHelp(positionals []string, opts options) ([]string, option
 	}
 
 	// A bare server followed by --help is the documented server-help form.
-	// This is intentionally the only ordinary tool form that consumes a
-	// trailing help token; SERVER TOOL --help belongs to the tool's projected
-	// argument space.
+	// Tool help needs live schema discovery and is therefore left for projected
+	// argument resolution below this grammar-only normalization layer.
 	if len(positionals) == 2 {
 		if isNativeHelpGroup(positionals[0]) {
 			return canonicalNativeHelp(positionals[:len(positionals)-1], opts)

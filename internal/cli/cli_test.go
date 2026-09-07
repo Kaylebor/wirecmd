@@ -78,6 +78,11 @@ func TestHelperProcess(t *testing.T) {
 		OutputSchema: json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean"}}}`),
 	}, echoTool)
 	mcp.AddTool(server, &mcp.Tool{
+		Name:        "projected_help",
+		Description: "exercise an explicit tool-owned help argument",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"help":{"type":"boolean"}}}`),
+	}, echoTool)
+	mcp.AddTool(server, &mcp.Tool{
 		Name:        "schema_secret",
 		Description: "schema metadata " + secret,
 		InputSchema: map[string]any{"type": "object", "description": "schema " + secret, "properties": map[string]any{"value": map[string]any{"type": "string", "examples": []any{secret}}}},
@@ -510,6 +515,31 @@ func TestFocusedHelpAndProjectedArguments(t *testing.T) {
 	}
 	if code != exitOK || stderr != "" || !strings.HasSuffix(output, "\n") {
 		t.Fatalf("tool help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	prefixHelp := output
+	for _, suffix := range []string{"--help", "-h"} {
+		code, output, stderr = invoke(t, []string{"--direct", "--config", config, "helper", "projected", suffix})
+		if code != exitOK || stderr != "" || output != prefixHelp {
+			t.Fatalf("tool suffix help %q: code=%d stderr=%q output=%s", suffix, code, stderr, output)
+		}
+	}
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "helper", "projected", "--query", "ignored", "--help"})
+	if code != exitOK || stderr != "" || output != prefixHelp {
+		t.Fatalf("tool suffix help after arguments: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "helper", "a_tool", "--help"})
+	if code != exitOK || stderr != "" || !strings.Contains(output, "No named arguments") {
+		t.Fatalf("additional-properties suffix help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "helper", "projected_help", "--help"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)["help"] != true {
+		t.Fatalf("explicit tool help argument: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "--json", `{"query":"Ada","help":true}`, "helper", "projected"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)["help"] != true {
+		t.Fatalf("exact JSON help property: code=%d stderr=%q output=%s", code, stderr, output)
 	}
 
 	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "helper", "projected", "--query", "Ada", "--limit=12", "--enabled", "--filters", `{"status":"open"}`, "--", `{"tool_name":"one","toolName":"two","weird.name":"three"}`})

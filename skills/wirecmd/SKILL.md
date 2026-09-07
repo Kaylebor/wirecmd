@@ -182,6 +182,7 @@ Request focused help for a tool before guessing its input shape:
 wirecmd
 wirecmd SERVER
 wirecmd --help SERVER TOOL
+wirecmd SERVER TOOL --help
 ```
 
 Use `--config PATH` in these forms when an explicit source list is required.
@@ -191,8 +192,10 @@ the later tool-side separator remains the raw argument overlay.
 
 `wirecmd SERVER --help` is equivalent to server help and may use previously
 discovered metadata when the daemon is offline. Native and administrative
-commands accept a final `--help` or `-h`. Keep tool help in the prefix form:
-tokens after `SERVER TOOL`, including `--help`, belong to the tool.
+commands accept a final `--help` or `-h`. After `SERVER TOOL`, a final help flag
+uses the live schema: an explicit projected `help` property receives it;
+otherwise Wirecmd renders tool help. Use the prefix form when offline cache
+fallback is needed.
 
 Focused help is readable text. It identifies simple projected flags, the
 original JSON names and types, and properties that need JSON input or a

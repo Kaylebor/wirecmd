@@ -83,6 +83,18 @@ func TestDaemonFocusedHelpAndProjectedCall(t *testing.T) {
 	if code != exitOK || stderr != "" || !strings.Contains(output, "--query") || strings.HasPrefix(output, "{") || output != directOutput {
 		t.Fatalf("daemon tool help: code=%d stderr=%q output=%s", code, stderr, output)
 	}
+	code, output, stderr = invoke(t, []string{"--config", configPath, "helper", "projected", "--help"})
+	if code != exitOK || stderr != "" || output != directOutput {
+		t.Fatalf("daemon suffix tool help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, stderr = invoke(t, []string{"--config", configPath, "helper", "projected", "--query", "ignored", "-h"})
+	if code != exitOK || stderr != "" || output != directOutput {
+		t.Fatalf("daemon suffix tool help after arguments: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, stderr = invoke(t, []string{"--config", configPath, "helper", "projected_help", "--help"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)["help"] != true {
+		t.Fatalf("daemon explicit tool help argument: code=%d stderr=%q output=%s", code, stderr, output)
+	}
 	code, output, stderr = invoke(t, []string{"--config", configPath, "helper", "projected", "--query", "daemon", "--enabled=false", "--", `{"tool_name":"one","toolName":"two"}`})
 	if code != exitOK || stderr != "" {
 		t.Fatalf("daemon projected call: code=%d stderr=%q output=%s", code, stderr, output)

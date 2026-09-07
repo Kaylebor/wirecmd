@@ -109,9 +109,11 @@ reload or daemon restart and requests are never replayed.
 
 Daemon instances are keyed by definition, resolved workspace root, selected
 execution configuration, daemon generation, and sensitive startup identity.
-The private daemon protocol is version 6. Status reports configured definitions,
-selectors, optional implementation metadata, executable, selector matches, and
-already-observed runtime identity and capabilities without starting a process.
+The LSP slice introduced private daemon protocol version 6; the current client
+and daemon use version 7 after the schema-aware trailing-help change. Status
+reports configured definitions, selectors, optional implementation metadata,
+executable, selector matches, and already-observed runtime identity and
+capabilities without starting a process.
 
 ## Errors and qualification
 

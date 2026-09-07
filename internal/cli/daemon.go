@@ -31,7 +31,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 6
+const daemonProtocol = 7
 
 type daemonAdmin struct {
 	command string
@@ -895,7 +895,21 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	} else {
 		arguments := request.Arguments
 		if len(request.Projected) != 0 || request.Overlay != nil {
-			description, appErr := sessionToolProjection(ctx, instance.session, request.Tool)
+			var description, helpDescription toolDescription
+			var appErr *appError
+			if wantsToolHelpFallback(request.Projected, request.Overlay) {
+				definition, findErr := sessionTool(ctx, instance.session, request.Tool)
+				if findErr != nil {
+					appErr = findErr
+				} else {
+					description, appErr = projectionDescription(definition)
+					if appErr == nil && !hasProjectedArgument(description, "help") {
+						helpDescription, appErr = displayDescription(definition, instance.redactor)
+					}
+				}
+			} else {
+				description, appErr = sessionToolProjection(ctx, instance.session, request.Tool)
+			}
 			if appErr != nil {
 				d.noteSDKOperation(instance, appErr)
 				return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
@@ -905,6 +919,12 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 			}
 			if cachedDescription, cacheErr := redactedToolMetadata(description, instance.redactor); cacheErr == nil {
 				_ = mergeProjectedToolMetadata(cached.config, server, request.CWD, cachedDescription)
+			}
+			if wantsToolHelpFallback(request.Projected, request.Overlay) && !hasProjectedArgument(description, "help") {
+				if cacheErr := replaceToolDetailMetadata(cached.config, server, request.CWD, helpDescription); cacheErr != nil {
+					warnings = append(warnings, "MCP tool metadata could not be cached; offline focused help may be unavailable")
+				}
+				return resultReply(helpResponse{Kind: toolHelp, Server: server.Name, Tool: helpDescription}, warnings)
 			}
 			arguments, appErr = resolveProjectedArguments(description, request.Projected, request.Overlay)
 			if appErr != nil {

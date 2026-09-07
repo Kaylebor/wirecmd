@@ -94,13 +94,20 @@ func TestTrailingNativeHelpIsOfflineAndSideEffectFree(t *testing.T) {
 	}
 }
 
-func TestTrailingToolHelpRemainsProjectedToolInput(t *testing.T) {
+func TestTrailingToolHelpRemainsLiveSchemaInput(t *testing.T) {
 	positionals, opts, appErr, handled := normalizeTrailingHelp([]string{"memory", "search", "--help"}, options{})
 	if handled || appErr != nil || opts.help {
 		t.Fatalf("tool suffix normalized unexpectedly: %v, %#v, %#v, handled=%v", positionals, opts, appErr, handled)
 	}
 	request, requestErr := parseRequest(positionals, opts, nil)
 	if requestErr != nil || request.operation != callTool || len(request.projected) != 1 || request.projected[0].Name != "help" {
+		t.Fatalf("parseRequest = %#v, %#v; want live-schema help argument", request, requestErr)
+	}
+}
+
+func TestShortTrailingToolHelpUsesHelpProjection(t *testing.T) {
+	request, requestErr := parseRequest([]string{"memory", "search", "--query", "value", "-h"}, options{}, nil)
+	if requestErr != nil || request.operation != callTool || len(request.projected) != 2 || request.projected[1].Name != "help" {
 		t.Fatalf("parseRequest = %#v, %#v; want projected help argument", request, requestErr)
 	}
 }

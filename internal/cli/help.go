@@ -97,62 +97,109 @@ func directToolDescription(ctx context.Context, target connectionTarget, tool st
 	return sessionToolDescription(ctx, session, tool, redactor)
 }
 
-func directProjectedCall(ctx context.Context, target connectionTarget, tool string, projected []projectedArgument, overlay map[string]any, redactor *redactor) (toolResult, toolDescription, *appError) {
+func directProjectedCall(ctx context.Context, target connectionTarget, tool string, projected []projectedArgument, overlay map[string]any, redactor *redactor) (toolResult, toolDescription, bool, *appError) {
 	session, appErr := connectTarget(ctx, target, redactor)
 	if appErr != nil {
-		return toolResult{}, toolDescription{}, appErr
+		return toolResult{}, toolDescription{}, false, appErr
 	}
 	defer session.Close()
-	description, appErr := sessionToolProjection(ctx, session, tool)
+	var description, display toolDescription
+	if wantsToolHelpFallback(projected, overlay) {
+		definition, findErr := sessionTool(ctx, session, tool)
+		if findErr != nil {
+			return toolResult{}, toolDescription{}, false, findErr
+		}
+		description, appErr = projectionDescription(definition)
+		if appErr == nil && !hasProjectedArgument(description, "help") {
+			display, appErr = displayDescription(definition, redactor)
+		}
+	} else {
+		description, appErr = sessionToolProjection(ctx, session, tool)
+	}
 	if appErr != nil {
-		return toolResult{}, toolDescription{}, appErr
+		return toolResult{}, toolDescription{}, false, appErr
+	}
+	if wantsToolHelpFallback(projected, overlay) && !hasProjectedArgument(description, "help") {
+		return toolResult{}, display, true, nil
 	}
 	arguments, appErr := resolveProjectedArguments(description, projected, overlay)
 	if appErr != nil {
-		return toolResult{}, description, appErr
+		return toolResult{}, description, false, appErr
 	}
 	result, appErr := sessionCall(ctx, session, tool, arguments, redactor)
-	return result, description, appErr
+	return result, description, false, appErr
+}
+
+func wantsToolHelpFallback(projected []projectedArgument, overlay map[string]any) bool {
+	if len(projected) == 0 || overlay != nil {
+		return false
+	}
+	last := projected[len(projected)-1]
+	return last.Name == "help" && !last.ValueSet
+}
+
+func hasProjectedArgument(description toolDescription, name string) bool {
+	properties, safe := toolProperties(description)
+	if !safe {
+		return false
+	}
+	for _, property := range properties {
+		if property.Projectable && property.Flag == name {
+			return true
+		}
+	}
+	return false
 }
 
 // sessionToolProjection deliberately retains the upstream spelling privately.
 // Presentation always uses sessionToolDescription, which redacts display data.
 func sessionToolProjection(ctx context.Context, session *mcp.ClientSession, name string) (toolDescription, *appError) {
-	for tool, err := range session.Tools(ctx, nil) {
-		if err != nil {
-			return toolDescription{}, mcpOperationError(err, "tool_list_failed")
-		}
-		if tool.Name != name {
-			continue
-		}
-		input, err := canonicalSchema(tool.InputSchema)
-		if err != nil {
-			return toolDescription{}, protocolError("tool_schema_invalid", err.Error(), "use the exact JSON invocation path or check the upstream tool schema")
-		}
-		return toolDescription{Name: tool.Name, InputSchema: input}, nil
+	tool, appErr := sessionTool(ctx, session, name)
+	if appErr != nil {
+		return toolDescription{}, appErr
 	}
-	return toolDescription{}, protocolError("tool_not_found", fmt.Sprintf("server did not advertise tool %q", name), "list the server tools and choose an advertised name")
+	return projectionDescription(tool)
 }
 
 func sessionToolDescription(ctx context.Context, session *mcp.ClientSession, name string, redactor *redactor) (toolDescription, *appError) {
+	tool, appErr := sessionTool(ctx, session, name)
+	if appErr != nil {
+		return toolDescription{}, appErr
+	}
+	return displayDescription(tool, redactor)
+}
+
+func sessionTool(ctx context.Context, session *mcp.ClientSession, name string) (*mcp.Tool, *appError) {
 	for tool, err := range session.Tools(ctx, nil) {
 		if err != nil {
-			return toolDescription{}, mcpOperationError(err, "tool_list_failed")
+			return nil, mcpOperationError(err, "tool_list_failed")
 		}
 		if tool.Name != name {
 			continue
 		}
-		input, err := redactedSchema(tool.InputSchema, redactor)
-		if err != nil {
-			return toolDescription{}, protocolError("tool_schema_invalid", err.Error(), "use the exact JSON invocation path or check the upstream tool schema")
-		}
-		output, err := redactedSchema(tool.OutputSchema, redactor)
-		if err != nil {
-			return toolDescription{}, protocolError("tool_schema_invalid", err.Error(), "use the exact JSON invocation path or check the upstream tool schema")
-		}
-		return toolDescription{Name: redactor.Redact(tool.Name), Title: redactor.Redact(tool.Title), Description: redactor.Redact(tool.Description), InputSchema: input, OutputSchema: output}, nil
+		return tool, nil
 	}
-	return toolDescription{}, protocolError("tool_not_found", fmt.Sprintf("server did not advertise tool %q", name), "list the server tools and choose an advertised name")
+	return nil, protocolError("tool_not_found", fmt.Sprintf("server did not advertise tool %q", name), "list the server tools and choose an advertised name")
+}
+
+func projectionDescription(tool *mcp.Tool) (toolDescription, *appError) {
+	input, err := canonicalSchema(tool.InputSchema)
+	if err != nil {
+		return toolDescription{}, protocolError("tool_schema_invalid", err.Error(), "use the exact JSON invocation path or check the upstream tool schema")
+	}
+	return toolDescription{Name: tool.Name, InputSchema: input}, nil
+}
+
+func displayDescription(tool *mcp.Tool, redactor *redactor) (toolDescription, *appError) {
+	input, err := redactedSchema(tool.InputSchema, redactor)
+	if err != nil {
+		return toolDescription{}, protocolError("tool_schema_invalid", err.Error(), "use the exact JSON invocation path or check the upstream tool schema")
+	}
+	output, err := redactedSchema(tool.OutputSchema, redactor)
+	if err != nil {
+		return toolDescription{}, protocolError("tool_schema_invalid", err.Error(), "use the exact JSON invocation path or check the upstream tool schema")
+	}
+	return toolDescription{Name: redactor.Redact(tool.Name), Title: redactor.Redact(tool.Title), Description: redactor.Redact(tool.Description), InputSchema: input, OutputSchema: output}, nil
 }
 
 func redactedSchema(schema any, redactor *redactor) (json.RawMessage, error) {
@@ -386,6 +433,7 @@ Static help (offline: wirecmd --help daemon|config|auth|lsp):
 Focused help:
   wirecmd [client flags] --help SERVER [TOOL]
   wirecmd [client flags] SERVER --help
+  wirecmd [client flags] SERVER TOOL --help
   wirecmd [client flags] --help -- SERVER [TOOL]
 The third form forces server help for names such as daemon, config, or auth.
 It also reaches a configured MCP server named lsp; bare lsp is native help.
@@ -393,8 +441,9 @@ When the daemon is offline, exact cached server or tool metadata from a prior
 successful discovery may satisfy focused help. Calls never use that cache.
 
 Conventional trailing help also works for recognized built-in operations, such
-as wirecmd daemon status --help and wirecmd lsp definition --help. A final
---help after SERVER TOOL remains a tool argument.
+as wirecmd daemon status --help and wirecmd lsp definition --help. After SERVER
+TOOL, an explicit projected help property owns a final --help or -h; otherwise
+Wirecmd renders focused help from the live schema.
 
 Tool input examples (use the names and types from focused help):
   wirecmd SERVER TOOL --query 'text'
@@ -655,4 +704,16 @@ func renderDaemonHelp(value any) (any, *appError) {
 	default:
 		return nil, transportError("daemon_response_invalid", "daemon returned an invalid help response", "restart the Wirecmd daemon")
 	}
+}
+
+func isDaemonHelpResponse(value any) bool {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return false
+	}
+	var response helpResponse
+	if err := decodeJSON(encoded, &response); err != nil {
+		return false
+	}
+	return response.Kind == serverHelp || response.Kind == toolHelp
 }

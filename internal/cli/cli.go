@@ -293,10 +293,13 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		daemonRequest.Interactive = isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
 		daemonClient.event = browserEventHandler(errOut, daemonEventRedactor(server, secrets, errOut))
 		result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequest, errOut)
-		if appErr != nil || req.help == noHelp {
+		if appErr != nil {
 			return result, appErr
 		}
-		return renderDaemonHelp(result)
+		if req.help != noHelp || (wantsToolHelpFallback(req.projected, req.overlay) && isDaemonHelpResponse(result)) {
+			return renderDaemonHelp(result)
+		}
+		return result, nil
 	}
 
 	target, secrets, targetErr := makeTarget(server, cfg.Root, cwd, os.LookupEnv)
@@ -345,7 +348,13 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	}
 	arguments := req.arguments
 	if len(req.projected) != 0 || req.overlay != nil {
-		call, description, runErr := directProjectedCall(ctx, target, req.tool, req.projected, req.overlay, redactor)
+		call, description, showHelp, runErr := directProjectedCall(ctx, target, req.tool, req.projected, req.overlay, redactor)
+		if showHelp {
+			if cacheErr := replaceToolDetailMetadata(cfg, server, cwd, description); cacheErr != nil {
+				warnToolMetadataCache(errOut)
+			}
+			return helpText(renderToolHelp(server.Name, description)), nil
+		}
 		if description.Name != "" {
 			cachedDescription, cacheErr := redactedToolMetadata(description, redactor)
 			if cacheErr == nil {
@@ -523,7 +532,12 @@ func parseRequest(positionals []string, opts options, in io.Reader) (request, *a
 		if opts.jsonSet || opts.stdin {
 			return request{}, invocationError("input_with_projected_arguments", "--json and --stdin cannot be combined with projected tool arguments", "choose either exact JSON input or projected arguments")
 		}
-		projected, overlay, err := parseProjectedSuffix(positionals[2:])
+		suffix := positionals[2:]
+		if len(suffix) != 0 && suffix[len(suffix)-1] == "-h" {
+			suffix = append([]string(nil), suffix...)
+			suffix[len(suffix)-1] = "--help"
+		}
+		projected, overlay, err := parseProjectedSuffix(suffix)
 		if err != nil {
 			return request{}, err
 		}
