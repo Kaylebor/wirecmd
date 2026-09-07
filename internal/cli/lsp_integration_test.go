@@ -98,15 +98,24 @@ func TestLSPDefinitionUsesTrustedWorkspaceComposition(t *testing.T) {
 	}
 	writeSource(t, global, "wirecmd {\nlsp \"fixture\" {\nselector language-id=\"fixture\"\n}\n}\n")
 	writeSource(t, filepath.Join(workspace, "wirecmd.kdl"), fmt.Sprintf("wirecmd {\nroot \".\"\nlsp \"fixture\" {\nstdio %s {\narg \"-test.run=TestCLILSPHelperProcess\"\n}\n}\n}\n", strconv.Quote(os.Args[0])))
-	if code, output, _ := invoke(t, []string{"config", "trust", workspace}); code != exitOK {
+	alias := filepath.Join(t.TempDir(), "workspace-alias")
+	if err := os.Symlink(workspace, alias); err != nil {
+		t.Fatal(err)
+	}
+	if code, output, _ := invoke(t, []string{"config", "trust", alias}); code != exitOK {
 		t.Fatalf("trust: code=%d output=%s", code, output)
 	}
-	t.Chdir(workspace)
+	t.Setenv("PWD", alias)
+	t.Chdir(alias)
+	canonicalWorkspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
 	code, output, stderr := invoke(t, []string{"--direct", "lsp", "definition", "--file", "input.go", "--line", "1", "--column", "2"})
 	if code != exitOK || stderr != "" {
 		t.Fatalf("discovered definition: code=%d stdout=%s stderr=%q", code, output, stderr)
 	}
-	if decodeOutput(t, output)["lsp"].(map[string]any)["file"] != input {
+	if decodeOutput(t, output)["lsp"].(map[string]any)["file"] != filepath.Join(canonicalWorkspace, "input.go") {
 		t.Fatalf("output = %s", output)
 	}
 }

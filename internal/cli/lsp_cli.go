@@ -250,6 +250,15 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 	if appErr != nil {
 		return nil, appErr
 	}
+	// Discovery resolves trusted workspaces through symlinks. Keep the caller
+	// path in that same identity space so macOS aliases such as /var and
+	// /private/var cannot make an in-workspace file appear to be outside root.
+	if discovered {
+		cwd, err = filepath.EvalSymlinks(cwd)
+		if err != nil {
+			return nil, transportError("caller_cwd_unavailable", err.Error(), "run Wirecmd from an accessible working directory")
+		}
+	}
 	var client *daemonClient
 	if !opts.direct {
 		client, appErr = openDaemonClient(ctx)
