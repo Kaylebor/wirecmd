@@ -862,19 +862,22 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	}
 	var result any
 	if request.Operation == listTools {
-		tools, appErr := sessionTools(ctx, instance.session, instance.redactor)
+		catalog, appErr := sessionToolCatalog(ctx, instance.session, instance.redactor)
 		if appErr != nil {
 			d.noteSDKOperation(instance, appErr)
 			return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
+		}
+		if cacheErr := replaceToolMetadata(cached.config, server, request.CWD, catalog); cacheErr != nil && request.Help != noHelp {
+			warnings = append(warnings, "MCP tool metadata could not be cached; offline focused help may be unavailable")
 		}
 		instance.toolsPrimed = true
 		if ctx.Err() != nil {
 			return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
 		}
 		if request.Help == serverHelp {
-			result = helpResponse{Kind: serverHelp, Server: server.Name, Tools: tools}
+			result = helpResponse{Kind: serverHelp, Server: server.Name, Tools: catalog.summaries}
 		} else {
-			result = toolsEnvelope{OK: true, Server: server.Name, Tools: tools}
+			result = toolsEnvelope{OK: true, Server: server.Name, Tools: catalog.summaries}
 		}
 	} else if request.Operation == inspectTool {
 		description, appErr := sessionToolDescription(ctx, instance.session, request.Tool, instance.redactor)
@@ -884,6 +887,9 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 		}
 		if ctx.Err() != nil {
 			return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
+		}
+		if cacheErr := replaceToolDetailMetadata(cached.config, server, request.CWD, description); cacheErr != nil {
+			warnings = append(warnings, "MCP tool metadata could not be cached; offline focused help may be unavailable")
 		}
 		result = helpResponse{Kind: toolHelp, Server: server.Name, Tool: description}
 	} else {
@@ -897,16 +903,21 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 			if ctx.Err() != nil {
 				return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
 			}
+			if cachedDescription, cacheErr := redactedToolMetadata(description, instance.redactor); cacheErr == nil {
+				_ = mergeProjectedToolMetadata(cached.config, server, request.CWD, cachedDescription)
+			}
 			arguments, appErr = resolveProjectedArguments(description, request.Projected, request.Overlay)
 			if appErr != nil {
 				return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
 			}
 		}
 		if instance.breakOnRequestCancel && !instance.toolsPrimed {
-			if appErr := primeSessionTools(ctx, instance.session); appErr != nil {
+			catalog, appErr := primeSessionTools(ctx, instance.session, instance.redactor)
+			if appErr != nil {
 				d.noteSDKOperation(instance, appErr)
 				return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
 			}
+			_ = replaceToolMetadata(cached.config, server, request.CWD, catalog)
 			instance.toolsPrimed = true
 		}
 		if ctx.Err() != nil {

@@ -129,6 +129,11 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	if parseErr != nil {
 		return nil, invocationError("invalid_flags", parseErr.Error(), "place Wirecmd flags before the server and tool names")
 	}
+	var suffixErr *appError
+	positionals, opts, suffixErr, _ = normalizeTrailingHelp(positionals, opts)
+	if suffixErr != nil {
+		return nil, suffixErr
+	}
 	if opts.version {
 		if opts.direct || len(opts.configs) != 0 || opts.jsonSet || opts.stdin || opts.help || opts.formatSet || opts.colorSet || len(positionals) != 0 {
 			return nil, invocationError("version_usage", "--version must be used by itself", "run wirecmd --version")
@@ -224,13 +229,15 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	// Besides failing clearly when it is unavailable, this makes normal-mode
 	// configuration evaluation conditional on a compatible lifecycle broker.
 	var daemonClient *daemonClient
+	var daemonOpenErr *appError
 	if !opts.direct {
-		var appErr *appError
-		daemonClient, appErr = openDaemonClient(ctx)
-		if appErr != nil {
-			return nil, appErr
+		daemonClient, daemonOpenErr = openDaemonClient(ctx)
+		if daemonOpenErr != nil && (req.help == noHelp || daemonOpenErr.code != "daemon_unavailable") {
+			return nil, daemonOpenErr
 		}
-		defer daemonClient.Close()
+		if daemonClient != nil {
+			defer daemonClient.Close()
+		}
 	}
 	var cfg *config.Config
 	if discovered {
@@ -268,6 +275,19 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		return runDirectAuth(ctx, authAdmin, server, cfg.Root, cwd, in, errOut)
 	}
 	if !opts.direct {
+		if daemonClient == nil {
+			secrets := selectedSecretInputs(server, os.LookupEnv)
+			if appErr := validateSecretInputs(server, secrets); appErr != nil {
+				return nil, appErr
+			}
+			if _, _, appErr := makeTarget(server, cfg.Root, cwd, os.LookupEnv); appErr != nil {
+				return nil, appErr
+			}
+			if cached, ok := cachedFocusedHelp(cfg, server, cwd, req); ok {
+				return cached, nil
+			}
+			return nil, daemonOpenErr
+		}
 		secrets := selectedSecretInputs(server, os.LookupEnv)
 		daemonRequest := daemonRequestFromConfig(req, cfg, cwd, configPaths, discovered, secrets)
 		daemonRequest.Interactive = isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
@@ -301,31 +321,46 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	}
 	defer redactor.FlushTo(errOut)
 	if req.operation == listTools {
-		tools, runErr := directTools(ctx, target, redactor)
+		catalog, runErr := directToolCatalog(ctx, target, redactor)
 		if runErr != nil {
 			return nil, runErr.redacted(redactor)
 		}
-		if req.help == serverHelp {
-			return helpText(renderServerHelp(server.Name, tools)), nil
+		if cacheErr := replaceToolMetadata(cfg, server, cwd, catalog); cacheErr != nil && req.help != noHelp {
+			warnToolMetadataCache(errOut)
 		}
-		return toolsEnvelope{OK: true, Server: server.Name, Tools: tools}, nil
+		if req.help == serverHelp {
+			return helpText(renderServerHelp(server.Name, catalog.summaries)), nil
+		}
+		return toolsEnvelope{OK: true, Server: server.Name, Tools: catalog.summaries}, nil
 	}
 	if req.operation == inspectTool {
 		description, runErr := directToolDescription(ctx, target, req.tool, redactor)
 		if runErr != nil {
 			return nil, runErr.redacted(redactor)
 		}
+		if cacheErr := replaceToolDetailMetadata(cfg, server, cwd, description); cacheErr != nil {
+			warnToolMetadataCache(errOut)
+		}
 		return helpText(renderToolHelp(server.Name, description)), nil
 	}
 	arguments := req.arguments
 	if len(req.projected) != 0 || req.overlay != nil {
-		call, runErr := directProjectedCall(ctx, target, req.tool, req.projected, req.overlay, redactor)
+		call, description, runErr := directProjectedCall(ctx, target, req.tool, req.projected, req.overlay, redactor)
+		if description.Name != "" {
+			cachedDescription, cacheErr := redactedToolMetadata(description, redactor)
+			if cacheErr == nil {
+				_ = mergeProjectedToolMetadata(cfg, server, cwd, cachedDescription)
+			}
+		}
 		if runErr != nil {
 			return nil, runErr.redacted(redactor)
 		}
 		return callEnvelope{OK: true, Server: server.Name, Tool: req.tool, Result: call}, nil
 	}
-	call, runErr := directCall(ctx, target, req.tool, arguments, redactor)
+	call, catalog, runErr := directCall(ctx, target, req.tool, arguments, redactor)
+	if catalog != nil {
+		_ = replaceToolMetadata(cfg, server, cwd, *catalog)
+	}
 	if runErr != nil {
 		return nil, runErr.redacted(redactor)
 	}
@@ -785,50 +820,65 @@ func resolveRoot(root config.Root) string {
 }
 
 func directTools(ctx context.Context, target connectionTarget, redactor *redactor) ([]toolSummary, *appError) {
+	catalog, appErr := directToolCatalog(ctx, target, redactor)
+	return catalog.summaries, appErr
+}
+
+func directToolCatalog(ctx context.Context, target connectionTarget, redactor *redactor) (discoveredToolCatalog, *appError) {
 	session, err := connectTarget(ctx, target, redactor)
 	if err != nil {
-		return nil, err
+		return discoveredToolCatalog{}, err
 	}
 	defer session.Close()
-	return sessionTools(ctx, session, redactor)
+	return sessionToolCatalog(ctx, session, redactor)
 }
 
 func sessionTools(ctx context.Context, session *mcp.ClientSession, redactor *redactor) ([]toolSummary, *appError) {
-	var tools []toolSummary
-	for tool, err := range session.Tools(ctx, nil) {
-		if err != nil {
-			return nil, mcpOperationError(err, "tool_list_failed")
-		}
-		tools = append(tools, toolSummary{Name: redactor.Redact(tool.Name), Title: redactor.Redact(tool.Title), Description: redactor.Redact(tool.Description)})
-	}
-	sort.Slice(tools, func(i, j int) bool { return tools[i].Name < tools[j].Name })
-	return tools, nil
+	catalog, appErr := sessionToolCatalog(ctx, session, redactor)
+	return catalog.summaries, appErr
 }
 
-func directCall(ctx context.Context, target connectionTarget, tool string, arguments map[string]any, redactor *redactor) (toolResult, *appError) {
-	session, err := connectTarget(ctx, target, redactor)
-	if err != nil {
-		return toolResult{}, err
-	}
-	defer session.Close()
-	if target.requiresToolPriming() {
-		if appErr := primeSessionTools(ctx, session); appErr != nil {
-			return toolResult{}, appErr
+func sessionToolCatalog(ctx context.Context, session *mcp.ClientSession, redactor *redactor) (discoveredToolCatalog, *appError) {
+	catalog := discoveredToolCatalog{details: map[string]toolDescription{}}
+	for tool, err := range session.Tools(ctx, nil) {
+		if err != nil {
+			return discoveredToolCatalog{}, mcpOperationError(err, "tool_list_failed")
+		}
+		summary := toolSummary{Name: redactor.Redact(tool.Name), Title: redactor.Redact(tool.Title), Description: redactor.Redact(tool.Description)}
+		catalog.summaries = append(catalog.summaries, summary)
+		input, inputErr := redactedSchema(tool.InputSchema, redactor)
+		output, outputErr := redactedSchema(tool.OutputSchema, redactor)
+		if inputErr == nil && outputErr == nil {
+			catalog.details[summary.Name] = toolDescription{Name: summary.Name, Title: summary.Title, Description: summary.Description, InputSchema: input, OutputSchema: output}
 		}
 	}
-	return sessionCall(ctx, session, tool, arguments, redactor)
+	sort.Slice(catalog.summaries, func(i, j int) bool { return catalog.summaries[i].Name < catalog.summaries[j].Name })
+	return catalog, nil
+}
+
+func directCall(ctx context.Context, target connectionTarget, tool string, arguments map[string]any, redactor *redactor) (toolResult, *discoveredToolCatalog, *appError) {
+	session, err := connectTarget(ctx, target, redactor)
+	if err != nil {
+		return toolResult{}, nil, err
+	}
+	defer session.Close()
+	var catalog *discoveredToolCatalog
+	if target.requiresToolPriming() {
+		discovered, appErr := primeSessionTools(ctx, session, redactor)
+		if appErr != nil {
+			return toolResult{}, nil, appErr
+		}
+		catalog = &discovered
+	}
+	result, appErr := sessionCall(ctx, session, tool, arguments, redactor)
+	return result, catalog, appErr
 }
 
 // primeSessionTools lets the SDK populate its private schema cache before an
 // HTTP call. The SDK uses that cache for transport behavior such as
 // x-mcp-header; Wirecmd deliberately does not reproduce that logic.
-func primeSessionTools(ctx context.Context, session *mcp.ClientSession) *appError {
-	for _, err := range session.Tools(ctx, nil) {
-		if err != nil {
-			return mcpOperationError(err, "tool_list_failed")
-		}
-	}
-	return nil
+func primeSessionTools(ctx context.Context, session *mcp.ClientSession, redactor *redactor) (discoveredToolCatalog, *appError) {
+	return sessionToolCatalog(ctx, session, redactor)
 }
 
 func sessionCall(ctx context.Context, session *mcp.ClientSession, tool string, arguments map[string]any, redactor *redactor) (toolResult, *appError) {

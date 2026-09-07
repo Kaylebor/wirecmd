@@ -189,6 +189,11 @@ For servers named daemon/config/auth, use `wirecmd --help -- SERVER [TOOL]`
 to bypass administrative help. Only the prefix separator selects help scope;
 the later tool-side separator remains the raw argument overlay.
 
+`wirecmd SERVER --help` is equivalent to server help and may use previously
+discovered metadata when the daemon is offline. Native and administrative
+commands accept a final `--help` or `-h`. Keep tool help in the prefix form:
+tokens after `SERVER TOOL`, including `--help`, belong to the tool.
+
 Focused help is readable text. It identifies simple projected flags, the
 original JSON names and types, and properties that need JSON input or a
 fallback path.

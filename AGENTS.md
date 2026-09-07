@@ -7,6 +7,9 @@
   completion. Completion must remain local, read-only, secret-free and must not
   contact the daemon or upstream servers. Prefix `--help --` selects server help;
   tool-side `--` retains raw-overlay ownership.
+- `docs/help-metadata-plan.md` defines conventional suffix help and the private
+  persistent MCP metadata cache. It supersedes the onboarding milestone's
+  no-cache wording without expanding dynamic completion.
 - `docs/product-thesis.md` is authoritative for product direction and scope.
 - `docs/output-plan.md` is authoritative for contextual presentation and color;
   it supersedes earlier milestones' always-JSON presentation wording.

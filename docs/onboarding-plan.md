@@ -39,12 +39,14 @@ ordinary result envelopes. The helper uses existing read-only discovery and
 composition, never daemon IPC, MCP startup, OAuth, secret resolution or state
 writes. Completion skips non-regular config paths (such as FIFOs) rather than
 waiting for stream input; ordinary explicit-config loading is unchanged.
-No cache, dependency or generic completion framework is introduced.
+That completed onboarding milestone introduced no cache, dependency, or
+generic completion framework. The later persistent help metadata contract is
+defined by [the help metadata plan](help-metadata-plan.md).
 
 Disk configuration may differ from daemon-cached configuration until reload.
-Dynamic upstream completion and Bash/Zsh support remain deferred. No command
-cache, refresh policy, or additional edge-case machinery is part of this
-milestone.
+Dynamic upstream completion and Bash/Zsh support remain deferred. Fish
+completion remains server-only; persisted MCP metadata is currently consumed
+only by focused-help fallback.
 
 ## Acceptance
 

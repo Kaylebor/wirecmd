@@ -97,21 +97,22 @@ func directToolDescription(ctx context.Context, target connectionTarget, tool st
 	return sessionToolDescription(ctx, session, tool, redactor)
 }
 
-func directProjectedCall(ctx context.Context, target connectionTarget, tool string, projected []projectedArgument, overlay map[string]any, redactor *redactor) (toolResult, *appError) {
+func directProjectedCall(ctx context.Context, target connectionTarget, tool string, projected []projectedArgument, overlay map[string]any, redactor *redactor) (toolResult, toolDescription, *appError) {
 	session, appErr := connectTarget(ctx, target, redactor)
 	if appErr != nil {
-		return toolResult{}, appErr
+		return toolResult{}, toolDescription{}, appErr
 	}
 	defer session.Close()
 	description, appErr := sessionToolProjection(ctx, session, tool)
 	if appErr != nil {
-		return toolResult{}, appErr
+		return toolResult{}, toolDescription{}, appErr
 	}
 	arguments, appErr := resolveProjectedArguments(description, projected, overlay)
 	if appErr != nil {
-		return toolResult{}, appErr
+		return toolResult{}, description, appErr
 	}
-	return sessionCall(ctx, session, tool, arguments, redactor)
+	result, appErr := sessionCall(ctx, session, tool, arguments, redactor)
+	return result, description, appErr
 }
 
 // sessionToolProjection deliberately retains the upstream spelling privately.
@@ -350,6 +351,7 @@ Start here:
   wirecmd daemon run                 keep running in a separate terminal
   wirecmd                            list configured servers
   wirecmd SERVER                     list that server's tools
+  wirecmd SERVER --help              inspect a server (trailing help also works)
   wirecmd --help SERVER TOOL          inspect arguments before calling
   wirecmd lsp definition --file PATH --line N --column N
   wirecmd lsp status [--file PATH]
@@ -383,9 +385,16 @@ Static help (offline: wirecmd --help daemon|config|auth|lsp):
 
 Focused help:
   wirecmd [client flags] --help SERVER [TOOL]
+  wirecmd [client flags] SERVER --help
   wirecmd [client flags] --help -- SERVER [TOOL]
-The second form forces server help for names such as daemon, config, or auth.
+The third form forces server help for names such as daemon, config, or auth.
 It also reaches a configured MCP server named lsp; bare lsp is native help.
+When the daemon is offline, exact cached server or tool metadata from a prior
+successful discovery may satisfy focused help. Calls never use that cache.
+
+Conventional trailing help also works for recognized built-in operations, such
+as wirecmd daemon status --help and wirecmd lsp definition --help. A final
+--help after SERVER TOOL remains a tool argument.
 
 Tool input examples (use the names and types from focused help):
   wirecmd SERVER TOOL --query 'text'

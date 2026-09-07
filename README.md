@@ -28,10 +28,10 @@ integration or eager injection of every configured tool schema.
 
 The canonical Go module is `github.com/Kaylebor/wirecmd`. Build the current
 source checkout with Go 1.26 or newer. The latest published prerelease verified
-on 2026-09-07 is `v0.1.0-alpha.6`; install it with:
+on 2026-09-07 is `v0.1.0-alpha.7`; install it with:
 
 ```sh
-go install github.com/Kaylebor/wirecmd@v0.1.0-alpha.6
+go install github.com/Kaylebor/wirecmd@v0.1.0-alpha.7
 ```
 
 Until the repository is public, installation also requires authenticated
@@ -215,6 +215,12 @@ compact newline-terminated JSON. Override presentation with prefix flags:
 wirecmd --format pretty --color never daemon status
 wirecmd --format json --color never SERVER TOOL
 ```
+
+Configured servers also accept `wirecmd SERVER --help`. Successful live tool
+discovery refreshes private metadata used for focused help when the daemon is
+offline. Cached metadata never validates or executes a call. Everything after
+an MCP tool name still belongs to that tool, so use `wirecmd --help SERVER TOOL`
+for tool help rather than `wirecmd SERVER TOOL --help`.
 
 `--format auto|json|pretty` and `--color auto|always|never` default to `auto`.
 `--colour` is an exact alias; the last supplied setting wins. Automatic color
