@@ -64,7 +64,7 @@ an installed stdio MCP server executable and its actual arguments:
 
 ```kdl
 wirecmd {
-    server "local" {
+    mcp "local" {
         scope "workspace"
         stdio "/absolute/path/to/mcp-server" {
             arg "--server-option"
@@ -151,32 +151,34 @@ administration, use `wirecmd --help -- daemon [TOOL]` (likewise `config` or
 `auth`). This prefix separator is distinct from the tool-side `--` raw JSON
 overlay.
 
-## Native LSP definition
+## Native LSP navigation
 
-Wirecmd also provides one native, workspace-scoped definition lookup through a
-configured Language Server Protocol process. It does not supply language
-servers, infer executables, or maintain a language catalog. Configure the
-actual server command and its language ID alongside MCP servers:
+Wirecmd also provides native, workspace-scoped navigation through configured
+Language Server Protocol processes. It does not supply language servers, infer
+executables, or maintain a language catalog. Configure the actual command and
+one or more selectors alongside MCP sources:
 
 ```kdl
 wirecmd {
     root "."
 
     lsp "primary" {
-        scope "workspace"
-        language-id "your-language-id"
-        stdio "/absolute/path/to/your-language-server" {
+        implementation-id "optional-stable-metadata"
+        selector language-id="your-language-id"
+        stdio "your-language-server" {
             arg "--server-specific-option"
         }
     }
 }
 ```
 
-The effective workspace must contain exactly one complete `lsp` definition.
-Partial source layers compose using the same named-definition, argv-replacement,
-environment-override, provenance, discovery, and trust rules as MCP stdio
-servers. `initializationOptions`, language presets, and routing between several
-language servers are not supported yet.
+LSP scope defaults to `workspace`; the executable remains user-supplied and
+argv/environment are optional. A selector requires `language-id`; its optional
+`pattern` defaults to `**/*` and is matched relative to the workspace root.
+Multiple definitions may match one file and are queried concurrently. Partial
+source layers compose using the same named-definition, selector replacement,
+argv-replacement, environment-override, provenance, discovery, and trust rules
+as MCP sources.
 
 Start the daemon as usual, then use static help or query a disk-backed file:
 
@@ -184,14 +186,21 @@ Start the daemon as usual, then use static help or query a disk-backed file:
 wirecmd --help lsp
 wirecmd --help lsp definition
 wirecmd lsp definition --file ./main.go --line 21 --column 13
+wirecmd lsp references --file ./main.go --line 21 --column 13
+wirecmd lsp status --file ./main.go
 ```
 
-Line and column are one-based. Results contain zero or more one-based file
-locations. The daemon retains the configured LSP session; `--direct` starts a
-one-shot session. The bare `lsp` form is native help, but an MCP server named
-`lsp` remains available via `--json`, `--stdin`, an exact-call object, or
-`wirecmd --help -- lsp [TOOL]`. See the [LSP plan](docs/lsp-plan.md) for the
-complete contract and current qualification boundary.
+Available navigation operations are `definition`, `declaration`,
+`type-definition`, `implementation`, and `references`; references exclude the
+declaration unless `--include-declaration` is supplied. Line and column are
+one-based. Results contain provider-attributed, one-based file locations and
+structured provider outcomes when a matching provider fails. The daemon
+retains each configured LSP session; `--direct` starts one-shot sessions.
+`lsp status` reports configured selectors and already-observed runtime identity
+without starting a process. The bare `lsp` form is native help, but an MCP
+server named `lsp` remains available via `--json`, `--stdin`, an exact-call
+object, or `wirecmd --help -- lsp [TOOL]`. See the [LSP plan](docs/lsp-plan.md)
+for the complete contract and qualification boundary.
 
 ## Invocation and output
 
@@ -238,7 +247,7 @@ endpoint. They are mutually exclusive in an effective server definition:
 
 ```kdl
 wirecmd {
-    server "remote" {
+    mcp "remote" {
         scope "workspace"
         http "https://example.test/mcp"
     }
@@ -275,7 +284,7 @@ registration is automatic. A preregistered client can be supplied when a
 provider requires one:
 
 ```kdl
-server "remote" {
+mcp "remote" {
     scope "workspace"
     http "https://example.test/mcp" {
         oauth {
@@ -334,10 +343,11 @@ non-interactive caller to perform login from a local interactive terminal.
 - `workspace_untrusted`: review the configuration, then run the exact trust
   command from the error's action field.
 - `config_mismatch`: reload the daemon after configuration edits.
-- `lsp_not_configured` or `lsp_ambiguous_configuration`: configure exactly one
-  complete workspace `lsp` definition.
-- `lsp_capability_unavailable`: select an LSP server that supports definition
-  lookup; `lsp_encoding_unsupported` requires UTF-16 support.
+- `lsp_not_configured` or `lsp_no_matching_provider`: configure a workspace
+  `lsp` definition and a matching selector.
+- `lsp_selector_ambiguous`: make matching selectors choose one language ID per
+  provider; `lsp_capability_unavailable` means no matching provider supports
+  the requested operation; `lsp_encoding_unsupported` requires UTF-16 support.
 - Argument errors: read `wirecmd --help SERVER TOOL`; pass complex flag values
   as the value itself, not an object wrapping its property name.
 
@@ -383,7 +393,8 @@ flags, and JSON contents are not completed. Bash/Zsh support is deferred.
 - [OAuth plan](docs/oauth-plan.md) defines the authoritative transparent OAuth
   and encrypted credential-persistence milestone.
 - [LSP plan](docs/lsp-plan.md) defines the completed, real-server-qualified
-  native LSP definition milestone.
+  native LSP definition milestone and the accepted multi-provider navigation
+  roadmap.
 - [Output contract](docs/output-plan.md) defines contextual terminal output,
   explicit machine output, and color policy.
 - [Release readiness](docs/release-readiness.md) defines the authoritative

@@ -10,7 +10,7 @@ of ordinary shell composition.
 
 The shell is the agent-facing capability interface. MCP is the first upstream
 adapter and should normally be invisible outside configuration and diagnostics.
-Native LSP definition lookup is a deliberately narrow local capability, not a
+Native LSP navigation is a deliberately narrow local capability, not a
 language-server catalog or a competing editor client.
 
 ## Problem
@@ -40,12 +40,13 @@ The runtime provides:
 - optional local lifecycle brokering that does not change command semantics.
 - transparent OAuth for protected HTTP sources when an interactive caller
   permits browser authorization, with encrypted local credential persistence.
-- workspace-scoped native LSP definition lookup when the workspace config
-  supplies one compatible language-server process.
+- workspace-scoped native LSP navigation when workspace configuration supplies
+  compatible language-server processes and selectors.
 
-The initial upstream adapter consumes MCP servers. Native LSP definition is the
-one accepted non-MCP slice. Future adapter families are possible only if real
-use demonstrates their value; this does not commit the product to them.
+The initial upstream adapter consumes MCP sources. Native LSP definition lookup
+is the completed first non-MCP slice, and automatic multi-provider navigation
+is the next accepted extension. Future adapter families are possible only if
+real use demonstrates their value; this does not commit the product to them.
 
 ## Interaction principles
 
@@ -153,19 +154,20 @@ between protocol eras does not by itself justify a local adapter or abstraction.
 
 ## Native LSP boundary
 
-The first LSP capability is `wirecmd lsp definition`. Its process command,
-arguments, environment, language ID, and workspace root are entirely
-configuration-owned; Wirecmd does not name, discover, construct, or special-case
-language servers. It provides standard JSON-RPC framing and lifecycle,
-conservative initialization, disk-backed document synchronization, UTF-16
-position conversion, normalized definition locations, retained daemon sessions,
-and actionable errors. The authoritative contract and qualification boundary
-are recorded in the [LSP plan](lsp-plan.md).
+The first LSP capability, `wirecmd lsp definition`, is complete and qualified.
+Its process command, arguments, environment, language ID, and workspace root
+are configuration-owned; Wirecmd does not name, discover, construct, or
+special-case language servers. The accepted next extension adds selector-based
+automatic routing and fan-out for navigation operations, with provider-aware
+structured outcomes and contextual status. It provides standard JSON-RPC
+framing and lifecycle, conservative initialization, disk-backed document
+synchronization, UTF-16 position conversion, normalized locations, retained
+daemon sessions, and actionable errors. The authoritative contract and
+qualification boundaries are recorded in the [LSP plan](lsp-plan.md).
 
-This is not a general LSP client commitment. Multiple-server routing,
-initialization options, unsaved buffers, language-specific behavior, dynamic
-registration, workspace settings, edits, and additional semantic operations
-need their own demonstrated use and deliberate decision.
+This is not a general LSP client commitment. Initialization options, unsaved
+buffers, language-specific behavior, dynamic registration, workspace settings,
+edits, mutating operations, and dynamic completion remain deferred.
 
 ## MVP compatibility direction
 
@@ -194,9 +196,10 @@ surface, with Wirecmd adding only interaction, persistence, daemon
 coordination, redaction, and error mapping.
 
 The native LSP definition implementation completed direct and retained-daemon
-qualification with a configured real server. It remains server-neutral and
-requires exactly one complete workspace definition; `gopls` was only the
-qualification fixture, not a product dependency or default.
+qualification with a configured real server. It remains server-neutral;
+`gopls` was only the qualification fixture, not a product dependency or
+default. The next routing milestone uses configured selectors and may retain
+multiple providers, without changing that boundary.
 
 For this milestone, endpoint values remain structural configuration rather than
 preassembled URL or request strings. `query NAME=value` and `header NAME=value`
@@ -219,8 +222,9 @@ identity so retained instances cannot cross credential boundaries.
   subsystems.
 - Supporting every MCP primitive before validating the agent-facing contract.
 - Designing future non-MCP adapters without a demonstrated consumer.
-- Expanding the native LSP definition slice into a language-server catalog,
-  editor integration, or general LSP client without separate evidence.
+- Expanding native LSP beyond the accepted selector-routed navigation slice
+  into a language-server catalog, editor integration, or general LSP client
+  without separate evidence.
 - Client ID Metadata Documents, device authorization, client credentials,
   provider-side revocation, non-loopback callbacks, multiple accounts per
   identity, and provider-specific OAuth compatibility guards are deferred.

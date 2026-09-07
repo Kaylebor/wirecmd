@@ -1,6 +1,6 @@
-# Native LSP Definition
+# Native LSP Definition and Navigation
 
-Status: completed authoritative milestone; qualified 2026-09-05
+Status: completed definition milestone; next navigation milestone accepted
 
 ## Objective
 
@@ -68,7 +68,7 @@ output with `--format json --color never`.
 
 ## Configuration and execution
 
-An LSP definition is a sibling of MCP `server` definitions in the existing KDL
+An LSP definition is a sibling of MCP `mcp` definitions in the existing KDL
 document:
 
 ```kdl
@@ -149,11 +149,92 @@ observed output, retained-instance status, and tool versions are recorded in
 the non-authoritative [validation evidence](notes/lsp-definition-validation.md).
 The standard test, race, vet, module-verification, build, and diff checks passed.
 
+Earlier validation notes may show the pre-rename KDL collection spelling
+`server`; those historical commands remain unchanged and do not describe the
+current configuration spelling.
+
+## Accepted next milestone: automatic multi-LSP navigation
+
+The next accepted LSP milestone extends the completed definition path to
+automatic routing across multiple configured providers. It remains
+server-neutral: Wirecmd never infers an executable, language ID, file
+extension, launch argument, or language-server catalog entry.
+
+### Configuration and routing
+
+The current KDL collection for MCP sources is `mcp`; the LSP collection remains
+`lsp`. LSP scope defaults to `workspace`, root defaults to the caller CWD as
+before, the stdio executable remains mandatory, and argv/environment remain
+optional. Each effective definition requires one or more selectors:
+
+```kdl
+lsp "primary" {
+    implementation-id "optional-stable-metadata"
+    selector language-id="go"
+
+    stdio "language-server" {
+        arg "server-specific-argument"
+    }
+}
+```
+
+`selector` requires `language-id`; its optional `pattern` defaults to `**/*`.
+Selectors use OR semantics. A non-empty stronger selector collection replaces
+the inherited collection. Patterns are validated and matched with
+`github.com/bmatcuk/doublestar/v4` against slash-normalized paths relative to
+the effective workspace root. Conflicting language IDs for one definition and
+file return `lsp_selector_ambiguous`; files outside the workspace or matching
+no provider return `lsp_no_matching_provider`.
+
+Every matching definition is acquired, initialized, and filtered by its
+negotiated capability. Capable providers are queried concurrently; results are
+flattened in configured provider order, preserving each provider's result
+order and duplicates. Each location carries its provider name. A successful
+provider, including one returning no locations, is enough for overall success.
+Other provider failures are represented in ordered structured provider
+outcomes and set `partial: true`; they do not produce noisy client stderr
+warnings. If every capable provider fails, the first configured failure is the
+top-level error with all provider outcomes attached. Matching providers with no
+advertised capability return `lsp_capability_unavailable`.
+
+### Navigation and status commands
+
+The routed navigation surface is:
+
+```text
+wirecmd lsp definition --file PATH --line N --column N
+wirecmd lsp declaration --file PATH --line N --column N
+wirecmd lsp type-definition --file PATH --line N --column N
+wirecmd lsp implementation --file PATH --line N --column N
+wirecmd lsp references --file PATH --line N --column N
+wirecmd lsp references --include-declaration --file PATH --line N --column N
+wirecmd lsp status [--file PATH]
+```
+
+`references` excludes declaration locations by default. `lsp status` reports
+all configured definitions, selectors, optional `implementation-id`,
+executable, and observed runtime identity/capabilities without starting an
+LSP. Normal status requires the daemon; `--direct` reports configuration only.
+With `--file`, status also reports selector matches and the chosen language
+IDs.
+
+The private daemon protocol is bumped for this contract. Each definition,
+workspace, execution identity, and generation retains one serialized session;
+distinct providers may run concurrently. Reload and broken-session behavior
+remain unchanged.
+
+### Deferred from this navigation milestone
+
+Dynamic completion, mutating LSP operations, initialization options, language
+catalogs, executable discovery, manual provider overrides, unsaved buffers,
+file watching, dynamic registration, workspace configuration, progress UI,
+server-applied edits, TCP transports, and raw protocol access remain deferred.
+
 ## Deferred work
 
-- Hover, references, diagnostics, rename, symbols, code actions, and other
-  semantic operations.
-- Multiple LSP definitions and file-to-server routing.
+- Hover, diagnostics, rename, symbols, code actions, and other semantic
+  operations beyond the accepted navigation set.
+- Additional routing policy beyond selector matching and provider fan-out.
 - `initializationOptions`, arbitrary KDL structured values, templates, and
   language-specific settings.
 - Language/server catalogs, executable discovery, presets, installation, and

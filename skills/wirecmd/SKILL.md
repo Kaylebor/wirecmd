@@ -1,6 +1,6 @@
 ---
 name: wirecmd
-description: Discover and compose Wirecmd capabilities from the shell, including trusted workspace configuration, focused help, native LSP definition lookup, projected arguments, lossless JSON calls, and transparent OAuth-backed HTTP servers.
+description: Discover and compose Wirecmd capabilities from the shell, including trusted workspace configuration, focused help, native LSP navigation, projected arguments, lossless JSON calls, and transparent OAuth-backed HTTP servers.
 ---
 
 # Wirecmd
@@ -49,48 +49,57 @@ recoverable `workspace_untrusted` error (exit 8); no discovered source is
 `config_not_found` (exit 3). These commands remain non-interactive. A server
 named `config` can still be called through `--json` or an exact-call envelope.
 
-## Use native LSP definition lookup
+## Use native LSP navigation
 
-`wirecmd lsp definition` is a native, static capability rather than an MCP
-tool. Begin with offline help:
+LSP navigation is a native capability rather than an MCP tool. Begin with
+offline help:
 
 ```sh
 wirecmd --help lsp
 wirecmd --help lsp definition
 ```
 
-It requires exactly one complete workspace-scoped `lsp` block in the effective
-KDL configuration. The workspace config, not Wirecmd, supplies the language
-server executable, arguments, environment, and language ID:
+The effective KDL configuration supplies one or more `lsp` blocks. Wirecmd
+never selects or constructs a language server. The workspace config supplies
+the executable, arguments, environment, and selector language IDs:
 
 ```kdl
 lsp "primary" {
-    scope "workspace"
-    language-id "your-language-id"
-    stdio "/absolute/path/to/your-language-server" {
+    implementation-id "optional-stable-metadata"
+    selector language-id="your-language-id"
+    stdio "your-language-server" {
         arg "--server-specific-option"
     }
 }
 ```
 
-Query a saved UTF-8 file with one-based coordinates:
+Selectors optionally accept a workspace-relative `pattern`, defaulting to
+`**/*`. Matching definitions are queried concurrently and their locations are
+attributed to the provider. Query a saved UTF-8 file with one-based coordinates:
 
 ```sh
 wirecmd lsp definition --file ./main.go --line 21 --column 13
+wirecmd lsp references --file ./main.go --line 21 --column 13
+wirecmd lsp status --file ./main.go
 ```
 
-Normal calls retain the selected LSP session through the daemon; use `--direct`
-only for one-shot diagnosis. Results are normalized file locations with
-one-based ranges. `lsp_not_configured` and `lsp_ambiguous_configuration` mean
-the workspace needs exactly one complete LSP definition. An
-`lsp_capability_unavailable` error means the configured server does not support
-definition lookup; `lsp_encoding_unsupported` means it cannot use UTF-16.
+Available operations are `definition`, `declaration`, `type-definition`,
+`implementation`, and `references`; references exclude declarations unless
+`--include-declaration` is supplied. Normal calls retain selected sessions
+through the daemon; use `--direct` only for one-shot diagnosis. Results are
+normalized file locations with one-based ranges. Partial provider failures are
+reported in structured provider outcomes without noisy client stderr. Use
+`lsp status` to inspect configured selectors and already-observed runtime
+identity without starting a process. `lsp_not_configured` and
+`lsp_no_matching_provider` mean configuration or selector routing needs
+attention. `lsp_capability_unavailable` means no matching server supports the
+operation; `lsp_encoding_unsupported` requires UTF-16 support.
 
 The bare `lsp` form is native help. A configured MCP server named `lsp` remains
 callable through `--json`, `--stdin`, an exact-call object, or
 `wirecmd --help -- lsp [TOOL]`. Do not assume any language/server catalog,
-initialization options, unsaved-buffer support, routing among multiple servers,
-or other LSP operations.
+initialization options, unsaved-buffer support, mutating operations, or dynamic
+completion.
 
 ## Configure HTTP values
 
