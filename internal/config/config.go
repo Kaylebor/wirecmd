@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/bmatcuk/doublestar/v4"
 	kdl "github.com/njreid/gokdl2"
 	"github.com/njreid/gokdl2/document"
 )
@@ -162,27 +163,40 @@ type ServerSource struct {
 }
 
 // LSP is a named complete local language-server definition. Its name is a
-// configuration and instance identity; routine LSP operations select the
-// effective workspace definition rather than exposing it as a CLI argument.
+// configuration and instance identity; routine LSP operations select matching
+// effective workspace definitions rather than exposing a name as an argument.
 type LSP struct {
-	Name                 string
-	Scope                Scope
-	ScopeProvenance      Provenance
-	LanguageID           string
-	LanguageIDProvenance Provenance
-	Stdio                Stdio
+	Name                       string
+	Scope                      Scope
+	ScopeProvenance            Provenance
+	ImplementationID           string
+	ImplementationIDProvenance Provenance
+	Selectors                  []LSPSelector
+	Stdio                      Stdio
 	Provenance
 }
 
 // LSPSource is a potentially partial language-server layer.
 type LSPSource struct {
-	Name                 string
-	Scope                *Scope
-	ScopeProvenance      Provenance
-	LanguageID           *string
-	LanguageIDProvenance Provenance
-	Stdio                *StdioSource
+	Name                       string
+	Scope                      *Scope
+	ScopeProvenance            Provenance
+	ImplementationID           *string
+	ImplementationIDProvenance Provenance
+	Selectors                  []LSPSelector
+	Stdio                      *StdioSource
 	Provenance
+}
+
+// LSPSelector routes files matching Pattern to an LSP using LanguageID for
+// text-document synchronization. Pattern is workspace-relative and uses
+// doublestar path syntax.
+type LSPSelector struct {
+	LanguageID           string
+	LanguageIDProvenance Provenance
+	Pattern              string
+	PatternProvenance    Provenance
+	Provenance           Provenance
 }
 
 // StdioSource is a potentially partial stdio layer. A non-empty Args slice
@@ -388,13 +402,26 @@ func Compose(sources ...*Source) (*Config, error) {
 				lsp.Scope = *partial.Scope
 				lsp.ScopeProvenance = partial.ScopeProvenance
 			}
-			if partial.LanguageID != nil {
-				lsp.LanguageID = *partial.LanguageID
-				lsp.LanguageIDProvenance = partial.LanguageIDProvenance
+			if partial.ImplementationID != nil {
+				lsp.ImplementationID = *partial.ImplementationID
+				lsp.ImplementationIDProvenance = partial.ImplementationIDProvenance
+			}
+			if len(partial.Selectors) != 0 {
+				lsp.Selectors = append([]LSPSelector(nil), partial.Selectors...)
 			}
 			if partial.Stdio != nil {
 				composeStdio(&lsp.Stdio, partial.Stdio)
 			}
+		}
+	}
+
+	// LSP scope is intentionally workspace-only in this milestone. An omitted
+	// scope is therefore a useful shorthand rather than an incomplete value.
+	for index := range config.LSPs {
+		lsp := &config.LSPs[index]
+		if lsp.Scope == "" && lsp.ScopeProvenance == (Provenance{}) {
+			lsp.Scope = ScopeWorkspace
+			lsp.ScopeProvenance = lsp.Provenance
 		}
 	}
 
@@ -540,14 +567,26 @@ func validate(config *Config) error {
 	}
 	for _, lsp := range config.LSPs {
 		path := lspPath(lsp.Name)
-		if lsp.Scope == "" {
-			return validationError(lsp.Provenance, path+".scope", "scope is required")
-		}
 		if lsp.Scope != ScopeWorkspace {
 			return validationError(lsp.ScopeProvenance, path+".scope", "unsupported scope %q", lsp.Scope)
 		}
-		if lsp.LanguageID == "" {
-			return validationError(lsp.Provenance, path+".language-id", "language-id is required")
+		if lsp.ImplementationIDProvenance != (Provenance{}) && lsp.ImplementationID == "" {
+			return validationError(lsp.ImplementationIDProvenance, path+".implementation-id", "implementation-id must not be empty")
+		}
+		if len(lsp.Selectors) == 0 {
+			return validationError(lsp.Provenance, path+".selector", "at least one selector is required")
+		}
+		for index, selector := range lsp.Selectors {
+			selectorPath := fmt.Sprintf("%s.selector[%d]", path, index)
+			if selector.LanguageID == "" {
+				return validationError(selector.LanguageIDProvenance, selectorPath+".language-id", "language-id is required")
+			}
+			if selector.Pattern == "" {
+				return validationError(selector.PatternProvenance, selectorPath+".pattern", "pattern must not be empty")
+			}
+			if !doublestar.ValidatePattern(selector.Pattern) {
+				return validationError(selector.PatternProvenance, selectorPath+".pattern", "invalid pattern %q", selector.Pattern)
+			}
 		}
 		if lsp.Stdio.Provenance == (Provenance{}) {
 			return validationError(lsp.Provenance, path+".stdio", "stdio is required")
@@ -701,13 +740,13 @@ func parseDocument(file string, doc *document.Document) (*Source, error) {
 				return nil, err
 			}
 			source.Root = &configRoot
-		case "server":
+		case "mcp":
 			server, err := parseServer(file, child)
 			if err != nil {
 				return nil, err
 			}
 			if _, exists := seenServers[server.Name]; exists {
-				return nil, fmt.Errorf("%s: duplicate server", server.Path)
+				return nil, fmt.Errorf("%s: duplicate mcp", server.Path)
 			}
 			seenServers[server.Name] = struct{}{}
 			source.Servers = append(source.Servers, server)
@@ -744,13 +783,13 @@ func parseRoot(file string, node *document.Node) (Root, error) {
 }
 
 func parseServer(file string, node *document.Node) (ServerSource, error) {
-	if err := plainNode(node, "server"); err != nil {
+	if err := plainNode(node, "mcp"); err != nil {
 		return ServerSource{}, err
 	}
 	if len(node.Arguments) != 1 {
-		return ServerSource{}, fmt.Errorf("wirecmd.server: expected one name")
+		return ServerSource{}, fmt.Errorf("wirecmd.mcp: expected one name")
 	}
-	name, err := literalText(node.Arguments[0], "wirecmd.server")
+	name, err := literalText(node.Arguments[0], "wirecmd.mcp")
 	if err != nil {
 		return ServerSource{}, err
 	}
@@ -826,16 +865,22 @@ func parseLSP(file string, node *document.Node) (LSPSource, error) {
 			}
 			lsp.Scope = &scope
 			lsp.ScopeProvenance = provenance(file, path+".scope")
-		case "language-id":
-			if lsp.LanguageID != nil {
-				return LSPSource{}, fmt.Errorf("%s.language-id: duplicate language-id", path)
+		case "implementation-id":
+			if lsp.ImplementationID != nil {
+				return LSPSource{}, fmt.Errorf("%s.implementation-id: duplicate implementation-id", path)
 			}
-			languageID, err := parseLiteral(child, path+".language-id")
+			implementationID, err := parseLiteral(child, path+".implementation-id")
 			if err != nil {
 				return LSPSource{}, err
 			}
-			lsp.LanguageID = &languageID
-			lsp.LanguageIDProvenance = provenance(file, path+".language-id")
+			lsp.ImplementationID = &implementationID
+			lsp.ImplementationIDProvenance = provenance(file, path+".implementation-id")
+		case "selector":
+			selector, err := parseLSPSelector(file, child, path, len(lsp.Selectors))
+			if err != nil {
+				return LSPSource{}, err
+			}
+			lsp.Selectors = append(lsp.Selectors, selector)
 		case "stdio":
 			if lsp.Stdio != nil {
 				return LSPSource{}, fmt.Errorf("%s.stdio: duplicate stdio", path)
@@ -850,6 +895,55 @@ func parseLSP(file string, node *document.Node) (LSPSource, error) {
 		}
 	}
 	return lsp, nil
+}
+
+func parseLSPSelector(file string, node *document.Node, lspPath string, index int) (LSPSelector, error) {
+	path := fmt.Sprintf("%s.selector[%d]", lspPath, index)
+	if node.Type != "" || len(node.Arguments) != 0 || node.Properties.Len() == 0 || len(node.Children) != 0 {
+		return LSPSelector{}, fmt.Errorf("%s: expected language-id and optional pattern properties", path)
+	}
+
+	selector := LSPSelector{Pattern: "**/*", Provenance: provenance(file, path)}
+	seenLanguageID := false
+	seenPattern := false
+	for name, rawValue := range node.Properties.Unordered() {
+		switch name {
+		case "language-id":
+			if seenLanguageID {
+				return LSPSelector{}, fmt.Errorf("%s.language-id: duplicate language-id", path)
+			}
+			value, err := literalText(rawValue, path+".language-id")
+			if err != nil {
+				return LSPSelector{}, err
+			}
+			selector.LanguageID = value
+			selector.LanguageIDProvenance = provenance(file, path+".language-id")
+			seenLanguageID = true
+		case "pattern":
+			if seenPattern {
+				return LSPSelector{}, fmt.Errorf("%s.pattern: duplicate pattern", path)
+			}
+			value, err := literalText(rawValue, path+".pattern")
+			if err != nil {
+				return LSPSelector{}, err
+			}
+			selector.Pattern = value
+			selector.PatternProvenance = provenance(file, path+".pattern")
+			seenPattern = true
+		default:
+			return LSPSelector{}, fmt.Errorf("%s: unknown property %q", path, name)
+		}
+	}
+	if !seenLanguageID {
+		return LSPSelector{}, fmt.Errorf("%s.language-id: language-id is required", path)
+	}
+	if !seenPattern {
+		// The catch-all is a deliberate derived value. Point its provenance at
+		// the selector node so callers can explain where the effective selector
+		// came from without pretending the default was written in KDL.
+		selector.PatternProvenance = selector.Provenance
+	}
+	return selector, nil
 }
 
 func parseHTTP(file string, node *document.Node, serverPath string) (HTTPSource, error) {
@@ -1124,7 +1218,7 @@ func nodeName(node *document.Node) string {
 }
 
 func serverPath(name string) string {
-	return fmt.Sprintf("wirecmd.server[%q]", name)
+	return fmt.Sprintf("wirecmd.mcp[%q]", name)
 }
 
 func lspPath(name string) string {

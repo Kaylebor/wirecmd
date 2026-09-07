@@ -105,7 +105,7 @@ func TestConfigServerJSONEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(t.TempDir(), "config.kdl")
-	if err := os.WriteFile(path, []byte(strings.Replace(string(data), `server "helper"`, `server "config"`, 1)), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), `mcp "helper"`, `mcp "config"`, 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	code, output, _ := invoke(t, []string{"--direct", "--config", path, "--json", `{}`, "config", "a_tool"})

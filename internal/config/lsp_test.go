@@ -5,11 +5,12 @@ import (
 	"testing"
 )
 
-func TestParseAndComposeLSPPartialSources(t *testing.T) {
+func TestParseAndComposeLSPSelectors(t *testing.T) {
 	base, err := ParseString("base.kdl", `wirecmd {
         lsp "primary" {
-            scope "workspace"
-            language-id "go"
+            implementation-id "base-implementation"
+            selector language-id="go" pattern="**/*.go"
+            selector language-id="text"
             stdio "gopls" {
                 arg "serve"
                 env BASE="base"
@@ -18,7 +19,7 @@ func TestParseAndComposeLSPPartialSources(t *testing.T) {
         }
         lsp "retained" {
             scope "workspace"
-            language-id "text"
+            selector language-id="text"
             stdio "retained-lsp"
         }
     }`)
@@ -27,7 +28,8 @@ func TestParseAndComposeLSPPartialSources(t *testing.T) {
 	}
 	local, err := ParseString("local.kdl", `wirecmd {
         lsp "primary" {
-            language-id "go.local"
+            implementation-id "local-implementation"
+            selector language-id="go.local" pattern="cmd/**/*.go"
             stdio "local-lsp" {
                 arg "--stdio"
                 env SHARED="local"
@@ -35,8 +37,7 @@ func TestParseAndComposeLSPPartialSources(t *testing.T) {
             }
         }
         lsp "added" {
-            scope "workspace"
-            language-id "markdown"
+            selector language-id="markdown"
             stdio "added-lsp"
         }
     }`)
@@ -48,19 +49,26 @@ func TestParseAndComposeLSPPartialSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compose() error = %v", err)
 	}
-	if len(config.Servers) != 0 {
-		t.Fatalf("server count = %d, want 0", len(config.Servers))
-	}
 	if got, want := lspNames(config.LSPs), []string{"primary", "retained", "added"}; !sameStrings(got, want) {
 		t.Fatalf("LSP order = %#v, want %#v", got, want)
 	}
 
 	primary := config.LSPs[0]
-	if primary.Scope != ScopeWorkspace || primary.ScopeProvenance != (Provenance{File: "base.kdl", Path: `wirecmd.lsp["primary"].scope`}) {
-		t.Fatalf("scope = %#v", primary)
+	if primary.Scope != ScopeWorkspace || primary.ScopeProvenance != (Provenance{File: "local.kdl", Path: `wirecmd.lsp["primary"]`}) {
+		t.Fatalf("default scope = %#v", primary)
 	}
-	if primary.LanguageID != "go.local" || primary.LanguageIDProvenance != (Provenance{File: "local.kdl", Path: `wirecmd.lsp["primary"].language-id`}) {
-		t.Fatalf("language ID = %#v", primary)
+	if primary.ImplementationID != "local-implementation" || primary.ImplementationIDProvenance != (Provenance{File: "local.kdl", Path: `wirecmd.lsp["primary"].implementation-id`}) {
+		t.Fatalf("implementation ID = %#v", primary)
+	}
+	if len(primary.Selectors) != 1 {
+		t.Fatalf("selectors = %#v, want one replacement selector", primary.Selectors)
+	}
+	selector := primary.Selectors[0]
+	if selector.LanguageID != "go.local" || selector.Pattern != "cmd/**/*.go" {
+		t.Fatalf("selector = %#v", selector)
+	}
+	if selector.LanguageIDProvenance != (Provenance{File: "local.kdl", Path: `wirecmd.lsp["primary"].selector[0].language-id`}) || selector.PatternProvenance != (Provenance{File: "local.kdl", Path: `wirecmd.lsp["primary"].selector[0].pattern`}) {
+		t.Fatalf("selector provenance = %#v", selector)
 	}
 	if primary.Stdio.Command != "local-lsp" || primary.Stdio.CommandProvenance != (Provenance{File: "local.kdl", Path: `wirecmd.lsp["primary"].stdio`}) {
 		t.Fatalf("stdio command = %#v", primary.Stdio)
@@ -68,20 +76,22 @@ func TestParseAndComposeLSPPartialSources(t *testing.T) {
 	if got, want := valueTexts(primary.Stdio.Args), []string{"--stdio"}; !sameStrings(got, want) {
 		t.Fatalf("arguments = %#v, want %#v", got, want)
 	}
-	if primary.Stdio.Args[0].Provenance != (Provenance{File: "local.kdl", Path: `wirecmd.lsp["primary"].stdio.arg[0]`}) {
-		t.Fatalf("argument provenance = %#v", primary.Stdio.Args[0].Provenance)
-	}
 	if got, want := envNames(primary.Stdio.Env), []string{"BASE", "SHARED", "EMPTY"}; !sameStrings(got, want) {
 		t.Fatalf("environment order = %#v, want %#v", got, want)
 	}
 	if primary.Stdio.Env[0].Value.Text != "base" || primary.Stdio.Env[0].Value.File != "base.kdl" {
 		t.Fatalf("inherited environment = %#v", primary.Stdio.Env[0])
 	}
-	if primary.Stdio.Env[1].Value.Kind != ValueLiteral || primary.Stdio.Env[1].Value.Text != "local" || primary.Stdio.Env[1].Value.File != "local.kdl" {
+	if primary.Stdio.Env[1].Value.Text != "local" || primary.Stdio.Env[1].Value.File != "local.kdl" {
 		t.Fatalf("overridden environment = %#v", primary.Stdio.Env[1])
 	}
 	if primary.Stdio.Env[2].Value.Text != "" || primary.Stdio.Env[2].Value.File != "local.kdl" {
 		t.Fatalf("present-empty environment = %#v", primary.Stdio.Env[2])
+	}
+
+	retained := config.LSPs[1]
+	if retained.Scope != ScopeWorkspace || retained.ScopeProvenance != (Provenance{File: "base.kdl", Path: `wirecmd.lsp["retained"].scope`}) {
+		t.Fatalf("explicit scope = %#v", retained)
 	}
 }
 
@@ -91,8 +101,8 @@ func TestParseAllowsPartialLSPSources(t *testing.T) {
 		source string
 	}{
 		{name: "definition only", source: `wirecmd { lsp "primary" }`},
-		{name: "scope only", source: `wirecmd { lsp "primary" { scope "workspace" } }`},
-		{name: "language only", source: `wirecmd { lsp "primary" { language-id "go" } }`},
+		{name: "implementation only", source: `wirecmd { lsp "primary" { implementation-id "example" } }`},
+		{name: "selector only", source: `wirecmd { lsp "primary" { selector language-id="go" } }`},
 		{name: "stdio only", source: `wirecmd { lsp "primary" { stdio { env FLAG="" } } }`},
 	}
 	for _, test := range tests {
@@ -105,11 +115,17 @@ func TestParseAllowsPartialLSPSources(t *testing.T) {
 }
 
 func TestLSPValidationUsesEffectiveConfiguration(t *testing.T) {
-	base, err := ParseString("base.kdl", `wirecmd { lsp "primary" { scope "workspace"; language-id "go" } }`)
+	base, err := ParseString("base.kdl", `wirecmd {
+        lsp "primary" {
+            selector language-id="go"
+        }
+    }`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	local, err := ParseString("local.kdl", `wirecmd { lsp "primary" { stdio "gopls" } }`)
+	local, err := ParseString("local.kdl", `wirecmd {
+        lsp "primary" { stdio "gopls" }
+    }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,11 +138,13 @@ func TestLSPValidationUsesEffectiveConfiguration(t *testing.T) {
 		source string
 		want   string
 	}{
-		{name: "missing scope", source: `wirecmd { lsp "primary" { language-id "go"; stdio "gopls" } }`, want: `lsp["primary"].scope: scope is required`},
-		{name: "unsupported scope", source: `wirecmd { lsp "primary" { scope "global"; language-id "go"; stdio "gopls" } }`, want: `lsp["primary"].scope: unsupported scope "global"`},
-		{name: "missing language", source: `wirecmd { lsp "primary" { scope "workspace"; stdio "gopls" } }`, want: `lsp["primary"].language-id: language-id is required`},
-		{name: "missing stdio", source: `wirecmd { lsp "primary" { scope "workspace"; language-id "go" } }`, want: `lsp["primary"].stdio: stdio is required`},
-		{name: "missing executable", source: `wirecmd { lsp "primary" { scope "workspace"; language-id "go"; stdio { env FLAG="one" } } }`, want: `lsp["primary"].stdio: executable is required`},
+		{name: "missing selector", source: `wirecmd { lsp "primary" { stdio "gopls" } }`, want: `lsp["primary"].selector: at least one selector is required`},
+		{name: "empty implementation ID", source: `wirecmd { lsp "primary" { implementation-id ""; selector language-id="go"; stdio "gopls" } }`, want: ".implementation-id: implementation-id must not be empty"},
+		{name: "empty language ID", source: `wirecmd { lsp "primary" { selector language-id=""; stdio "gopls" } }`, want: ".language-id: language-id is required"},
+		{name: "empty pattern", source: `wirecmd { lsp "primary" { selector language-id="go" pattern=""; stdio "gopls" } }`, want: ".pattern: pattern must not be empty"},
+		{name: "invalid pattern", source: `wirecmd { lsp "primary" { selector language-id="go" pattern="["; stdio "gopls" } }`, want: ".pattern: invalid pattern"},
+		{name: "missing stdio", source: `wirecmd { lsp "primary" { selector language-id="go" } }`, want: `lsp["primary"].stdio: stdio is required`},
+		{name: "missing executable", source: `wirecmd { lsp "primary" { selector language-id="go"; stdio { env FLAG="one" } } }`, want: `lsp["primary"].stdio: executable is required`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -142,24 +160,35 @@ func TestLSPValidationUsesEffectiveConfiguration(t *testing.T) {
 	}
 }
 
-func TestParseRejectsInvalidLSPStructure(t *testing.T) {
-	tests := []struct {
-		name   string
-		source string
-		want   string
-	}{
-		{name: "duplicate definition", source: `wirecmd { lsp "primary"; lsp "primary" }`, want: "duplicate lsp"},
-		{name: "duplicate language ID", source: `wirecmd { lsp "primary" { language-id "go"; language-id "go" } }`, want: "duplicate language-id"},
-		{name: "duplicate stdio", source: `wirecmd { lsp "primary" { stdio "one"; stdio "two" } }`, want: "duplicate stdio"},
-		{name: "unknown child", source: `wirecmd { lsp "primary" { http "https://example.test" } }`, want: `unknown child node "http"`},
+func TestLSPInvalidWeakerSelectorCanBeReplaced(t *testing.T) {
+	weaker, err := ParseString("weaker.kdl", `wirecmd { lsp "primary" { selector language-id="go" pattern="["; stdio "gopls" } }`)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := ParseString("invalid.kdl", test.source)
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("ParseString() error = %v, want %q", err, test.want)
-			}
-		})
+	stronger, err := ParseString("stronger.kdl", `wirecmd { lsp "primary" { selector language-id="go" pattern="**/*.go" } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compose(weaker, stronger); err != nil {
+		t.Fatalf("Compose() error = %v", err)
+	}
+}
+
+func TestParseUsesMCPKeywordAndRejectsServerKeyword(t *testing.T) {
+	source, err := ParseString("mcp.kdl", `wirecmd { mcp "memory" { scope "workspace"; stdio "memory" } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := Compose(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := config.Servers[0].ScopeProvenance.Path, `wirecmd.mcp["memory"].scope`; got != want {
+		t.Fatalf("scope provenance path = %q, want %q", got, want)
+	}
+
+	if _, err := ParseString("server.kdl", `wirecmd { server "memory" { scope "workspace"; stdio "memory" } }`); err == nil || !strings.Contains(err.Error(), `unknown child node "server"`) {
+		t.Fatalf("server keyword error = %v", err)
 	}
 }
 

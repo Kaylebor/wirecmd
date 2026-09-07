@@ -147,7 +147,7 @@ func TestVersionCommandIsStandaloneAndDoesNotReserveServerName(t *testing.T) {
 	}
 
 	t.Setenv("GO_WIRECMD_HELPER", "1")
-	config := writeConfig(t, "wirecmd { server \"version\" { scope \"workspace\"; stdio "+strconv.Quote(os.Args[0])+" { arg \"-test.run=TestHelperProcess\"; arg \"--\" } } }")
+	config := writeConfig(t, "wirecmd { mcp \"version\" { scope \"workspace\"; stdio "+strconv.Quote(os.Args[0])+" { arg \"-test.run=TestHelperProcess\"; arg \"--\" } } }")
 	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "version"})
 	if code != exitOK || stderr != "" || decodeOutput(t, output)["server"] != "version" {
 		t.Fatalf("version server alias: code=%d stdout=%q stderr=%q", code, output, stderr)
@@ -824,7 +824,7 @@ func TestHTTPConnectFailureClosesEstablishedSession(t *testing.T) {
 
 func TestRepeatedConfigsUseStrongestLayer(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
-	base := writeConfig(t, `wirecmd { server "helper" { scope "workspace"; stdio "definitely-not-a-command" } }`)
+	base := writeConfig(t, `wirecmd { mcp "helper" { scope "workspace"; stdio "definitely-not-a-command" } }`)
 	local := helperConfig(t, "", "")
 	code, output, stderr := invoke(t, []string{"--direct", "--config", base, "--config", local, "helper"})
 	if code != exitOK || stderr != "" || len(decodeOutput(t, output)["tools"].([]any)) == 0 {
@@ -834,8 +834,8 @@ func TestRepeatedConfigsUseStrongestLayer(t *testing.T) {
 
 func TestDirectServerListDoesNotStartOrResolveUnselectedServers(t *testing.T) {
 	config := writeConfig(t, `wirecmd {
-        server "not-started" { scope "workspace"; stdio "definitely-not-a-command" }
-        server "needs-secret" {
+        mcp "not-started" { scope "workspace"; stdio "definitely-not-a-command" }
+        mcp "needs-secret" {
             scope "workspace"
             stdio "also-not-started" { env SECRET=(secret)"env://WIRECMD_UNSET_LIST_SECRET" }
         }
@@ -847,7 +847,7 @@ func TestDirectServerListDoesNotStartOrResolveUnselectedServers(t *testing.T) {
 }
 
 func TestDirectProcessStartFailureIsTransportError(t *testing.T) {
-	config := writeConfig(t, `wirecmd { server "broken" { scope "workspace"; stdio "definitely-not-a-command" } }`)
+	config := writeConfig(t, `wirecmd { mcp "broken" { scope "workspace"; stdio "definitely-not-a-command" } }`)
 	code, output, _ := invoke(t, []string{"--direct", "--config", config, "broken"})
 	if code != exitTransport || decodeOutput(t, output)["error"].(map[string]any)["code"] != "mcp_connect_failed" {
 		t.Fatalf("process failure: code=%d output=%s", code, output)
@@ -1009,12 +1009,12 @@ func (f *httpFixture) methodCount(want string) int {
 
 func httpConfig(t *testing.T, endpoint string) string {
 	t.Helper()
-	return writeConfig(t, "wirecmd { server \"remote\" { scope \"workspace\"; http "+strconv.Quote(endpoint)+" } }")
+	return writeConfig(t, "wirecmd { mcp \"remote\" { scope \"workspace\"; http "+strconv.Quote(endpoint)+" } }")
 }
 
 func httpValuesConfig(t *testing.T, endpoint string) string {
 	t.Helper()
-	return writeConfig(t, "wirecmd { server \"remote\" { scope \"workspace\"; http "+strconv.Quote(endpoint)+" { query tenant=\"acme\"; query token=(secret)\"env://WIRECMD_HTTP_TOKEN\"; header X-API-Key=(secret)\"env://WIRECMD_HTTP_KEY\" } } }")
+	return writeConfig(t, "wirecmd { mcp \"remote\" { scope \"workspace\"; http "+strconv.Quote(endpoint)+" { query tenant=\"acme\"; query token=(secret)\"env://WIRECMD_HTTP_TOKEN\"; header X-API-Key=(secret)\"env://WIRECMD_HTTP_KEY\" } } }")
 }
 
 func helperConfigAt(t *testing.T, path, root, env string) string {
@@ -1023,7 +1023,7 @@ func helperConfigAt(t *testing.T, path, root, env string) string {
 	if root != "" {
 		rootNode = "root " + strconv.Quote(root)
 	}
-	source := "wirecmd {\n" + rootNode + "\nserver \"helper\" {\nscope \"workspace\"\nstdio " + strconv.Quote(os.Args[0]) + " {\narg \"-test.run=TestHelperProcess\"\narg \"--\"\n" + env + "\n}\n}\n}"
+	source := "wirecmd {\n" + rootNode + "\nmcp \"helper\" {\nscope \"workspace\"\nstdio " + strconv.Quote(os.Args[0]) + " {\narg \"-test.run=TestHelperProcess\"\narg \"--\"\n" + env + "\n}\n}\n}"
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}

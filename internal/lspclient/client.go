@@ -22,9 +22,9 @@ import (
 
 var (
 	ErrStart                    = errors.New("LSP process could not be started")
-	ErrCapabilityUnavailable    = errors.New("LSP server does not advertise definition support")
+	ErrCapabilityUnavailable    = errors.New("LSP server does not advertise the requested capability")
 	ErrEncodingUnsupported      = errors.New("LSP server selected an unsupported position encoding")
-	ErrResultUnsupported        = errors.New("LSP server returned an unsupported definition result")
+	ErrResultUnsupported        = errors.New("LSP server returned an unsupported location result")
 	ErrServerRequestUnsupported = errors.New("LSP server made an unsupported client request")
 )
 
@@ -58,20 +58,43 @@ type Location struct {
 	Range Range  `json:"range"`
 }
 
+// Capabilities is the SDK-independent subset of the initialize result that
+// Wirecmd uses for navigation and document synchronization.
+type Capabilities struct {
+	Declaration      bool   `json:"declaration"`
+	Definition       bool   `json:"definition"`
+	TypeDefinition   bool   `json:"type_definition"`
+	Implementation   bool   `json:"implementation"`
+	References       bool   `json:"references"`
+	PositionEncoding string `json:"position_encoding"`
+	TextDocumentSync string `json:"text_document_sync"`
+	OpenClose        bool   `json:"open_close"`
+}
+
+// Status is the observed, SDK-independent identity and capability state of a
+// connected server. Empty identity fields mean the server omitted them.
+type Status struct {
+	ServerName    string       `json:"server_name,omitempty"`
+	ServerVersion string       `json:"server_version,omitempty"`
+	Capabilities  Capabilities `json:"capabilities"`
+}
+
 type document struct {
-	uri     uri.URI
-	content string
-	version int32
+	uri        uri.URI
+	content    string
+	version    int32
+	languageID string
 }
 
 // DefinitionTarget is a validated snapshot of a definition request. Preparing
 // it before process acquisition prevents invalid local input from starting an
 // LSP server.
 type DefinitionTarget struct {
-	path     string
-	uri      uri.URI
-	content  string
-	position protocol.Position
+	path       string
+	uri        uri.URI
+	content    string
+	position   protocol.Position
+	languageID string
 }
 
 type rejectingClient struct {
@@ -173,19 +196,19 @@ func (c *rejectingClient) TextDocumentContentRefresh(context.Context, *protocol.
 
 // Session is one initialized LSP process and its disk-document mirror.
 type Session struct {
-	mu         sync.Mutex
-	cmd        *exec.Cmd
-	stdin      io.WriteCloser
-	stdout     io.ReadCloser
-	conn       jsonrpc2.Conn
-	server     protocol.Server
-	client     *rejectingClient
-	languageID string
-	syncKind   protocol.TextDocumentSyncKind
-	openClose  bool
-	documents  map[string]*document
-	closed     bool
-	ctx        context.Context
+	mu        sync.Mutex
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	stdout    io.ReadCloser
+	conn      jsonrpc2.Conn
+	server    protocol.Server
+	client    *rejectingClient
+	syncKind  protocol.TextDocumentSyncKind
+	openClose bool
+	documents map[string]*document
+	closed    bool
+	ctx       context.Context
+	status    Status
 }
 
 type pipe struct {
@@ -197,7 +220,7 @@ type pipe struct {
 func (p *pipe) Close() error { return p.close() }
 
 // Start launches and initializes exactly the configured LSP command.
-func Start(ctx context.Context, command Command, languageID, workspace, version string) (*Session, error) {
+func Start(ctx context.Context, command Command, workspace, version string) (*Session, error) {
 	cmd := exec.CommandContext(ctx, command.Path, command.Args...)
 	cmd.Dir, cmd.Env, cmd.Stderr = command.Dir, command.Env, command.Stderr
 	stdin, err := cmd.StdinPipe()
@@ -240,7 +263,11 @@ func Start(ctx context.Context, command Command, languageID, workspace, version 
 			Workspace: &protocol.WorkspaceClientCapabilities{WorkspaceFolders: &trueValue, ApplyEdit: &falseValue, Configuration: &falseValue},
 			TextDocument: &protocol.TextDocumentClientCapabilities{
 				Synchronization: &protocol.TextDocumentSyncClientCapabilities{DynamicRegistration: &falseValue, WillSave: &falseValue, WillSaveWaitUntil: &falseValue, DidSave: &falseValue},
+				Declaration:     &protocol.DeclarationClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
 				Definition:      &protocol.DefinitionClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
+				TypeDefinition:  &protocol.TypeDefinitionClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
+				Implementation:  &protocol.ImplementationClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
+				References:      &protocol.ReferenceClientCapabilities{DynamicRegistration: &falseValue},
 			},
 			General: &protocol.GeneralClientCapabilities{PositionEncodings: []protocol.PositionEncodingKind{protocol.PositionEncodingKindUTF16}},
 		},
@@ -259,14 +286,27 @@ func Start(ctx context.Context, command Command, languageID, workspace, version 
 		abortProcess(conn, cmd)
 		return nil, fmt.Errorf("%w: %s", ErrEncodingUnsupported, encoding)
 	}
-	if !definitionSupported(initialized.Capabilities.DefinitionProvider) {
-		_ = server.Shutdown(ctx)
-		_ = server.Exit(ctx)
-		abortProcess(conn, cmd)
-		return nil, ErrCapabilityUnavailable
+	if encoding == "" {
+		encoding = protocol.PositionEncodingKindUTF16
 	}
 	syncKind, openClose := synchronization(initialized.Capabilities.TextDocumentSync)
-	return &Session{cmd: cmd, stdin: stdin, stdout: stdout, conn: conn, server: server, client: client, languageID: languageID, syncKind: syncKind, openClose: openClose, documents: map[string]*document{}, ctx: ctx}, nil
+	status := Status{
+		ServerName: initialized.ServerInfo.Name,
+		Capabilities: Capabilities{
+			Declaration:      declarationSupported(initialized.Capabilities.DeclarationProvider),
+			Definition:       definitionSupported(initialized.Capabilities.DefinitionProvider),
+			TypeDefinition:   typeDefinitionSupported(initialized.Capabilities.TypeDefinitionProvider),
+			Implementation:   implementationSupported(initialized.Capabilities.ImplementationProvider),
+			References:       referencesSupported(initialized.Capabilities.ReferencesProvider),
+			PositionEncoding: string(encoding),
+			TextDocumentSync: syncKindName(syncKind),
+			OpenClose:        openClose,
+		},
+	}
+	if value, ok := initialized.ServerInfo.Version.Get(); ok {
+		status.ServerVersion = value
+	}
+	return &Session{cmd: cmd, stdin: stdin, stdout: stdout, conn: conn, server: server, client: client, syncKind: syncKind, openClose: openClose, documents: map[string]*document{}, ctx: ctx, status: status}, nil
 }
 
 func abortProcess(conn jsonrpc2.Conn, cmd *exec.Cmd) {
@@ -277,6 +317,19 @@ func abortProcess(conn jsonrpc2.Conn, cmd *exec.Cmd) {
 	_ = cmd.Wait()
 }
 
+func declarationSupported(provider protocol.DeclarationProvider) bool {
+	switch value := provider.(type) {
+	case protocol.Boolean:
+		return bool(value)
+	case *protocol.DeclarationOptions:
+		return value != nil
+	case *protocol.DeclarationRegistrationOptions:
+		return value != nil
+	default:
+		return false
+	}
+}
+
 func definitionSupported(provider protocol.DefinitionProvider) bool {
 	switch value := provider.(type) {
 	case protocol.Boolean:
@@ -285,6 +338,54 @@ func definitionSupported(provider protocol.DefinitionProvider) bool {
 		return value != nil
 	default:
 		return false
+	}
+}
+
+func typeDefinitionSupported(provider protocol.TypeDefinitionProvider) bool {
+	switch value := provider.(type) {
+	case protocol.Boolean:
+		return bool(value)
+	case *protocol.TypeDefinitionOptions:
+		return value != nil
+	case *protocol.TypeDefinitionRegistrationOptions:
+		return value != nil
+	default:
+		return false
+	}
+}
+
+func implementationSupported(provider protocol.ImplementationProvider) bool {
+	switch value := provider.(type) {
+	case protocol.Boolean:
+		return bool(value)
+	case *protocol.ImplementationOptions:
+		return value != nil
+	case *protocol.ImplementationRegistrationOptions:
+		return value != nil
+	default:
+		return false
+	}
+}
+
+func referencesSupported(provider protocol.ReferencesProvider) bool {
+	switch value := provider.(type) {
+	case protocol.Boolean:
+		return bool(value)
+	case *protocol.ReferenceOptions:
+		return value != nil
+	default:
+		return false
+	}
+}
+
+func syncKindName(kind protocol.TextDocumentSyncKind) string {
+	switch kind {
+	case protocol.TextDocumentSyncKindFull:
+		return "full"
+	case protocol.TextDocumentSyncKindIncremental:
+		return "incremental"
+	default:
+		return "none"
 	}
 }
 
@@ -306,9 +407,9 @@ func synchronization(sync protocol.TextDocumentSync) (protocol.TextDocumentSyncK
 	}
 }
 
-// PrepareDefinition validates and snapshots a one-based disk position without
+// PrepareTarget validates and snapshots a one-based disk position without
 // starting or consulting an LSP process.
-func PrepareDefinition(path string, line, column uint32) (*DefinitionTarget, error) {
+func PrepareTarget(path string, line, column uint32, languageID string) (*DefinitionTarget, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read LSP document: %w", err)
@@ -320,42 +421,153 @@ func PrepareDefinition(path string, line, column uint32) (*DefinitionTarget, err
 	if err != nil {
 		return nil, err
 	}
-	return &DefinitionTarget{path: path, uri: uri.File(path), content: string(content), position: position}, nil
+	return &DefinitionTarget{path: path, uri: uri.File(path), content: string(content), position: position, languageID: languageID}, nil
 }
 
 // Definition resolves a previously validated disk snapshot.
 func (s *Session) Definition(ctx context.Context, target *DefinitionTarget) ([]Location, error) {
+	return s.navigation(ctx, target, navigationDefinition, false)
+}
+
+// Declaration resolves a declaration for a previously validated disk
+// snapshot.
+func (s *Session) Declaration(ctx context.Context, target *DefinitionTarget) ([]Location, error) {
+	return s.navigation(ctx, target, navigationDeclaration, false)
+}
+
+// TypeDefinition resolves a type definition for a previously validated disk
+// snapshot.
+func (s *Session) TypeDefinition(ctx context.Context, target *DefinitionTarget) ([]Location, error) {
+	return s.navigation(ctx, target, navigationTypeDefinition, false)
+}
+
+// Implementation resolves an implementation for a previously validated disk
+// snapshot.
+func (s *Session) Implementation(ctx context.Context, target *DefinitionTarget) ([]Location, error) {
+	return s.navigation(ctx, target, navigationImplementation, false)
+}
+
+// References resolves references for a previously validated disk snapshot.
+func (s *Session) References(ctx context.Context, target *DefinitionTarget, includeDeclaration bool) ([]Location, error) {
+	return s.navigation(ctx, target, navigationReferences, includeDeclaration)
+}
+
+type navigationKind uint8
+
+const (
+	navigationDeclaration navigationKind = iota
+	navigationDefinition
+	navigationTypeDefinition
+	navigationImplementation
+	navigationReferences
+)
+
+func (s *Session) navigation(ctx context.Context, target *DefinitionTarget, kind navigationKind, includeDeclaration bool) ([]Location, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return nil, fmt.Errorf("LSP session is closed")
 	}
-	if err := s.synchronize(ctx, target.path, target.uri, target.content); err != nil {
+	if !s.supports(kind) {
+		return nil, fmt.Errorf("%w: %s", ErrCapabilityUnavailable, operationName(kind))
+	}
+	if err := s.synchronize(ctx, target.path, target.uri, target.content, target.languageID); err != nil {
 		return nil, err
 	}
-	result, err := s.server.Definition(ctx, &protocol.DefinitionParams{TextDocumentPositionParams: protocol.TextDocumentPositionParams{TextDocument: protocol.TextDocumentIdentifier{URI: target.uri}, Position: target.position}})
+	params := protocol.TextDocumentPositionParams{TextDocument: protocol.TextDocumentIdentifier{URI: target.uri}, Position: target.position}
+	var result any
+	var err error
+	switch kind {
+	case navigationDeclaration:
+		result, err = s.server.Declaration(ctx, &protocol.DeclarationParams{TextDocumentPositionParams: params})
+	case navigationDefinition:
+		result, err = s.server.Definition(ctx, &protocol.DefinitionParams{TextDocumentPositionParams: params})
+	case navigationTypeDefinition:
+		result, err = s.server.TypeDefinition(ctx, &protocol.TypeDefinitionParams{TextDocumentPositionParams: params})
+	case navigationImplementation:
+		result, err = s.server.Implementation(ctx, &protocol.ImplementationParams{TextDocumentPositionParams: params})
+	case navigationReferences:
+		result, err = s.server.References(ctx, &protocol.ReferenceParams{TextDocumentPositionParams: params, Context: protocol.ReferenceContext{IncludeDeclaration: includeDeclaration}})
+	}
 	if err != nil {
 		if method := s.client.takeUnsupported(); method != "" {
 			return nil, fmt.Errorf("%w: %s", ErrServerRequestUnsupported, method)
 		}
-		return nil, fmt.Errorf("request LSP definition: %w", err)
+		return nil, fmt.Errorf("request LSP %s: %w", operationName(kind), err)
 	}
 	s.client.takeUnsupported()
 	return normalizeLocations(result)
 }
 
-func (s *Session) synchronize(ctx context.Context, path string, docURI uri.URI, content string) error {
+func operationName(kind navigationKind) string {
+	switch kind {
+	case navigationDeclaration:
+		return "declaration"
+	case navigationDefinition:
+		return "definition"
+	case navigationTypeDefinition:
+		return "type definition"
+	case navigationImplementation:
+		return "implementation"
+	case navigationReferences:
+		return "references"
+	default:
+		return "navigation"
+	}
+}
+
+func (s *Session) supports(kind navigationKind) bool {
+	switch kind {
+	case navigationDeclaration:
+		return s.status.Capabilities.Declaration
+	case navigationDefinition:
+		return s.status.Capabilities.Definition
+	case navigationTypeDefinition:
+		return s.status.Capabilities.TypeDefinition
+	case navigationImplementation:
+		return s.status.Capabilities.Implementation
+	case navigationReferences:
+		return s.status.Capabilities.References
+	default:
+		return false
+	}
+}
+
+// Status returns the negotiated server identity and capabilities. It does not
+// contact the server.
+func (s *Session) Status() Status {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.status
+}
+
+// Capabilities returns the negotiated SDK-independent capability summary.
+func (s *Session) Capabilities() Capabilities {
+	return s.Status().Capabilities
+}
+
+func (s *Session) synchronize(ctx context.Context, path string, docURI uri.URI, content, languageID string) error {
 	previous := s.documents[path]
 	if previous == nil {
-		doc := &document{uri: docURI, content: content, version: 1}
+		doc := &document{uri: docURI, content: content, version: 1, languageID: languageID}
 		s.documents[path] = doc
 		if s.openClose {
-			return s.server.DidOpen(ctx, &protocol.DidOpenTextDocumentParams{TextDocument: protocol.TextDocumentItem{URI: docURI, LanguageID: protocol.LanguageKind(s.languageID), Version: doc.version, Text: content}})
+			return s.server.DidOpen(ctx, &protocol.DidOpenTextDocumentParams{TextDocument: protocol.TextDocumentItem{URI: docURI, LanguageID: protocol.LanguageKind(languageID), Version: doc.version, Text: content}})
 		}
 		return nil
 	}
+	if previous.languageID != languageID && s.openClose {
+		if err := s.server.DidClose(ctx, &protocol.DidCloseTextDocumentParams{TextDocument: protocol.TextDocumentIdentifier{URI: docURI}}); err != nil {
+			return fmt.Errorf("close changed LSP document: %w", err)
+		}
+		previous.content = content
+		previous.version = 1
+		previous.languageID = languageID
+		return s.server.DidOpen(ctx, &protocol.DidOpenTextDocumentParams{TextDocument: protocol.TextDocumentItem{URI: docURI, LanguageID: protocol.LanguageKind(languageID), Version: previous.version, Text: content}})
+	}
 	if previous.content == content || s.syncKind == protocol.TextDocumentSyncKindNone {
 		previous.content = content
+		previous.languageID = languageID
 		return nil
 	}
 	previous.version++
@@ -369,6 +581,7 @@ func (s *Session) synchronize(ctx context.Context, path string, docURI uri.URI, 
 		return fmt.Errorf("synchronize LSP document: %w", err)
 	}
 	previous.content = content
+	previous.languageID = languageID
 	return nil
 }
 
@@ -412,7 +625,7 @@ func wholeDocumentRange(content string) protocol.Range {
 	return protocol.Range{Start: protocol.Position{}, End: protocol.Position{Line: uint32(len(lines) - 1), Character: uint32(units)}}
 }
 
-func normalizeLocations(result protocol.DefinitionResult) ([]Location, error) {
+func normalizeLocations(result any) ([]Location, error) {
 	locations := []Location{}
 	appendLocation := func(rawURI uri.URI, rawRange protocol.Range) error {
 		if rawURI.Scheme() != "file" {
@@ -435,7 +648,19 @@ func normalizeLocations(result protocol.DefinitionResult) ([]Location, error) {
 				return nil, err
 			}
 		}
+	case []protocol.Location:
+		for _, location := range value {
+			if err := appendLocation(location.URI, location.Range); err != nil {
+				return nil, err
+			}
+		}
 	case protocol.DefinitionLinkSlice:
+		for _, link := range value {
+			if err := appendLocation(link.TargetURI, link.TargetSelectionRange); err != nil {
+				return nil, err
+			}
+		}
+	case protocol.DeclarationLinkSlice:
 		for _, link := range value {
 			if err := appendLocation(link.TargetURI, link.TargetSelectionRange); err != nil {
 				return nil, err

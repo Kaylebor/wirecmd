@@ -24,7 +24,7 @@ Configure the resulting executable as a stdio MCP server, for example:
 
 ```kdl
 wirecmd {
-  server "legacy" {
+  mcp "legacy" {
     scope "workspace"
     stdio "/absolute/path/to/legacy-mcp"
   }

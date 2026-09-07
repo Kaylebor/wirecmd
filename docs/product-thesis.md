@@ -154,16 +154,15 @@ between protocol eras does not by itself justify a local adapter or abstraction.
 
 ## Native LSP boundary
 
-The first LSP capability, `wirecmd lsp definition`, is complete and qualified.
-Its process command, arguments, environment, language ID, and workspace root
+The selector-routed LSP navigation milestone is complete and qualified. Process
+commands, arguments, environments, language IDs, selectors, and workspace roots
 are configuration-owned; Wirecmd does not name, discover, construct, or
-special-case language servers. The accepted next extension adds selector-based
-automatic routing and fan-out for navigation operations, with provider-aware
-structured outcomes and contextual status. It provides standard JSON-RPC
-framing and lifecycle, conservative initialization, disk-backed document
-synchronization, UTF-16 position conversion, normalized locations, retained
-daemon sessions, and actionable errors. The authoritative contract and
-qualification boundaries are recorded in the [LSP plan](lsp-plan.md).
+special-case language servers. Matching providers fan out automatically and
+return provider-aware structured outcomes and contextual status. Wirecmd
+provides standard JSON-RPC framing and lifecycle, conservative initialization,
+disk-backed document synchronization, UTF-16 position conversion, normalized
+locations, retained daemon sessions, and actionable errors. The authoritative
+contract and qualification boundaries are recorded in the [LSP plan](lsp-plan.md).
 
 This is not a general LSP client commitment. Initialization options, unsaved
 buffers, language-specific behavior, dynamic registration, workspace settings,
@@ -195,11 +194,10 @@ recorded in the [HTTP values plan](http-values-plan.md) and
 surface, with Wirecmd adding only interaction, persistence, daemon
 coordination, redaction, and error mapping.
 
-The native LSP definition implementation completed direct and retained-daemon
-qualification with a configured real server. It remains server-neutral;
-`gopls` was only the qualification fixture, not a product dependency or
-default. The next routing milestone uses configured selectors and may retain
-multiple providers, without changing that boundary.
+Native LSP navigation completed direct and retained-daemon qualification with a
+configured real server and deterministic overlapping-provider fixtures. It
+remains server-neutral; `gopls` and the Angular-like overlap fixture are test
+inputs, not product dependencies, defaults, or routing knowledge.
 
 For this milestone, endpoint values remain structural configuration rather than
 preassembled URL or request strings. `query NAME=value` and `header NAME=value`

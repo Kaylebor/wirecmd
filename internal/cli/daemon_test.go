@@ -633,7 +633,7 @@ func TestOfficialMemoryFixture(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
 	configPath := filepath.Join(t.TempDir(), "memory.kdl")
-	writeSource(t, configPath, "wirecmd {\nserver \"memory\" {\nscope \"workspace\"\nstdio "+strconv.Quote(binary)+"\n}\n}\n")
+	writeSource(t, configPath, "wirecmd {\nmcp \"memory\" {\nscope \"workspace\"\nstdio "+strconv.Quote(binary)+"\n}\n}\n")
 	entity := `{"entities":[{"name":"WirecmdFixture","entityType":"test","observations":["retained"]}]}`
 	code, output, stderr := invoke(t, []string{"--config", configPath, "--json", entity, "memory", "create_entities"})
 	if code != exitOK || stderr != "" {
@@ -935,11 +935,11 @@ func startTestDaemon(t *testing.T) *daemon {
 }
 
 func helperSource(extra string) string {
-	return "wirecmd {\nserver \"helper\" {\nscope \"workspace\"\nstdio " + strconv.Quote(os.Args[0]) + " {\narg \"-test.run=TestHelperProcess\"\narg \"--\"\n" + extra + "\n}\n}\n}\n"
+	return "wirecmd {\nmcp \"helper\" {\nscope \"workspace\"\nstdio " + strconv.Quote(os.Args[0]) + " {\narg \"-test.run=TestHelperProcess\"\narg \"--\"\n" + extra + "\n}\n}\n}\n"
 }
 
 func helperSourceWithRoot(root string) string {
-	return "wirecmd {\nroot " + strconv.Quote(root) + "\nserver \"helper\" {\nscope \"workspace\"\nstdio " + strconv.Quote(os.Args[0]) + " {\narg \"-test.run=TestHelperProcess\"\narg \"--\"\n}\n}\n}\n"
+	return "wirecmd {\nroot " + strconv.Quote(root) + "\nmcp \"helper\" {\nscope \"workspace\"\nstdio " + strconv.Quote(os.Args[0]) + " {\narg \"-test.run=TestHelperProcess\"\narg \"--\"\n}\n}\n}\n"
 }
 
 func writeSource(t *testing.T, path, source string) {

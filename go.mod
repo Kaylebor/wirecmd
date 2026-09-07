@@ -3,6 +3,7 @@ module github.com/Kaylebor/wirecmd
 go 1.26.0
 
 require (
+	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/njreid/gokdl2 v0.6.0
 	github.com/zalando/go-keyring v0.2.8

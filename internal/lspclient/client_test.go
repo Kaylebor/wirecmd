@@ -80,11 +80,11 @@ func TestSessionLifecycleAndDiskRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := helperCommand("incremental")
-	session, err := Start(context.Background(), command, "go", workspace, "test")
+	session, err := Start(context.Background(), command, workspace, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	target, err := PrepareDefinition(path, 1, 3)
+	target, err := PrepareTarget(path, 1, 3, "go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestSessionLifecycleAndDiskRefresh(t *testing.T) {
 	if err := os.WriteFile(path, []byte("changed\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	target, err = PrepareDefinition(path, 1, 2)
+	target, err = PrepareTarget(path, 1, 2, "go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,18 +111,32 @@ func TestSessionLifecycleAndDiskRefresh(t *testing.T) {
 }
 
 func TestStartRejectsCapabilitiesAndEncoding(t *testing.T) {
-	for _, test := range []struct {
-		mode string
-		want error
-	}{{"no-definition", ErrCapabilityUnavailable}, {"utf8", ErrEncodingUnsupported}} {
-		t.Run(test.mode, func(t *testing.T) {
-			workspace := t.TempDir()
-			_, err := Start(context.Background(), helperCommand(test.mode), "plain", workspace, "test")
-			if !errorsIs(err, test.want) {
-				t.Fatalf("Start() error = %v, want %v", err, test.want)
-			}
-		})
-	}
+	t.Run("no-definition", func(t *testing.T) {
+		workspace := t.TempDir()
+		path := filepath.Join(workspace, "input.go")
+		if err := os.WriteFile(path, []byte("x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		session, err := Start(context.Background(), helperCommand("no-definition"), workspace, "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer session.Close()
+		target, err := PrepareTarget(path, 1, 1, "plain")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := session.Definition(context.Background(), target); !errorsIs(err, ErrCapabilityUnavailable) {
+			t.Fatalf("Definition() error = %v, want %v", err, ErrCapabilityUnavailable)
+		}
+	})
+	t.Run("utf8", func(t *testing.T) {
+		workspace := t.TempDir()
+		_, err := Start(context.Background(), helperCommand("utf8"), workspace, "test")
+		if !errorsIs(err, ErrEncodingUnsupported) {
+			t.Fatalf("Start() error = %v, want %v", err, ErrEncodingUnsupported)
+		}
+	})
 }
 
 func TestUnsupportedServerRequestIsReportedWhenDefinitionFails(t *testing.T) {
@@ -131,17 +145,110 @@ func TestUnsupportedServerRequestIsReportedWhenDefinitionFails(t *testing.T) {
 	if err := os.WriteFile(path, []byte("call()\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	session, err := Start(context.Background(), helperCommand("unsupported-request"), "plain", workspace, "test")
+	session, err := Start(context.Background(), helperCommand("unsupported-request"), workspace, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	target, err := PrepareDefinition(path, 1, 1)
+	target, err := PrepareTarget(path, 1, 1, "plain")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := session.Definition(context.Background(), target); !errorsIs(err, ErrServerRequestUnsupported) {
 		t.Fatalf("Definition() error = %v, want %v", err, ErrServerRequestUnsupported)
+	}
+}
+
+func TestNavigationOperationsAndStatus(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "input.go")
+	if err := os.WriteFile(path, []byte("symbol\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	session, err := Start(context.Background(), helperCommand("all"), workspace, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	status := session.Status()
+	if status.ServerName != "fake" || status.ServerVersion != "1.0" {
+		t.Fatalf("status identity = %+v", status)
+	}
+	if status.Capabilities.PositionEncoding != "utf-16" || status.Capabilities.TextDocumentSync != "incremental" || !status.Capabilities.OpenClose {
+		t.Fatalf("status synchronization = %+v", status.Capabilities)
+	}
+	if !status.Capabilities.Declaration || !status.Capabilities.Definition || !status.Capabilities.TypeDefinition || !status.Capabilities.Implementation || !status.Capabilities.References {
+		t.Fatalf("status capabilities = %+v", status.Capabilities)
+	}
+	target, err := PrepareTarget(path, 1, 1, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, call := range map[string]func() ([]Location, error){
+		"declaration":     func() ([]Location, error) { return session.Declaration(context.Background(), target) },
+		"definition":      func() ([]Location, error) { return session.Definition(context.Background(), target) },
+		"type-definition": func() ([]Location, error) { return session.TypeDefinition(context.Background(), target) },
+		"implementation":  func() ([]Location, error) { return session.Implementation(context.Background(), target) },
+		"references":      func() ([]Location, error) { return session.References(context.Background(), target, true) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			locations, err := call()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(locations) != 1 || locations[0].Path != path+"."+name {
+				t.Fatalf("locations = %#v", locations)
+			}
+		})
+	}
+}
+
+func TestDocumentLanguageIDIsSelectedAtSynchronizationTime(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "input.txt")
+	if err := os.WriteFile(path, []byte("symbol\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	session, err := Start(context.Background(), helperCommand("language"), workspace, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	for _, test := range []struct {
+		language string
+		wantPath string
+	}{{"go", path + ".go"}, {"rust", path + ".rust"}} {
+		target, err := PrepareTarget(path, 1, 1, test.language)
+		if err != nil {
+			t.Fatal(err)
+		}
+		locations, err := session.Definition(context.Background(), target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(locations) != 1 || locations[0].Path != test.wantPath {
+			t.Fatalf("language %q locations = %#v", test.language, locations)
+		}
+	}
+}
+
+func TestNormalizeNavigationResultVariants(t *testing.T) {
+	file := uri.File("/workspace/target.go")
+	rangeValue := protocol.Range{Start: protocol.Position{Line: 2, Character: 4}, End: protocol.Position{Line: 2, Character: 7}}
+	declarationLink := protocol.DeclarationLink{TargetURI: file, TargetSelectionRange: rangeValue}
+	for name, result := range map[string]any{
+		"declaration-links": protocol.DeclarationLinkSlice{declarationLink},
+		"references":        []protocol.Location{{URI: file, Range: rangeValue}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			locations, err := normalizeLocations(result)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(locations) != 1 || locations[0].Path != "/workspace/target.go" || locations[0].Range.Start != (Point{Line: 3, Column: 5}) {
+				t.Fatalf("locations = %#v", locations)
+			}
+		})
 	}
 }
 
@@ -154,7 +261,7 @@ func TestLSPHelperProcess(t *testing.T) {
 	if mode == "" {
 		return
 	}
-	server := &fakeServer{mode: mode, documents: map[uri.URI]string{}}
+	server := &fakeServer{mode: mode, documents: map[uri.URI]string{}, languages: map[uri.URI]string{}}
 	stream := jsonrpc2.NewStream(&stdioRWC{Reader: os.Stdin, Writer: os.Stdout})
 	ctx, conn, client := protocol.NewServer(context.Background(), server, stream)
 	server.client = client
@@ -173,12 +280,28 @@ type fakeServer struct {
 	protocol.UnimplementedServer
 	mode      string
 	documents map[uri.URI]string
+	languages map[uri.URI]string
 	client    protocol.Client
 	ctx       context.Context
 }
 
 func (s *fakeServer) Initialize(context.Context, *protocol.InitializeParams) (*protocol.InitializeResult, error) {
+	all := s.mode == "all"
 	capabilities := protocol.ServerCapabilities{DefinitionProvider: protocol.Boolean(s.mode != "no-definition")}
+	if all {
+		capabilities.DeclarationProvider = protocol.Boolean(true)
+		capabilities.TypeDefinitionProvider = protocol.Boolean(true)
+		capabilities.ImplementationProvider = protocol.Boolean(true)
+		capabilities.ReferencesProvider = protocol.Boolean(true)
+		kind := protocol.TextDocumentSyncKindIncremental
+		open := true
+		capabilities.TextDocumentSync = &protocol.TextDocumentSyncOptions{OpenClose: &open, Change: &kind}
+	}
+	if s.mode == "language" {
+		kind := protocol.TextDocumentSyncKindIncremental
+		open := true
+		capabilities.TextDocumentSync = &protocol.TextDocumentSyncOptions{OpenClose: &open, Change: &kind}
+	}
 	if s.mode == "utf8" {
 		capabilities.PositionEncoding = protocol.PositionEncodingKindUTF8
 	}
@@ -187,7 +310,7 @@ func (s *fakeServer) Initialize(context.Context, *protocol.InitializeParams) (*p
 		open := true
 		capabilities.TextDocumentSync = &protocol.TextDocumentSyncOptions{OpenClose: &open, Change: &kind}
 	}
-	return &protocol.InitializeResult{Capabilities: capabilities}, nil
+	return &protocol.InitializeResult{Capabilities: capabilities, ServerInfo: protocol.ServerInfo{Name: "fake", Version: protocol.NewOptional("1.0")}}, nil
 }
 
 func (*fakeServer) Initialized(context.Context, *protocol.InitializedParams) error { return nil }
@@ -196,6 +319,7 @@ func (*fakeServer) Exit(context.Context) error                                  
 
 func (s *fakeServer) DidOpen(_ context.Context, params *protocol.DidOpenTextDocumentParams) error {
 	s.documents[params.TextDocument.URI] = params.TextDocument.Text
+	s.languages[params.TextDocument.URI] = string(params.TextDocument.LanguageID)
 	return nil
 }
 
@@ -225,6 +349,30 @@ func (s *fakeServer) Definition(_ context.Context, params *protocol.DefinitionPa
 	if content == "a😀b\n" && params.Position.Character != 3 {
 		return nil, io.ErrUnexpectedEOF
 	}
-	target := uri.File(params.TextDocument.URI.FsPath() + ".definition")
+	suffix := ".definition"
+	if s.mode == "language" {
+		suffix = "." + s.languages[params.TextDocument.URI]
+	}
+	target := uri.File(params.TextDocument.URI.FsPath() + suffix)
 	return protocol.LocationSlice{{URI: target, Range: protocol.Range{Start: protocol.Position{Line: 1, Character: 2}, End: protocol.Position{Line: 1, Character: 4}}}}, nil
+}
+
+func (s *fakeServer) Declaration(_ context.Context, params *protocol.DeclarationParams) (protocol.DeclarationResult, error) {
+	return protocol.LocationSlice{{URI: uri.File(params.TextDocument.URI.FsPath() + ".declaration")}}, nil
+}
+
+func (s *fakeServer) TypeDefinition(_ context.Context, params *protocol.TypeDefinitionParams) (protocol.DefinitionResult, error) {
+	return protocol.LocationSlice{{URI: uri.File(params.TextDocument.URI.FsPath() + ".type-definition")}}, nil
+}
+
+func (s *fakeServer) Implementation(_ context.Context, params *protocol.ImplementationParams) (protocol.DefinitionResult, error) {
+	return protocol.LocationSlice{{URI: uri.File(params.TextDocument.URI.FsPath() + ".implementation")}}, nil
+}
+
+func (s *fakeServer) References(_ context.Context, params *protocol.ReferenceParams) ([]protocol.Location, error) {
+	suffix := ".references"
+	if !params.Context.IncludeDeclaration {
+		suffix += ".excluding-declaration"
+	}
+	return []protocol.Location{{URI: uri.File(params.TextDocument.URI.FsPath() + suffix)}}, nil
 }

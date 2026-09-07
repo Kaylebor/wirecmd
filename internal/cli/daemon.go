@@ -31,7 +31,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 5
+const daemonProtocol = 6
 
 type daemonAdmin struct {
 	command string
@@ -97,25 +97,27 @@ type secretInput struct {
 }
 
 type daemonRequest struct {
-	Operation   operation              `json:"operation"`
-	Server      string                 `json:"server,omitempty"`
-	Tool        string                 `json:"tool,omitempty"`
-	Arguments   map[string]any         `json:"arguments,omitempty"`
-	Projected   []projectedArgument    `json:"projected,omitempty"`
-	Overlay     map[string]any         `json:"overlay,omitempty"`
-	Help        helpKind               `json:"help,omitempty"`
-	CWD         string                 `json:"cwd"`
-	Configs     []string               `json:"configs,omitempty"`
-	Discovered  bool                   `json:"discovered,omitempty"`
-	Fingerprint string                 `json:"fingerprint,omitempty"`
-	Execution   string                 `json:"execution_fingerprint,omitempty"`
-	Secrets     map[string]secretInput `json:"secrets,omitempty"`
-	Admin       string                 `json:"admin,omitempty"`
-	Auth        string                 `json:"auth,omitempty"`
-	Interactive bool                   `json:"interactive,omitempty"`
-	LSPFile     string                 `json:"lsp_file,omitempty"`
-	LSPLine     int                    `json:"lsp_line,omitempty"`
-	LSPColumn   int                    `json:"lsp_column,omitempty"`
+	Operation             operation              `json:"operation"`
+	Server                string                 `json:"server,omitempty"`
+	Tool                  string                 `json:"tool,omitempty"`
+	Arguments             map[string]any         `json:"arguments,omitempty"`
+	Projected             []projectedArgument    `json:"projected,omitempty"`
+	Overlay               map[string]any         `json:"overlay,omitempty"`
+	Help                  helpKind               `json:"help,omitempty"`
+	CWD                   string                 `json:"cwd"`
+	Configs               []string               `json:"configs,omitempty"`
+	Discovered            bool                   `json:"discovered,omitempty"`
+	Fingerprint           string                 `json:"fingerprint,omitempty"`
+	Execution             string                 `json:"execution_fingerprint,omitempty"`
+	Secrets               map[string]secretInput `json:"secrets,omitempty"`
+	Admin                 string                 `json:"admin,omitempty"`
+	Auth                  string                 `json:"auth,omitempty"`
+	Interactive           bool                   `json:"interactive,omitempty"`
+	LSPFile               string                 `json:"lsp_file,omitempty"`
+	LSPLine               int                    `json:"lsp_line,omitempty"`
+	LSPColumn             int                    `json:"lsp_column,omitempty"`
+	LSPOperation          string                 `json:"lsp_operation,omitempty"`
+	LSPIncludeDeclaration bool                   `json:"lsp_include_declaration,omitempty"`
 }
 
 type daemonReply struct {
@@ -134,7 +136,7 @@ func appErrorFromBody(body *errorBody, code int) *appError {
 	if code == 0 {
 		code = exitInternal
 	}
-	return &appError{category: body.Category, code: body.Code, message: body.Message, action: body.Action, exitCode: code}
+	return &appError{category: body.Category, code: body.Code, message: body.Message, action: body.Action, details: body.Details, exitCode: code}
 }
 
 func absoluteConfigPaths(cwd string, paths []string) ([]string, error) {
@@ -211,10 +213,28 @@ func lspExecutionFingerprint(definition config.LSP, root *config.Root, cwd strin
 	if root != nil {
 		resolvedRoot = resolveRoot(*root)
 	}
-	return fingerprint(map[string]any{"v": 2, "root": resolvedRoot, "lsp": semanticLSP(definition)})
+	return fingerprint(map[string]any{"v": 3, "root": resolvedRoot, "lsp": semanticLSPExecution(definition)})
+}
+
+func lspMatchesExecutionFingerprint(matches []lspMatch, root *config.Root, cwd string) string {
+	resolvedRoot := cwd
+	if root != nil {
+		resolvedRoot = resolveRoot(*root)
+	}
+	definitions := make([]any, 0, len(matches))
+	for _, match := range matches {
+		definitions = append(definitions, []any{semanticLSPExecution(match.Definition), match.LanguageID})
+	}
+	return fingerprint(map[string]any{"v": 1, "root": resolvedRoot, "providers": definitions})
 }
 
 func semanticLSP(definition config.LSP) any {
+	value := semanticLSPExecution(definition).(map[string]any)
+	value["implementation_id"] = definition.ImplementationID
+	return value
+}
+
+func semanticLSPExecution(definition config.LSP) any {
 	args := make([]any, 0, len(definition.Stdio.Args))
 	for _, arg := range definition.Stdio.Args {
 		args = append(args, []any{arg.Kind, arg.Text})
@@ -223,7 +243,11 @@ func semanticLSP(definition config.LSP) any {
 	for _, entry := range definition.Stdio.Env {
 		env = append(env, []any{entry.Name, entry.Value.Kind, entry.Value.Text})
 	}
-	return map[string]any{"name": definition.Name, "scope": definition.Scope, "language_id": definition.LanguageID, "command": definition.Stdio.Command, "args": args, "env": env}
+	selectors := make([]any, 0, len(definition.Selectors))
+	for _, selector := range definition.Selectors {
+		selectors = append(selectors, []any{selector.LanguageID, selector.Pattern})
+	}
+	return map[string]any{"name": definition.Name, "scope": definition.Scope, "selectors": selectors, "command": definition.Stdio.Command, "args": args, "env": env}
 }
 
 func executionFingerprint(server config.Server, root *config.Root, cwd string) string {
@@ -366,6 +390,9 @@ type retainedInstance struct {
 	broken               bool
 	closed               bool
 	oauthRun             *oauthRuntime
+	lspName              string
+	lspWorkspace         string
+	lspGeneration        uint64
 }
 
 func (instance *retainedInstance) close() {
@@ -745,7 +772,7 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	if request.Admin != "" {
 		return d.executeAdmin(request.Admin)
 	}
-	if request.Operation != listServers && request.Operation != listTools && request.Operation != callTool && request.Operation != inspectTool && request.Operation != defineLSP {
+	if request.Operation != listServers && request.Operation != listTools && request.Operation != callTool && request.Operation != inspectTool && request.Operation != navigateLSP && request.Operation != statusLSP {
 		return errorReply(invocationError("daemon_operation_invalid", "invalid daemon operation", "use a compatible Wirecmd client"))
 	}
 	if !filepath.IsAbs(request.CWD) || len(request.Configs) == 0 {
@@ -794,51 +821,8 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	if request.Operation == listServers {
 		return resultReply(serverList(cached.config), warnings)
 	}
-	if request.Operation == defineLSP {
-		if !filepath.IsAbs(request.LSPFile) || request.LSPLine < 1 || request.LSPColumn < 1 || uint64(request.LSPLine) > math.MaxUint32 || uint64(request.LSPColumn) > math.MaxUint32 {
-			return errorReplyWithWarnings(invocationError("lsp_position_invalid", "daemon LSP requests require an absolute file and positive line and column", "use the Wirecmd CLI"), warnings)
-		}
-		definition, appErr := selectLSP(cached.config)
-		if appErr != nil {
-			return errorReplyWithWarnings(appErr, warnings)
-		}
-		if request.Fingerprint != cached.fingerprint && request.Execution != lspExecutionFingerprint(definition, cached.config.Root, request.CWD) {
-			return errorReplyWithWarnings(configurationError("config_mismatch", "selected LSP execution configuration differs from the daemon cache", "run wirecmd daemon reload and retry"), warnings)
-		}
-		if appErr := validateLSPSecretInputs(definition, request.Secrets); appErr != nil {
-			return errorReplyWithWarnings(appErr, warnings)
-		}
-		target, err := lspclient.PrepareDefinition(request.LSPFile, uint32(request.LSPLine), uint32(request.LSPColumn))
-		if err != nil {
-			return errorReplyWithWarnings(lspOperationError(err, "definition"), warnings)
-		}
-		instance, appErr := d.acquireLSP(ctx, definition, cached.config.Root, request.CWD, request.Secrets, generation)
-		if appErr != nil {
-			return errorReplyWithWarnings(appErr, warnings)
-		}
-		defer d.release(instance)
-		instance.mu.Lock()
-		defer instance.mu.Unlock()
-		if ctx.Err() != nil {
-			return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
-		}
-		if instance.closed || instance.lspSession == nil || instance.broken {
-			return errorReplyWithWarnings(transportError("lsp_instance_unavailable", "the retained LSP instance is unavailable", "run wirecmd daemon reload or restart the daemon"), warnings)
-		}
-		locations, err := instance.lspSession.Definition(ctx, target)
-		if err != nil {
-			mapped := lspOperationError(err, "definition").redacted(instance.redactor)
-			broken := instance.lspSession.Broken()
-			if broken == nil && (errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed)) {
-				broken = err
-			}
-			if broken != nil {
-				d.markBroken(instance)
-				mapped = transportError("lsp_instance_unavailable", broken.Error(), "run wirecmd daemon reload or restart the daemon").redacted(instance.redactor)
-			}
-			return errorReplyWithWarnings(mapped, warnings)
-		}
-		return resultReply(makeLSPDefinitionEnvelope(request.LSPFile, locations), warnings)
+	if request.Operation == navigateLSP || request.Operation == statusLSP {
+		return d.executeLSP(ctx, request, cached, generation, warnings)
 	}
 	server, ok := findServer(cached.config, request.Server)
 	if !ok {
@@ -942,6 +926,129 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	return resultReply(result, warnings)
 }
 
+func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *daemonConfig, generation uint64, warnings []string) daemonReply {
+	workspace := effectiveLSPWorkspace(cached.config.Root, request.CWD)
+	if request.Operation == statusLSP {
+		if request.LSPFile != "" && !filepath.IsAbs(request.LSPFile) {
+			return errorReplyWithWarnings(invocationError("lsp_file_invalid", "daemon LSP status requires an absolute file", "use the Wirecmd CLI"), warnings)
+		}
+		return resultReply(makeLSPStatusEnvelope(cached.config.LSPs, workspace, request.LSPFile, d.lspRuntimeStatuses(cached.config.LSPs, workspace, generation)), warnings)
+	}
+	if !isLSPNavigation(request.LSPOperation) || !filepath.IsAbs(request.LSPFile) || request.LSPLine < 1 || request.LSPColumn < 1 || uint64(request.LSPLine) > math.MaxUint32 || uint64(request.LSPColumn) > math.MaxUint32 {
+		return errorReplyWithWarnings(invocationError("lsp_request_invalid", "daemon LSP requests require a supported operation, absolute file, and positive line and column", "use the Wirecmd CLI"), warnings)
+	}
+	matches, appErr := matchLSPDefinitions(cached.config.LSPs, workspace, request.LSPFile)
+	if appErr != nil {
+		return errorReplyWithWarnings(appErr, warnings)
+	}
+	if request.Fingerprint != cached.fingerprint && request.Execution != lspMatchesExecutionFingerprint(matches, cached.config.Root, request.CWD) {
+		return errorReplyWithWarnings(configurationError("config_mismatch", "selected LSP execution configuration differs from the daemon cache", "run wirecmd daemon reload and retry"), warnings)
+	}
+	for _, match := range matches {
+		if appErr := validateLSPSecretInputs(match.Definition, request.Secrets); appErr != nil {
+			return errorReplyWithWarnings(appErr, warnings)
+		}
+		if _, err := lspclient.PrepareTarget(request.LSPFile, uint32(request.LSPLine), uint32(request.LSPColumn), match.LanguageID); err != nil {
+			return errorReplyWithWarnings(lspOperationError(err, request.LSPOperation), warnings)
+		}
+	}
+	results := make([]lspProviderRun, len(matches))
+	var wait sync.WaitGroup
+	for index, match := range matches {
+		wait.Add(1)
+		go func(index int, match lspMatch) {
+			defer wait.Done()
+			target, err := lspclient.PrepareTarget(request.LSPFile, uint32(request.LSPLine), uint32(request.LSPColumn), match.LanguageID)
+			if err != nil {
+				results[index].Err = lspOperationError(err, request.LSPOperation)
+				return
+			}
+			instance, appErr := d.acquireLSP(ctx, match.Definition, cached.config.Root, request.CWD, request.Secrets, generation)
+			if appErr != nil {
+				results[index].Err = appErr
+				return
+			}
+			defer d.release(instance)
+			instance.mu.Lock()
+			defer instance.mu.Unlock()
+			if ctx.Err() != nil {
+				results[index].Err = transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request")
+				return
+			}
+			if instance.closed || instance.lspSession == nil || instance.broken {
+				results[index].Err = transportError("lsp_instance_unavailable", "the retained LSP instance is unavailable", "run wirecmd daemon reload or restart the daemon")
+				return
+			}
+			locations, err := callLSPNavigation(ctx, instance.lspSession, target, request.LSPOperation, request.LSPIncludeDeclaration)
+			if errors.Is(err, lspclient.ErrCapabilityUnavailable) {
+				results[index].Unsupported = true
+				return
+			}
+			if err != nil {
+				mapped := lspOperationError(err, request.LSPOperation).redacted(instance.redactor)
+				broken := instance.lspSession.Broken()
+				if broken == nil && (errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed)) {
+					broken = err
+				}
+				if broken != nil {
+					d.markBroken(instance)
+					mapped = transportError("lsp_instance_unavailable", broken.Error(), "run wirecmd daemon reload or restart the daemon").redacted(instance.redactor)
+				}
+				results[index].Err = mapped
+				return
+			}
+			results[index].Locations = locations
+		}(index, match)
+	}
+	wait.Wait()
+	result, appErr := aggregateLSPResults(request.LSPOperation, request.LSPFile, matches, results)
+	if appErr != nil {
+		return errorReplyWithWarnings(appErr, warnings)
+	}
+	return resultReply(result, warnings)
+}
+
+func (d *daemon) lspRuntimeStatuses(definitions []config.LSP, workspace string, generation uint64) map[string]lspRuntimeStatus {
+	wanted := make(map[string]struct{}, len(definitions))
+	for _, definition := range definitions {
+		wanted[definition.Name] = struct{}{}
+	}
+	d.mu.Lock()
+	type candidate struct {
+		key      string
+		name     string
+		instance *retainedInstance
+		broken   bool
+	}
+	candidates := make([]candidate, 0)
+	for key, entry := range d.pools {
+		if entry.instance == nil || entry.instance.lspSession == nil || entry.instance.lspWorkspace != workspace || entry.instance.lspGeneration != generation {
+			continue
+		}
+		if _, ok := wanted[entry.instance.lspName]; ok {
+			candidates = append(candidates, candidate{key: key, name: entry.instance.lspName, instance: entry.instance, broken: entry.broken})
+		}
+	}
+	d.mu.Unlock()
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].key < candidates[j].key })
+	result := make(map[string]lspRuntimeStatus, len(candidates))
+	for _, candidate := range candidates {
+		candidate.instance.mu.Lock()
+		status := candidate.instance.lspSession.Status()
+		candidate.instance.mu.Unlock()
+		state := "connected"
+		if candidate.broken {
+			state = "broken"
+		}
+		capabilities := status.Capabilities
+		if existing, ok := result[candidate.name]; ok && (existing.Status == "connected" || state == "broken") {
+			continue
+		}
+		result[candidate.name] = lspRuntimeStatus{Status: state, ServerName: status.ServerName, ServerVersion: status.ServerVersion, Capabilities: &capabilities}
+	}
+	return result
+}
+
 func (d *daemon) currentGeneration() uint64 {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -1016,12 +1123,12 @@ func (d *daemon) startLSPInstance(entry *poolEntry, key string, definition confi
 		if root != nil {
 			workspace = resolveRoot(*root)
 		}
-		session, err := lspclient.Start(d.ctx, lspclient.Command{Path: command.Path, Args: command.Args[1:], Env: command.Env, Dir: command.Dir, Stderr: redactor}, definition.LanguageID, workspace, buildinfo.Version())
+		session, err := lspclient.Start(d.ctx, lspclient.Command{Path: command.Path, Args: command.Args[1:], Env: command.Env, Dir: command.Dir, Stderr: redactor}, workspace, buildinfo.Version())
 		if err != nil {
 			redactor.FlushTo(d.stderr)
 			appErr = lspOperationError(err, "initialize").redacted(redactor)
 		} else {
-			started = &retainedInstance{lspSession: session, redactor: redactor}
+			started = &retainedInstance{lspSession: session, redactor: redactor, lspName: definition.Name, lspWorkspace: workspace, lspGeneration: generation}
 		}
 	}
 	d.mu.Lock()
@@ -1051,7 +1158,8 @@ func (d *daemon) lspAuthIdentity(definition config.LSP, inputs map[string]secret
 			return
 		}
 		name := strings.TrimPrefix(value.Text, "env://")
-		items = append(items, destination+"\x00"+inputs[name].Value)
+		input := inputs[name]
+		items = append(items, fmt.Sprintf("%s\x00%t\x00%s", destination, input.Present, input.Value))
 	}
 	for index, value := range definition.Stdio.Args {
 		add(fmt.Sprintf("arg[%d]", index), value)
@@ -1359,7 +1467,7 @@ func resultReply(value any, warnings []string) daemonReply {
 func errorReply(appErr *appError) daemonReply { return errorReplyWithWarnings(appErr, nil) }
 
 func errorReplyWithWarnings(appErr *appError, warnings []string) daemonReply {
-	reply := daemonReply{Error: &errorBody{Category: appErr.category, Code: appErr.code, Message: appErr.message, Action: appErr.action}, ExitCode: appErr.exitCode, Warnings: warnings}
+	reply := daemonReply{Error: &errorBody{Category: appErr.category, Code: appErr.code, Message: appErr.message, Action: appErr.action, Details: appErr.details}, ExitCode: appErr.exitCode, Warnings: warnings}
 	if appErr.result != nil {
 		if encoded, err := json.Marshal(appErr.result); err == nil {
 			reply.Result = encoded

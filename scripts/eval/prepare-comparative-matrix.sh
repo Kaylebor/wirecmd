@@ -204,9 +204,9 @@ stage_arm() {
             {
                 printf 'wirecmd {\n'
                 printf '    root %s\n' "$(kdl_string "$workspace")"
-                printf '    server "memory" {\n        scope "workspace"\n        stdio %s\n    }\n' "$(kdl_string "$fixture_dir/memory-server")"
-                printf '    server "remote-tests" {\n        scope "workspace"\n        http %s\n    }\n' "$(kdl_string "http://127.0.0.1:$port/mcp")"
-                printf '    server "everything" {\n        scope "workspace"\n        stdio %s\n    }\n' "$(kdl_string "$fixture_dir/everything-server")"
+                printf '    mcp "memory" {\n        scope "workspace"\n        stdio %s\n    }\n' "$(kdl_string "$fixture_dir/memory-server")"
+                printf '    mcp "remote-tests" {\n        scope "workspace"\n        http %s\n    }\n' "$(kdl_string "http://127.0.0.1:$port/mcp")"
+                printf '    mcp "everything" {\n        scope "workspace"\n        stdio %s\n    }\n' "$(kdl_string "$fixture_dir/everything-server")"
                 printf '}\n'
             } >"$wirecmd_config"
             {

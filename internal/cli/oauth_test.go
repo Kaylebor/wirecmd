@@ -96,7 +96,7 @@ func TestParseAuthAdmin(t *testing.T) {
 func TestDirectAuthStatusAndLogoutDoNotContactServer(t *testing.T) {
 	useTestOAuthStore(t, &testKeyring{})
 	endpoint := "http://127.0.0.1:1/mcp"
-	path := writeConfig(t, `wirecmd { server "remote" { scope "workspace"; http "`+endpoint+`" } }`)
+	path := writeConfig(t, `wirecmd { mcp "remote" { scope "workspace"; http "`+endpoint+`" } }`)
 	for _, command := range []string{"status", "logout"} {
 		code, output, stderr := invoke(t, []string{"--direct", "--config", path, "auth", command, "remote"})
 		if code != 0 || stderr != "" {
@@ -115,7 +115,7 @@ func TestNoninteractiveProtectedHTTPReturnsAuthorizationRequired(t *testing.T) {
 		writer.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer server.Close()
-	path := writeConfig(t, `wirecmd { server "remote" { scope "workspace"; http "`+server.URL+`" } }`)
+	path := writeConfig(t, `wirecmd { mcp "remote" { scope "workspace"; http "`+server.URL+`" } }`)
 	code, output, _ := invoke(t, []string{"--direct", "--config", path, "remote"})
 	if code != exitAuthentication || !strings.Contains(output, `"code":"authorization_required"`) || !strings.Contains(output, `wirecmd auth login`) {
 		t.Fatalf("protected HTTP: code=%d output=%s", code, output)
@@ -125,7 +125,7 @@ func TestNoninteractiveProtectedHTTPReturnsAuthorizationRequired(t *testing.T) {
 func TestUnavailableKeyringDoesNotBlockPublicHTTP(t *testing.T) {
 	useTestOAuthStore(t, &testKeyring{err: errors.New("no secret service")})
 	fixture := newHTTPFixture(t)
-	path := writeConfig(t, `wirecmd { server "remote" { scope "workspace"; http "`+fixture.Server.URL+`" } }`)
+	path := writeConfig(t, `wirecmd { mcp "remote" { scope "workspace"; http "`+fixture.Server.URL+`" } }`)
 	code, output, stderr := invoke(t, []string{"--direct", "--config", path, "remote"})
 	if code != 0 {
 		t.Fatalf("public HTTP: code=%d stderr=%q output=%s", code, stderr, output)
@@ -135,7 +135,7 @@ func TestUnavailableKeyringDoesNotBlockPublicHTTP(t *testing.T) {
 func TestUnavailableKeyringOnProtectedHTTPRequiresUserAction(t *testing.T) {
 	useTestOAuthStore(t, &testKeyring{err: errors.New("no secret service")})
 	fixture := newOAuthFixture(t, oauthFixtureOptions{})
-	path := writeConfig(t, `wirecmd { server "remote" { scope "workspace"; http "`+fixture.Server.URL+`/mcp" } }`)
+	path := writeConfig(t, `wirecmd { mcp "remote" { scope "workspace"; http "`+fixture.Server.URL+`/mcp" } }`)
 	code, output, _ := invoke(t, []string{"--direct", "--config", path, "remote"})
 	if code != exitUserAction || !strings.Contains(output, `"code":"credential_store_unavailable"`) {
 		t.Fatalf("protected keyring failure: code=%d output=%s", code, output)
@@ -515,7 +515,7 @@ func TestStaticAuthorizationAndServerListingDoNotUseKeyring(t *testing.T) {
 			keyring := &testKeyring{err: errors.New("keyring must not be used")}
 			useTestOAuthStore(t, keyring)
 			fixture := newHTTPFixture(t)
-			path := writeConfig(t, `wirecmd { server "remote" { scope "workspace"; http "`+fixture.Server.URL+`"`+test.config+` } }`)
+			path := writeConfig(t, `wirecmd { mcp "remote" { scope "workspace"; http "`+fixture.Server.URL+`"`+test.config+` } }`)
 			args := append([]string{"--direct", "--config", path}, test.args...)
 			code, output, stderr := invoke(t, args)
 			if code != exitOK {
@@ -636,7 +636,7 @@ func TestOAuthFixtureRunDoesNotExposeCredentialValues(t *testing.T) {
 	}
 	redirect := "http://" + probe.Addr().String() + "/callback"
 	_ = probe.Close()
-	path := writeConfig(t, `wirecmd { server "remote" { scope "workspace"; http "`+fixture.Server.URL+`/mcp" { oauth { client-id "fixture-client"; client-secret (secret)"env://WIRECMD_FIXTURE_CLIENT_SECRET"; redirect-uri "`+redirect+`" } } } }`)
+	path := writeConfig(t, `wirecmd { mcp "remote" { scope "workspace"; http "`+fixture.Server.URL+`/mcp" { oauth { client-id "fixture-client"; client-secret (secret)"env://WIRECMD_FIXTURE_CLIENT_SECRET"; redirect-uri "`+redirect+`" } } } }`)
 	t.Setenv("WIRECMD_FIXTURE_CLIENT_SECRET", secret)
 	previousTerminal, previousOpen := isInteractiveTerminal, openAuthorizationURL
 	isInteractiveTerminal = func(io.Reader, io.Writer) bool { return true }
@@ -686,7 +686,7 @@ func TestOAuthFixtureRunDoesNotExposeCredentialValues(t *testing.T) {
 func TestOAuthFixtureExplicitLoginReusesRegistrationAndReplacesCredential(t *testing.T) {
 	useTestOAuthStore(t, &testKeyring{})
 	fixture := newOAuthFixture(t, oauthFixtureOptions{IssuerInCallback: true})
-	path := writeConfig(t, `wirecmd { server "remote" { scope "workspace"; http "`+fixture.Server.URL+`/mcp" } }`)
+	path := writeConfig(t, `wirecmd { mcp "remote" { scope "workspace"; http "`+fixture.Server.URL+`/mcp" } }`)
 	previousTerminal, previousOpen := isInteractiveTerminal, openAuthorizationURL
 	isInteractiveTerminal = func(io.Reader, io.Writer) bool { return true }
 	openAuthorizationURL = func(raw string) error { completeFixtureAuthorization(raw); return nil }
@@ -737,7 +737,7 @@ func TestOAuthFixtureDaemonLogoutRetiresCredentialSession(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 	startTestDaemon(t)
 	fixture := newOAuthFixture(t, oauthFixtureOptions{IssuerInCallback: true})
-	path := writeConfig(t, `wirecmd { server "remote" { scope "workspace"; http "`+fixture.Server.URL+`/mcp" } }`)
+	path := writeConfig(t, `wirecmd { mcp "remote" { scope "workspace"; http "`+fixture.Server.URL+`/mcp" } }`)
 	previousTerminal, previousOpen := isInteractiveTerminal, openAuthorizationURL
 	isInteractiveTerminal = func(io.Reader, io.Writer) bool { return true }
 	openAuthorizationURL = func(raw string) error { completeFixtureAuthorization(raw); return nil }
@@ -778,7 +778,7 @@ func TestOAuthFixtureDaemonReusesAutomaticAuthorizationSession(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 	startTestDaemon(t)
 	fixture := newOAuthFixture(t, oauthFixtureOptions{IssuerInCallback: true})
-	path := writeConfig(t, `wirecmd { server "remote" { scope "workspace"; http "`+fixture.Server.URL+`/mcp" } }`)
+	path := writeConfig(t, `wirecmd { mcp "remote" { scope "workspace"; http "`+fixture.Server.URL+`/mcp" } }`)
 	previousTerminal, previousOpen := isInteractiveTerminal, openAuthorizationURL
 	isInteractiveTerminal = func(io.Reader, io.Writer) bool { return true }
 	openAuthorizationURL = func(raw string) error { completeFixtureAuthorization(raw); return nil }
@@ -824,7 +824,7 @@ func TestOAuthFixtureDirectCredentialChangesRetireDaemonSession(t *testing.T) {
 			t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 			startTestDaemon(t)
 			fixture := newOAuthFixture(t, oauthFixtureOptions{IssuerInCallback: true})
-			path := writeConfig(t, `wirecmd { server "remote" { scope "workspace"; http "`+fixture.Server.URL+`/mcp" } }`)
+			path := writeConfig(t, `wirecmd { mcp "remote" { scope "workspace"; http "`+fixture.Server.URL+`/mcp" } }`)
 			previousTerminal, previousOpen := isInteractiveTerminal, openAuthorizationURL
 			isInteractiveTerminal = func(io.Reader, io.Writer) bool { return true }
 			openAuthorizationURL = func(raw string) error { completeFixtureAuthorization(raw); return nil }

@@ -69,7 +69,7 @@ header. The SDK uses dynamic client registration in that case. A preregistered
 client is configured as follows:
 
 ```kdl
-server "remote" {
+mcp "remote" {
     scope "workspace"
     http "https://example.test/mcp" {
         oauth {

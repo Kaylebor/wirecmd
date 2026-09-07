@@ -1,6 +1,6 @@
 wirecmd {
     root "/workspace"
-    server "memory" {
+    mcp "memory" {
         scope "workspace"
         stdio "go" {
             arg "run"

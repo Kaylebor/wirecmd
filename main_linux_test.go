@@ -47,7 +47,7 @@ func TestSIGTERMClosesDirectStdioChild(t *testing.T) {
 	pidPath := filepath.Join(directory, "child.pid")
 	configPath := filepath.Join(directory, "wirecmd.kdl")
 	config := `wirecmd {
-    server "blocking" {
+    mcp "blocking" {
         scope "workspace"
         stdio ` + strconv.Quote(os.Args[0]) + ` {
             arg "-test.run=TestBlockingMCPProcess"

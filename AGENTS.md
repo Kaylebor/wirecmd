@@ -20,8 +20,8 @@
   query/header configuration milestone and its acceptance criteria.
 - `docs/oauth-plan.md` is authoritative for the completed transparent OAuth and
   encrypted credential-persistence milestone and its acceptance criteria.
-- `docs/lsp-plan.md` is authoritative for the completed native LSP definition
-  milestone and the accepted server-neutral multi-provider navigation roadmap.
+- `docs/lsp-plan.md` is authoritative for the completed server-neutral,
+  selector-routed multi-provider LSP navigation milestone.
 - `docs/release-readiness.md` is authoritative for first-alpha installation,
   Linux qualification, versioning, and the manual publication boundary.
 - `docs/macos-plan.md` is authoritative for the current macOS Apple Silicon

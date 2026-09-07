@@ -352,6 +352,7 @@ Start here:
   wirecmd SERVER                     list that server's tools
   wirecmd --help SERVER TOOL          inspect arguments before calling
   wirecmd lsp definition --file PATH --line N --column N
+  wirecmd lsp status [--file PATH]
 
 Prefix flags (before server/tool names):
   --config PATH                      repeatable; later files override earlier
@@ -376,7 +377,9 @@ Static help (offline: wirecmd --help daemon|config|auth|lsp):
   wirecmd config trust status [PATH]
   wirecmd config trust list
   wirecmd [--config PATH] [--direct] auth login|status|logout SERVER
-  wirecmd [client flags] lsp definition --file PATH --line N --column N
+  wirecmd [client flags] lsp definition|declaration|type-definition|implementation --file PATH --line N --column N
+  wirecmd [client flags] lsp references [--include-declaration] --file PATH --line N --column N
+  wirecmd [client flags] lsp status [--file PATH]
 
 Focused help:
   wirecmd [client flags] --help SERVER [TOOL]

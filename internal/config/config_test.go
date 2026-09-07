@@ -33,10 +33,10 @@ func TestParseAndComposeOneSource(t *testing.T) {
 	if server.Name != "memory" || server.Scope != ScopeWorkspace {
 		t.Fatalf("server = %#v", server)
 	}
-	if server.ScopeProvenance != (Provenance{File: "testdata/valid.kdl", Path: `wirecmd.server["memory"].scope`}) {
+	if server.ScopeProvenance != (Provenance{File: "testdata/valid.kdl", Path: `wirecmd.mcp["memory"].scope`}) {
 		t.Fatalf("scope provenance = %#v", server.ScopeProvenance)
 	}
-	if server.Stdio.Command != "go" || server.Stdio.CommandProvenance != (Provenance{File: "testdata/valid.kdl", Path: `wirecmd.server["memory"].stdio`}) {
+	if server.Stdio.Command != "go" || server.Stdio.CommandProvenance != (Provenance{File: "testdata/valid.kdl", Path: `wirecmd.mcp["memory"].stdio`}) {
 		t.Fatalf("command = %#v", server.Stdio)
 	}
 	if got, want := valueTexts(server.Stdio.Args), []string{"run", "./cmd/memory"}; !sameStrings(got, want) {
@@ -52,7 +52,7 @@ func TestParseAndComposeOneSource(t *testing.T) {
 	if secret.Kind != ValueSecretReference || secret.Text != "env://MEMORY_TOKEN" || !secret.IsSecret() {
 		t.Fatalf("secret value = %#v", secret)
 	}
-	if secret.Provenance != (Provenance{File: "testdata/valid.kdl", Path: `wirecmd.server["memory"].stdio.env["TOKEN"]`}) {
+	if secret.Provenance != (Provenance{File: "testdata/valid.kdl", Path: `wirecmd.mcp["memory"].stdio.env["TOKEN"]`}) {
 		t.Fatalf("secret provenance = %#v", secret.Provenance)
 	}
 }
@@ -63,10 +63,10 @@ func TestParseAllowsPartialSources(t *testing.T) {
 		source string
 	}{
 		{name: "root only", source: `wirecmd { root "/workspace" }`},
-		{name: "server only", source: `wirecmd { server "memory" }`},
-		{name: "scope only", source: `wirecmd { server "memory" { scope "workspace"; } }`},
-		{name: "stdio only", source: `wirecmd { server "memory" { stdio { env FLAG="" } } }`},
-		{name: "http only", source: `wirecmd { server "remote" { http } }`},
+		{name: "server only", source: `wirecmd { mcp "memory" }`},
+		{name: "scope only", source: `wirecmd { mcp "memory" { scope "workspace"; } }`},
+		{name: "stdio only", source: `wirecmd { mcp "memory" { stdio { env FLAG="" } } }`},
+		{name: "http only", source: `wirecmd { mcp "remote" { http } }`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -80,7 +80,7 @@ func TestParseAllowsPartialSources(t *testing.T) {
 func TestComposeMergesPartialSourcesAndRetainsProvenance(t *testing.T) {
 	base, err := ParseString("base.kdl", `wirecmd {
         root "/base"
-        server "memory" {
+        mcp "memory" {
             scope "workspace"
             stdio "go" {
                 arg "run"
@@ -89,21 +89,21 @@ func TestComposeMergesPartialSourcesAndRetainsProvenance(t *testing.T) {
                 env SHARED="base"
             }
         }
-		server "keep" { scope "workspace"; stdio "keep" }
+		mcp "keep" { scope "workspace"; stdio "keep" }
     }`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	local, err := ParseString("local.kdl", `wirecmd {
         root "/local"
-        server "memory" {
+        mcp "memory" {
             stdio "memory-local" {
                 arg "serve"
                 env SHARED="local"
                 env EMPTY=""
             }
         }
-		server "added" { scope "workspace"; stdio "added" { env FIRST="one" } }
+		mcp "added" { scope "workspace"; stdio "added" { env FIRST="one" } }
     }`)
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestComposeMergesPartialSourcesAndRetainsProvenance(t *testing.T) {
 	if got, want := valueTexts(memory.Stdio.Args), []string{"serve"}; !sameStrings(got, want) {
 		t.Fatalf("arguments = %#v, want %#v", got, want)
 	}
-	if memory.Stdio.Args[0].File != "local.kdl" || memory.Stdio.Args[0].Path != `wirecmd.server["memory"].stdio.arg[0]` {
+	if memory.Stdio.Args[0].File != "local.kdl" || memory.Stdio.Args[0].Path != `wirecmd.mcp["memory"].stdio.arg[0]` {
 		t.Fatalf("argument provenance = %#v", memory.Stdio.Args[0].Provenance)
 	}
 	if got, want := envNames(memory.Stdio.Env), []string{"BASE", "SHARED", "EMPTY"}; !sameStrings(got, want) {
@@ -142,11 +142,11 @@ func TestComposeMergesPartialSourcesAndRetainsProvenance(t *testing.T) {
 }
 
 func TestComposeUsesSameOrderForExplicitAndDiscoverySources(t *testing.T) {
-	global, err := ParseString("global.kdl", `wirecmd { server "memory" { scope "workspace"; stdio "global" } }`)
+	global, err := ParseString("global.kdl", `wirecmd { mcp "memory" { scope "workspace"; stdio "global" } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := ParseString("project.kdl", `wirecmd { server "memory" { stdio "project" } }`)
+	project, err := ParseString("project.kdl", `wirecmd { mcp "memory" { stdio "project" } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,11 +169,11 @@ func TestComposeValidatesOnlyEffectiveConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverOnly, err := ParseString("server.kdl", `wirecmd { server "memory" { scope "workspace"; } }`)
+	serverOnly, err := ParseString("server.kdl", `wirecmd { mcp "memory" { scope "workspace"; } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stdioOnly, err := ParseString("stdio.kdl", `wirecmd { server "memory" { stdio "memory" } }`)
+	stdioOnly, err := ParseString("stdio.kdl", `wirecmd { mcp "memory" { stdio "memory" } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,9 +187,9 @@ func TestComposeValidatesOnlyEffectiveConfiguration(t *testing.T) {
 		want   string
 	}{
 		{name: "no server", source: `wirecmd { root "/workspace" }`, want: "expected at least one server"},
-		{name: "missing scope", source: `wirecmd { server "memory" { stdio "memory" } }`, want: `server["memory"].scope: scope is required`},
-		{name: "missing transport", source: `wirecmd { server "memory" { scope "workspace"; } }`, want: `server["memory"].stdio: stdio or http is required`},
-		{name: "missing executable", source: `wirecmd { server "memory" { scope "workspace"; stdio { env FLAG="one" } } }`, want: `server["memory"].stdio: executable is required`},
+		{name: "missing scope", source: `wirecmd { mcp "memory" { stdio "memory" } }`, want: `mcp["memory"].scope: scope is required`},
+		{name: "missing transport", source: `wirecmd { mcp "memory" { scope "workspace"; } }`, want: `mcp["memory"].stdio: stdio or http is required`},
+		{name: "missing executable", source: `wirecmd { mcp "memory" { scope "workspace"; stdio { env FLAG="one" } } }`, want: `mcp["memory"].stdio: executable is required`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -208,14 +208,14 @@ func TestComposeValidatesOnlyEffectiveConfiguration(t *testing.T) {
 func TestComposeAllowsInvalidWeakerScalarsToBeOverridden(t *testing.T) {
 	weaker, err := ParseString("weaker.kdl", `wirecmd {
         root ""
-        server "memory" { scope "unsupported"; stdio "memory" }
+        mcp "memory" { scope "unsupported"; stdio "memory" }
     }`)
 	if err != nil {
 		t.Fatalf("ParseString(weaker) error = %v", err)
 	}
 	stronger, err := ParseString("stronger.kdl", `wirecmd {
         root "/workspace"
-        server "memory" { scope "workspace" }
+        mcp "memory" { scope "workspace" }
     }`)
 	if err != nil {
 		t.Fatalf("ParseString(stronger) error = %v", err)
@@ -228,11 +228,11 @@ func TestComposeAllowsInvalidWeakerScalarsToBeOverridden(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `weaker.kdl: wirecmd.root: path must not be empty`) {
 		t.Fatalf("Compose(weaker) error = %v", err)
 	}
-	invalidScope, err := ParseString("invalid-scope.kdl", `wirecmd { server "memory" { scope "unsupported"; stdio "memory" } }`)
+	invalidScope, err := ParseString("invalid-scope.kdl", `wirecmd { mcp "memory" { scope "unsupported"; stdio "memory" } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Compose(invalidScope); err == nil || !strings.Contains(err.Error(), `invalid-scope.kdl: wirecmd.server["memory"].scope: unsupported scope "unsupported"`) {
+	if _, err := Compose(invalidScope); err == nil || !strings.Contains(err.Error(), `invalid-scope.kdl: wirecmd.mcp["memory"].scope: unsupported scope "unsupported"`) {
 		t.Fatalf("Compose(invalidScope) error = %v", err)
 	}
 }
@@ -241,10 +241,10 @@ func TestLoadEffectiveUsesOrderedPathsAndIdentifiesFailures(t *testing.T) {
 	directory := t.TempDir()
 	basePath := filepath.Join(directory, "base.kdl")
 	localPath := filepath.Join(directory, "local.kdl")
-	if err := os.WriteFile(basePath, []byte(`wirecmd { server "memory" { scope "workspace"; stdio "base" } }`), 0o600); err != nil {
+	if err := os.WriteFile(basePath, []byte(`wirecmd { mcp "memory" { scope "workspace"; stdio "base" } }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(localPath, []byte(`wirecmd { server "memory" { stdio "local" } }`), 0o600); err != nil {
+	if err := os.WriteFile(localPath, []byte(`wirecmd { mcp "memory" { stdio "local" } }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -275,7 +275,7 @@ func TestDiscoveredWorkspaceLoadRejectsSymlinkWithoutChangingExplicitLoad(t *tes
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target.kdl")
 	link := filepath.Join(dir, "wirecmd.kdl")
-	source := `wirecmd { server "helper" { scope "workspace"; stdio "helper" } }`
+	source := `wirecmd { mcp "helper" { scope "workspace"; stdio "helper" } }`
 	if err := os.WriteFile(target, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -308,8 +308,8 @@ func TestParseRejectsMalformedAndUnknownStructure(t *testing.T) {
 	}{
 		{name: "unknown root child", source: `wirecmd { transport "http" }`, want: `unknown child node "transport"`},
 		{name: "duplicate configured root", source: `wirecmd { root "/one"; root "/two" }`, want: "duplicate root"},
-		{name: "unknown server child", source: `wirecmd { server "memory" { websocket "wss://example.test" } }`, want: `unknown child node "websocket"`},
-		{name: "duplicate environment", source: `wirecmd { server "memory" { stdio "go" { env TOKEN="one"; env TOKEN="two" } } }`, want: "duplicate environment name"},
+		{name: "unknown server child", source: `wirecmd { mcp "memory" { websocket "wss://example.test" } }`, want: `unknown child node "websocket"`},
+		{name: "duplicate environment", source: `wirecmd { mcp "memory" { stdio "go" { env TOKEN="one"; env TOKEN="two" } } }`, want: "duplicate environment name"},
 		{name: "invalid KDL 2", source: `wirecmd {`, want: "parse KDL 2:"},
 	}
 	for _, test := range tests {
@@ -323,11 +323,11 @@ func TestParseRejectsMalformedAndUnknownStructure(t *testing.T) {
 }
 
 func TestComposeHTTPTransportAndProvenance(t *testing.T) {
-	base, err := ParseString("base.kdl", `wirecmd { server "remote" { scope "workspace"; http "https://example.test/mcp?tenant=base" } }`)
+	base, err := ParseString("base.kdl", `wirecmd { mcp "remote" { scope "workspace"; http "https://example.test/mcp?tenant=base" } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	partial, err := ParseString("partial.kdl", `wirecmd { server "remote" { http } }`)
+	partial, err := ParseString("partial.kdl", `wirecmd { mcp "remote" { http } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +343,7 @@ func TestComposeHTTPTransportAndProvenance(t *testing.T) {
 		t.Fatalf("HTTP provenance = %#v", remote.HTTP)
 	}
 
-	stdio, err := ParseString("stdio.kdl", `wirecmd { server "remote" { stdio "replacement" } }`)
+	stdio, err := ParseString("stdio.kdl", `wirecmd { mcp "remote" { stdio "replacement" } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +355,7 @@ func TestComposeHTTPTransportAndProvenance(t *testing.T) {
 		t.Fatalf("stdio replacement = %#v", config.Servers[0])
 	}
 
-	http, err := ParseString("http.kdl", `wirecmd { server "remote" { http "https://example.test/replacement" } }`)
+	http, err := ParseString("http.kdl", `wirecmd { mcp "remote" { http "https://example.test/replacement" } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,11 +374,11 @@ func TestHTTPConfigurationValidation(t *testing.T) {
 		source string
 		want   string
 	}{
-		{name: "missing endpoint", source: `wirecmd { server "remote" { scope "workspace"; http } }`, want: "endpoint is required"},
-		{name: "relative", source: `wirecmd { server "remote" { scope "workspace"; http "/mcp" } }`, want: "absolute http or https"},
-		{name: "user info", source: `wirecmd { server "remote" { scope "workspace"; http "https://user:pass@example.test/mcp" } }`, want: "must not contain URL user information"},
-		{name: "fragment", source: `wirecmd { server "remote" { scope "workspace"; http "https://example.test/mcp#section" } }`, want: "must not contain a fragment"},
-		{name: "same source exclusive", source: `wirecmd { server "remote" { scope "workspace"; stdio "one"; http "https://example.test/mcp" } }`, want: "mutually exclusive"},
+		{name: "missing endpoint", source: `wirecmd { mcp "remote" { scope "workspace"; http } }`, want: "endpoint is required"},
+		{name: "relative", source: `wirecmd { mcp "remote" { scope "workspace"; http "/mcp" } }`, want: "absolute http or https"},
+		{name: "user info", source: `wirecmd { mcp "remote" { scope "workspace"; http "https://user:pass@example.test/mcp" } }`, want: "must not contain URL user information"},
+		{name: "fragment", source: `wirecmd { mcp "remote" { scope "workspace"; http "https://example.test/mcp#section" } }`, want: "must not contain a fragment"},
+		{name: "same source exclusive", source: `wirecmd { mcp "remote" { scope "workspace"; stdio "one"; http "https://example.test/mcp" } }`, want: "mutually exclusive"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -399,7 +399,7 @@ func TestHTTPConfigurationValidation(t *testing.T) {
 
 func TestComposeHTTPFieldsRetainsOrderAndProvenance(t *testing.T) {
 	base, err := ParseString("base.kdl", `wirecmd {
-        server "remote" {
+        mcp "remote" {
             scope "workspace"
             http "https://example.test/mcp?base=1" {
                 query tenant="base"
@@ -413,7 +413,7 @@ func TestComposeHTTPFieldsRetainsOrderAndProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	local, err := ParseString("local.kdl", `wirecmd {
-        server "remote" {
+        mcp "remote" {
             http {
                 query tenant="local"
                 query added="value"
@@ -443,7 +443,7 @@ func TestComposeHTTPFieldsRetainsOrderAndProvenance(t *testing.T) {
 	if got, want := httpFieldNames(http.Headers), []string{"x-api-key", "Authorization", "X-Trace"}; !sameStrings(got, want) {
 		t.Fatalf("header order = %#v, want %#v", got, want)
 	}
-	if http.Query[0].Value.Text != "local" || http.Query[0].File != "local.kdl" || http.Query[0].Path != `wirecmd.server["remote"].http.query["tenant"]` {
+	if http.Query[0].Value.Text != "local" || http.Query[0].File != "local.kdl" || http.Query[0].Path != `wirecmd.mcp["remote"].http.query["tenant"]` {
 		t.Fatalf("overridden query field = %#v", http.Query[0])
 	}
 	if http.Query[1].Value.Text != "" || http.Query[1].File != "base.kdl" {
@@ -471,11 +471,11 @@ func TestParseHTTPFieldsRequiresOnePropertyAndRejectsDuplicates(t *testing.T) {
 		source string
 		want   string
 	}{
-		{name: "query arguments", source: `wirecmd { server "remote" { http "https://example.test/mcp" { query "tenant" } } }`, want: "query: expected one named value"},
-		{name: "header multiple properties", source: `wirecmd { server "remote" { http "https://example.test/mcp" { header one="1" two="2" } } }`, want: "header: expected one named value"},
-		{name: "query duplicate", source: `wirecmd { server "remote" { http "https://example.test/mcp" { query tenant="one"; query tenant="two" } } }`, want: "duplicate query name"},
-		{name: "header duplicate case insensitive", source: `wirecmd { server "remote" { http "https://example.test/mcp" { header Token="one"; header tOkEn="two" } } }`, want: "duplicate header name"},
-		{name: "unknown child", source: `wirecmd { server "remote" { http "https://example.test/mcp" { cookie value="one" } } }`, want: "unknown child node \"cookie\""},
+		{name: "query arguments", source: `wirecmd { mcp "remote" { http "https://example.test/mcp" { query "tenant" } } }`, want: "query: expected one named value"},
+		{name: "header multiple properties", source: `wirecmd { mcp "remote" { http "https://example.test/mcp" { header one="1" two="2" } } }`, want: "header: expected one named value"},
+		{name: "query duplicate", source: `wirecmd { mcp "remote" { http "https://example.test/mcp" { query tenant="one"; query tenant="two" } } }`, want: "duplicate query name"},
+		{name: "header duplicate case insensitive", source: `wirecmd { mcp "remote" { http "https://example.test/mcp" { header Token="one"; header tOkEn="two" } } }`, want: "duplicate header name"},
+		{name: "unknown child", source: `wirecmd { mcp "remote" { http "https://example.test/mcp" { cookie value="one" } } }`, want: "unknown child node \"cookie\""},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -501,7 +501,7 @@ func TestHTTPHeaderValidation(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			source := `wirecmd { server "remote" { scope "workspace"; http "https://example.test/mcp" { header ` + test.header + `="value" } } }`
+			source := `wirecmd { mcp "remote" { scope "workspace"; http "https://example.test/mcp" { header ` + test.header + `="value" } } }`
 			parsed, err := ParseString("test.kdl", source)
 			if err != nil {
 				t.Fatalf("ParseString() error = %v", err)
@@ -516,7 +516,7 @@ func TestHTTPHeaderValidation(t *testing.T) {
 
 func TestComposeOAuthConfigurationAndProvenance(t *testing.T) {
 	base, err := ParseString("base.kdl", `wirecmd {
-        server "remote" {
+        mcp "remote" {
             scope "workspace"
             http "https://example.test/mcp" {
                 oauth {
@@ -531,7 +531,7 @@ func TestComposeOAuthConfigurationAndProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	local, err := ParseString("local.kdl", `wirecmd {
-        server "remote" {
+        mcp "remote" {
             http {
                 oauth {
                     client-id "local-client"
@@ -561,7 +561,7 @@ func TestComposeOAuthConfigurationAndProvenance(t *testing.T) {
 	if oauth.ClientSecret == nil || oauth.ClientSecret.Kind != ValueSecretReference || oauth.ClientSecret.Text != "env://BASE_SECRET" || oauth.ClientSecret.File != "base.kdl" {
 		t.Fatalf("client secret = %#v", oauth.ClientSecret)
 	}
-	if oauth.Provenance.File != "local.kdl" || oauth.Provenance.Path != `wirecmd.server["remote"].http.oauth` {
+	if oauth.Provenance.File != "local.kdl" || oauth.Provenance.Path != `wirecmd.mcp["remote"].http.oauth` {
 		t.Fatalf("OAuth provenance = %#v", oauth.Provenance)
 	}
 }
@@ -586,7 +586,7 @@ func TestOAuthConfigurationValidation(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			source, err := ParseString("test.kdl", `wirecmd { server "remote" { scope "workspace"; http "https://example.test/mcp" { `+test.source+` } } }`)
+			source, err := ParseString("test.kdl", `wirecmd { mcp "remote" { scope "workspace"; http "https://example.test/mcp" { `+test.source+` } } }`)
 			if err == nil {
 				_, err = Compose(source)
 			}
@@ -598,11 +598,11 @@ func TestOAuthConfigurationValidation(t *testing.T) {
 }
 
 func TestOAuthPartialSourcesNeedOnlyEffectiveCompleteness(t *testing.T) {
-	base, err := ParseString("base.kdl", `wirecmd { server "remote" { scope "workspace"; http "https://example.test/mcp" { oauth { client-id "client" } } } }`)
+	base, err := ParseString("base.kdl", `wirecmd { mcp "remote" { scope "workspace"; http "https://example.test/mcp" { oauth { client-id "client" } } } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	local, err := ParseString("local.kdl", `wirecmd { server "remote" { http { oauth { redirect-uri "http://[::1]:8765/callback" } } } }`)
+	local, err := ParseString("local.kdl", `wirecmd { mcp "remote" { http { oauth { redirect-uri "http://[::1]:8765/callback" } } } }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -634,9 +634,9 @@ func TestParseSecretReferences(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var source string
 			if test.name == "secret command" {
-				source = `wirecmd { server "memory" { stdio ` + test.value + ` } }`
+				source = `wirecmd { mcp "memory" { stdio ` + test.value + ` } }`
 			} else {
-				source = `wirecmd { server "memory" { stdio "go" { env TOKEN=` + test.value + ` } } }`
+				source = `wirecmd { mcp "memory" { stdio "go" { env TOKEN=` + test.value + ` } } }`
 			}
 			_, err := ParseString("test.kdl", source)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
@@ -647,7 +647,7 @@ func TestParseSecretReferences(t *testing.T) {
 }
 
 func TestResolveEnvDistinguishesMissingAndEmpty(t *testing.T) {
-	secret := Value{Kind: ValueSecretReference, Text: "env://TOKEN", Provenance: Provenance{Path: `wirecmd.server["memory"].stdio.env["TOKEN"]`}}
+	secret := Value{Kind: ValueSecretReference, Text: "env://TOKEN", Provenance: Provenance{Path: `wirecmd.mcp["memory"].stdio.env["TOKEN"]`}}
 	empty, err := secret.ResolveEnv(func(name string) (string, bool) {
 		if name != "TOKEN" {
 			t.Fatalf("lookup name = %q", name)
@@ -667,7 +667,7 @@ func TestResolveEnvDistinguishesMissingAndEmpty(t *testing.T) {
 }
 
 func TestParseUsesKDL2Only(t *testing.T) {
-	_, err := ParseString("test.kdl", `wirecmd { server "memory" { stdio "go" { env FLAG=true } } }`)
+	_, err := ParseString("test.kdl", `wirecmd { mcp "memory" { stdio "go" { env FLAG=true } } }`)
 	if err == nil {
 		t.Fatal("ParseString() error = nil, want KDL 2 rejection for bare true")
 	}

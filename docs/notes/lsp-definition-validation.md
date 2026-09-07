@@ -53,3 +53,35 @@ The daemon was stopped with SIGINT after the check. This demonstrates process
 retention and direct/daemon result equivalence for one real server. It does not
 qualify other servers, languages, LSP operations, dynamic registration, or
 unsaved editor buffers.
+
+## Multi-provider routing requalification
+
+Status: non-authoritative validation evidence, 2026-09-07
+
+After the automatic multi-provider routing change, the same installed `gopls`
+was configured with the current selector-based syntax:
+
+```kdl
+lsp "qualification" {
+    implementation-id "golang.org/x/tools/gopls"
+    selector language-id="go" pattern="**/*.go"
+    stdio "gopls" {
+        arg "serve"
+    }
+}
+```
+
+The executable path is qualification evidence only. The command was:
+
+```text
+XDG_CACHE_HOME=/tmp/wirecmd-lsp-gopls-cache /tmp/wirecmd-multi-lsp-bin --direct --config ./wirecmd-multi-lsp-gopls.kdl lsp definition --file main.go --line 21 --column 13
+```
+
+Observed exit code: `0`. The result attributed the existing `cli.Run`
+definition location to provider `qualification`, and its provider outcome was
+`ok` with one location. A direct `lsp status --file main.go` reported the
+selector as matched and runtime status `not_checked`, confirming that status
+did not start the process. The automated fixture suite separately covered two
+overlapping providers, partial failure, all navigation operations, daemon
+retention, provider ordering, cross-provider overlap, and per-provider
+serialization.

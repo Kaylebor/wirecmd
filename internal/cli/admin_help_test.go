@@ -146,7 +146,7 @@ func TestHelpPrefixSeparatorOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"daemon", "config", "auth"} {
-		config := writeConfig(t, strings.Replace(string(source), `server "helper"`, `server "`+name+`"`, 1))
+		config := writeConfig(t, strings.Replace(string(source), `mcp "helper"`, `mcp "`+name+`"`, 1))
 		code, output, _ := invoke(t, []string{"--direct", "--config", config, "--help", "--", name, "a_tool"})
 		if code != exitOK || !strings.Contains(output, "Input schema:") {
 			t.Fatalf("%s escape: code=%d output=%s", name, code, output)
@@ -170,7 +170,7 @@ func TestHelpPrefixSeparatorPreservesReservedLeafCollisions(t *testing.T) {
 		{"auth", "login"},
 	} {
 		t.Run(test.server+"_"+test.tool, func(t *testing.T) {
-			config := writeConfig(t, strings.Replace(string(source), `server "helper"`, `server "`+test.server+`"`, 1))
+			config := writeConfig(t, strings.Replace(string(source), `mcp "helper"`, `mcp "`+test.server+`"`, 1))
 			code, output, _ := invoke(t, []string{"--direct", "--config", config, "--help", "--", test.server, test.tool})
 			if code != exitProtocol || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_not_found" {
 				t.Fatalf("reserved leaf escape: code=%d output=%s", code, output)
@@ -195,7 +195,7 @@ func TestAdministrativeNamesKeepNormalToolSuffixOwnership(t *testing.T) {
 		{"config", "trust", []string{"--format", "pretty"}},
 	} {
 		t.Run(test.server+"_"+test.tool, func(t *testing.T) {
-			config := writeConfig(t, strings.Replace(string(source), `server "helper"`, `server "`+test.server+`"`, 1))
+			config := writeConfig(t, strings.Replace(string(source), `mcp "helper"`, `mcp "`+test.server+`"`, 1))
 			args := append([]string{"--direct", "--config", config, test.server, test.tool}, test.args...)
 			code, output, _ := invoke(t, args)
 			if code != exitProtocol || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_not_found" {
@@ -212,21 +212,21 @@ func TestAdministrativeNamesKeepNormalToolSuffixOwnership(t *testing.T) {
 		{"auth", "login"},
 	} {
 		t.Run(test.server+"_json_"+test.tool, func(t *testing.T) {
-			config := writeConfig(t, strings.Replace(string(source), `server "helper"`, `server "`+test.server+`"`, 1))
+			config := writeConfig(t, strings.Replace(string(source), `mcp "helper"`, `mcp "`+test.server+`"`, 1))
 			code, output, _ := invoke(t, []string{"--direct", "--config", config, "--json", `{}`, test.server, test.tool})
 			if code != exitProtocol || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_call_failed" {
 				t.Fatalf("JSON escape was treated as administration: code=%d output=%s", code, output)
 			}
 		})
 		t.Run(test.server+"_stdin_"+test.tool, func(t *testing.T) {
-			config := writeConfig(t, strings.Replace(string(source), `server "helper"`, `server "`+test.server+`"`, 1))
+			config := writeConfig(t, strings.Replace(string(source), `mcp "helper"`, `mcp "`+test.server+`"`, 1))
 			code, output, _ := invokeWithInput(t, []string{"--direct", "--config", config, "--stdin", test.server, test.tool}, `{}`)
 			if code != exitProtocol || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_call_failed" {
 				t.Fatalf("stdin escape was treated as administration: code=%d output=%s", code, output)
 			}
 		})
 		t.Run(test.server+"_exact_"+test.tool, func(t *testing.T) {
-			config := writeConfig(t, strings.Replace(string(source), `server "helper"`, `server "`+test.server+`"`, 1))
+			config := writeConfig(t, strings.Replace(string(source), `mcp "helper"`, `mcp "`+test.server+`"`, 1))
 			call := `{"tool":"` + test.tool + `","arguments":{}}`
 			code, output, _ := invoke(t, []string{"--direct", "--config", config, test.server, call})
 			if code != exitProtocol || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_call_failed" {

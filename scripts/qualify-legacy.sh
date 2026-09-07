@@ -55,14 +55,14 @@ done
 
 cat >"$work_dir/wirecmd.kdl" <<EOF
 wirecmd {
-    server "legacy-stdio" {
+    mcp "legacy-stdio" {
         scope "workspace"
         stdio "$work_dir/legacy-mcp" {
             arg "--protocol-record"
             arg "$stdio_protocol"
         }
     }
-    server "legacy-http" {
+    mcp "legacy-http" {
         scope "workspace"
         http "$endpoint"
     }

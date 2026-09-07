@@ -12,14 +12,14 @@ import (
 
 func TestServerCompletionUsesEffectiveConfigOrderAndDoesNotResolveSecrets(t *testing.T) {
 	base := writeConfig(t, `wirecmd {
-server "first" { scope "workspace"; stdio "not-started" }
-server "unsafe\tname" { scope "workspace"; stdio "not-started" }
-server "unsafe\nname" { scope "workspace"; stdio "not-started" }
-server "needs-secret" { scope "workspace"; stdio "not-started" { env SECRET=(secret)"env://WIRECMD_COMPLETION_ABSENT_SECRET" } }
+mcp "first" { scope "workspace"; stdio "not-started" }
+mcp "unsafe\tname" { scope "workspace"; stdio "not-started" }
+mcp "unsafe\nname" { scope "workspace"; stdio "not-started" }
+mcp "needs-secret" { scope "workspace"; stdio "not-started" { env SECRET=(secret)"env://WIRECMD_COMPLETION_ABSENT_SECRET" } }
 }`)
 	stronger := writeConfig(t, `wirecmd {
-server "first" { scope "workspace"; stdio "still-not-started" }
-server "last" { scope "workspace"; stdio "not-started" }
+mcp "first" { scope "workspace"; stdio "still-not-started" }
+mcp "last" { scope "workspace"; stdio "not-started" }
 }`)
 	secretName := "WIRECMD_COMPLETION_ABSENT_SECRET"
 	previous, existed := os.LookupEnv(secretName)
@@ -44,7 +44,7 @@ server "last" { scope "workspace"; stdio "not-started" }
 }
 
 func TestServerCompletionIsQuietForRejectedOrUnavailableInput(t *testing.T) {
-	config := writeConfig(t, `wirecmd { server "available" { scope "workspace"; stdio "not-started" } }`)
+	config := writeConfig(t, `wirecmd { mcp "available" { scope "workspace"; stdio "not-started" } }`)
 	for _, args := range [][]string{
 		{"--completion-servers", "--direct", "--config", config},
 		{"--completion-servers", "--help", "--config", config},
@@ -61,7 +61,7 @@ func TestServerCompletionIsQuietForRejectedOrUnavailableInput(t *testing.T) {
 
 func TestServerCompletionDiscoveryIsQuietAndDoesNotCreateState(t *testing.T) {
 	workspace := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspace, "wirecmd.kdl"), []byte(`wirecmd { server "untrusted" { scope "workspace"; stdio "not-started" } }`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(workspace, "wirecmd.kdl"), []byte(`wirecmd { mcp "untrusted" { scope "workspace"; stdio "not-started" } }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stateHome := filepath.Join(t.TempDir(), "state")
@@ -92,7 +92,7 @@ func TestServerCompletionDiscoversGlobalConfigWithoutStateWrites(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(configPath, []byte(`wirecmd { server "global" { scope "workspace"; stdio "not-started" } }`), 0o600); err != nil {
+	if err := os.WriteFile(configPath, []byte(`wirecmd { mcp "global" { scope "workspace"; stdio "not-started" } }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stateHome := filepath.Join(t.TempDir(), "state")
@@ -110,7 +110,7 @@ func TestServerCompletionDiscoversGlobalConfigWithoutStateWrites(t *testing.T) {
 
 func TestServerCompletionIsQuietForMalformedConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "wirecmd.kdl")
-	if err := os.WriteFile(path, []byte("wirecmd { server"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("wirecmd { mcp"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	code, stdout, stderr := invoke(t, []string{"--completion-servers", "--config", path})
@@ -133,7 +133,7 @@ func TestCompletionNameSafe(t *testing.T) {
 }
 
 func TestServerCompletionOnlyAcceptsConfigFlags(t *testing.T) {
-	config := writeConfig(t, `wirecmd { server "available" { scope "workspace"; stdio "not-started" } }`)
+	config := writeConfig(t, `wirecmd { mcp "available" { scope "workspace"; stdio "not-started" } }`)
 	code, stdout, stderr := invoke(t, []string{"--completion-servers", "--config", config})
 	if code != exitOK || stdout != "available\n" || stderr != "" {
 		t.Fatalf("accepted config: code=%d stdout=%q stderr=%q", code, stdout, stderr)
@@ -151,7 +151,7 @@ func TestServerCompletionTrustedWorkspace(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "global"))
-	if err := os.WriteFile(filepath.Join(workspace, "wirecmd.kdl"), []byte(`wirecmd { server "trusted" { scope "workspace"; stdio "never-started" } }`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(workspace, "wirecmd.kdl"), []byte(`wirecmd { mcp "trusted" { scope "workspace"; stdio "never-started" } }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := discovery.Trust(workspace); err != nil {

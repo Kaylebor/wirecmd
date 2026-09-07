@@ -119,7 +119,8 @@ const (
 	listTools
 	callTool
 	inspectTool
-	defineLSP
+	navigateLSP
+	statusLSP
 )
 
 type versionText string
@@ -149,11 +150,11 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		return helpText(lspHelpText()), nil
 	}
 	if !opts.help {
-		if definition, err, handled := parseLSPDefinitionCommand(positionals, opts); handled {
+		if lspRequest, err, handled := parseLSPCommand(positionals, opts); handled {
 			if err != nil {
 				return nil, err
 			}
-			return executeLSPDefinition(ctx, opts, definition, in, errOut)
+			return executeLSPCommand(ctx, opts, lspRequest, in, errOut)
 		}
 	}
 	if admin, ok := parseConfigAdmin(positionals, opts); ok && !opts.help {
@@ -1027,6 +1028,7 @@ type appError struct {
 	action      string
 	exitCode    int
 	result      *toolResult
+	details     any
 	sdkCanceled bool
 }
 
@@ -1069,6 +1071,7 @@ type errorBody struct {
 	Code     string `json:"code"`
 	Message  string `json:"message"`
 	Action   string `json:"action"`
+	Details  any    `json:"details,omitempty"`
 }
 
 type failure struct {
@@ -1078,7 +1081,7 @@ type failure struct {
 }
 
 func failureEnvelope(appErr *appError) failure {
-	return failure{OK: false, Error: errorBody{Category: appErr.category, Code: appErr.code, Message: appErr.message, Action: appErr.action}, Result: appErr.result}
+	return failure{OK: false, Error: errorBody{Category: appErr.category, Code: appErr.code, Message: appErr.message, Action: appErr.action, Details: appErr.details}, Result: appErr.result}
 }
 
 type serverSummary struct {
