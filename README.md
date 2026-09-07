@@ -28,10 +28,10 @@ integration or eager injection of every configured tool schema.
 
 The canonical Go module is `github.com/Kaylebor/wirecmd`. Build the current
 source checkout with Go 1.26 or newer. The latest published prerelease verified
-on 2026-09-05 is the pre-LSP checkpoint `v0.1.0-alpha.5`; install it with:
+on 2026-09-07 is `v0.1.0-alpha.6`; install it with:
 
 ```sh
-go install github.com/Kaylebor/wirecmd@v0.1.0-alpha.5
+go install github.com/Kaylebor/wirecmd@v0.1.0-alpha.6
 ```
 
 Until the repository is public, installation also requires authenticated
@@ -48,8 +48,10 @@ supports continuing the project. Supported legacy stdio and Streamable HTTP
 protocol layers are qualified; legacy HTTP+SSE remains deferred at the SDK
 boundary. Automatic configuration discovery, workspace trust, typed HTTP query
 and header values, and SDK-owned OAuth with encrypted credential persistence
-are also complete. Normal commands use a private foreground local daemon;
-`--direct` is the deliberate one-shot path for testing and diagnosis.
+are also complete. The first native LSP adapter adds automatically routed,
+multi-provider source navigation. Normal commands use a private foreground
+local daemon; `--direct` is the deliberate one-shot path for testing and
+diagnosis.
 
 Linux and macOS builds are available. Native macOS CI covers Apple Silicon and
 Intel; the user has smoke-tested the released Apple Silicon build on an M2,
