@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"go.lsp.dev/jsonrpc2"
@@ -262,6 +263,7 @@ func TestLSPHelperProcess(t *testing.T) {
 		return
 	}
 	server := &fakeServer{mode: mode, documents: map[uri.URI]string{}, languages: map[uri.URI]string{}}
+	server.changed = sync.NewCond(&server.mu)
 	stream := jsonrpc2.NewStream(&stdioRWC{Reader: os.Stdin, Writer: os.Stdout})
 	ctx, conn, client := protocol.NewServer(context.Background(), server, stream)
 	server.client = client
@@ -283,6 +285,8 @@ type fakeServer struct {
 	languages map[uri.URI]string
 	client    protocol.Client
 	ctx       context.Context
+	mu        sync.Mutex
+	changed   *sync.Cond
 }
 
 func (s *fakeServer) Initialize(context.Context, *protocol.InitializeParams) (*protocol.InitializeResult, error) {
@@ -318,12 +322,17 @@ func (*fakeServer) Shutdown(context.Context) error                              
 func (*fakeServer) Exit(context.Context) error                                     { return nil }
 
 func (s *fakeServer) DidOpen(_ context.Context, params *protocol.DidOpenTextDocumentParams) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.documents[params.TextDocument.URI] = params.TextDocument.Text
 	s.languages[params.TextDocument.URI] = string(params.TextDocument.LanguageID)
+	s.changed.Broadcast()
 	return nil
 }
 
 func (s *fakeServer) DidChange(_ context.Context, params *protocol.DidChangeTextDocumentParams) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for _, change := range params.ContentChanges {
 		switch value := change.(type) {
 		case *protocol.TextDocumentContentChangeWholeDocument:
@@ -332,6 +341,7 @@ func (s *fakeServer) DidChange(_ context.Context, params *protocol.DidChangeText
 			s.documents[params.TextDocument.URI] = value.Text
 		}
 	}
+	s.changed.Broadcast()
 	return nil
 }
 
@@ -342,7 +352,23 @@ func (s *fakeServer) Definition(_ context.Context, params *protocol.DefinitionPa
 		_, _ = s.client.Configuration(s.ctx, &protocol.ConfigurationParams{})
 		return nil, io.ErrUnexpectedEOF
 	}
+	s.mu.Lock()
+	if s.mode == "incremental" {
+		want := "a😀b\n"
+		if params.Position.Character == 1 {
+			want = "changed\n"
+		}
+		for s.documents[params.TextDocument.URI] != want {
+			s.changed.Wait()
+		}
+	} else if s.mode == "language" || s.mode == "all" {
+		for s.documents[params.TextDocument.URI] == "" {
+			s.changed.Wait()
+		}
+	}
 	content := s.documents[params.TextDocument.URI]
+	language := s.languages[params.TextDocument.URI]
+	s.mu.Unlock()
 	if content == "" {
 		return nil, nil
 	}
@@ -351,7 +377,7 @@ func (s *fakeServer) Definition(_ context.Context, params *protocol.DefinitionPa
 	}
 	suffix := ".definition"
 	if s.mode == "language" {
-		suffix = "." + s.languages[params.TextDocument.URI]
+		suffix = "." + language
 	}
 	target := uri.File(params.TextDocument.URI.FsPath() + suffix)
 	return protocol.LocationSlice{{URI: target, Range: protocol.Range{Start: protocol.Position{Line: 1, Character: 2}, End: protocol.Position{Line: 1, Character: 4}}}}, nil
