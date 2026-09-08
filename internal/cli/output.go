@@ -108,9 +108,62 @@ func writeOutput(writer io.Writer, value any, style presentation) {
 		case envelope["error"] != nil:
 			writeFailure(writer, envelope, style)
 			return
+		case isHoverOutput(envelope):
+			writeLSPHover(writer, envelope, style)
+			return
 		}
 	}
 	writePrettyJSON(writer, value, style.color)
+}
+
+func isHoverOutput(envelope map[string]any) bool {
+	lsp, _ := envelope["lsp"].(map[string]any)
+	return stringValue(lsp["operation"]) == lspHover
+}
+
+func writeLSPHover(writer io.Writer, envelope map[string]any, style presentation) {
+	lsp, _ := envelope["lsp"].(map[string]any)
+	writeFields(writer, "LSP hover", [][2]string{
+		{"File", singleLine(stringValue(lsp["file"]))},
+		{"Line", scalarString(lsp["line"])},
+		{"Column", scalarString(lsp["column"])},
+		{"Partial", scalarString(lsp["partial"])},
+	}, style)
+	hovers, _ := lsp["hovers"].([]any)
+	for _, raw := range hovers {
+		hover, _ := raw.(map[string]any)
+		writeLabel(writer, "Provider", style)
+		fmt.Fprintln(writer, ": "+singleLine(stringValue(hover["provider"])))
+		if value, ok := hover["range"]; ok {
+			encoded, _ := json.Marshal(value)
+			fmt.Fprintln(writer, "  Range: "+singleLine(string(encoded)))
+		}
+		contents, _ := hover["contents"].([]any)
+		for _, rawContent := range contents {
+			content, _ := rawContent.(map[string]any)
+			label := stringValue(content["kind"])
+			if language := stringValue(content["language"]); language != "" {
+				label += " (" + language + ")"
+			}
+			writeLabel(writer, "  "+singleLine(label), style)
+			fmt.Fprintln(writer, ":")
+			fmt.Fprintln(writer, readableText(stringValue(content["text"])))
+		}
+	}
+	providers, _ := lsp["providers"].([]any)
+	writeLabel(writer, "Providers", style)
+	fmt.Fprintln(writer, ":")
+	for _, raw := range providers {
+		provider, _ := raw.(map[string]any)
+		line := "  " + singleLine(stringValue(provider["name"])) + ": " + singleLine(stringValue(provider["status"]))
+		if count := scalarString(provider["hovers"]); count != "" {
+			line += " (" + count + " hovers)"
+		}
+		fmt.Fprintln(writer, line)
+		if rawError, ok := provider["error"].(map[string]any); ok {
+			fmt.Fprintln(writer, "    "+readableText(stringValue(rawError["message"])))
+		}
+	}
 }
 
 func writeCompactJSON(writer io.Writer, value any, color bool) {
@@ -222,6 +275,11 @@ func writeFailure(writer io.Writer, envelope map[string]any, style presentation)
 		{"Message", readableText(stringValue(err["message"]))},
 		{"Action", readableText(stringValue(err["action"]))},
 	}, style)
+	if details, ok := err["details"]; ok && details != nil {
+		writeLabel(writer, "Details", style)
+		fmt.Fprintln(writer, ":")
+		writePrettyJSON(writer, details, style.color)
+	}
 	if result, ok := envelope["result"]; ok && result != nil {
 		writeLabel(writer, "Result", style)
 		fmt.Fprintln(writer, ":")

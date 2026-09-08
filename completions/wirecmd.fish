@@ -96,6 +96,7 @@ function __wirecmd_candidates
             if test $restricted -eq 0
                 printf '%b\n' 'daemon\tDaemon administration' 'config\tWorkspace trust'
             end
+            printf '%b\n' 'lsp\tNative LSP navigation and inspection'
         end
         command "$executable" --completion-servers $configs 2>/dev/null
         return
@@ -132,6 +133,23 @@ function __wirecmd_candidates
                 __fish_complete_directories "$current"
             else if test (count $positionals) -eq 3; and test "$positionals[2]" = trust; and test "$positionals[3]" = status
                 __fish_complete_directories "$current"
+            end
+        case lsp
+            if test (count $positionals) -eq 1
+                printf '%s\n' definition declaration type-definition implementation references hover document-symbols workspace-symbols status
+            else if test (count $positionals) -eq 2
+                switch "$positionals[2]"
+                    case definition declaration type-definition implementation hover
+                        printf '%s\n' --file --line --column --help
+                    case references
+                        printf '%s\n' --file --line --column --include-declaration --help
+                    case document-symbols
+                        printf '%s\n' --file --help
+                    case workspace-symbols
+                        printf '%s\n' --query --help
+                    case status
+                        printf '%s\n' --file --help
+                end
             end
     end
 end

@@ -63,12 +63,12 @@ func canonicalNativeHelp(positionals []string, opts options) ([]string, options,
 	case "lsp":
 		if len(canonical) == 1 {
 			// `lsp --help` is the group page.
-		} else if isLSPNavigation(canonical[1]) || canonical[1] == lspStatus {
+		} else if isLSPNavigation(canonical[1]) || isLSPInspection(canonical[1]) || canonical[1] == lspStatus {
 			// LSP operation flags are execution-only. Keeping the operation name
 			// selects the existing focused static help page.
 			canonical = canonical[:2]
 		} else {
-			return canonical, opts, invocationError("lsp_help_usage", "unrecognized LSP help form", "use wirecmd --help lsp [definition|declaration|type-definition|implementation|references|status]"), true
+			return canonical, opts, invocationError("lsp_help_usage", "unrecognized LSP help form", "use wirecmd --help lsp [definition|declaration|type-definition|implementation|references|hover|document-symbols|workspace-symbols|status]"), true
 		}
 	case "daemon":
 		// Leave command arity and misplaced-flag diagnostics to the existing

@@ -85,3 +85,41 @@ did not start the process. The automated fixture suite separately covered two
 overlapping providers, partial failure, all navigation operations, daemon
 retention, provider ordering, cross-provider overlap, and per-provider
 serialization.
+
+## Hover and symbol inspection qualification (2026-09-08)
+
+The native inspection extension was exercised against this repository with
+`golang.org/x/tools/gopls v0.23.0`. The qualification-only configuration was:
+
+```kdl
+wirecmd {
+    root "/tmp/wirecmd-lsp"
+    lsp "go" {
+        implementation-id "gopls"
+        selector language-id="go" pattern="**/*.go"
+        stdio "gopls" {
+            arg "serve"
+            env XDG_CACHE_HOME="/tmp/wirecmd-gopls-cache"
+            env GOCACHE="/tmp/wirecmd-gopls-go-cache"
+        }
+    }
+}
+```
+
+After building `/tmp/wirecmd-lsp-inspection`, these one-shot commands were run
+from `/tmp/wirecmd-lsp`:
+
+```sh
+/tmp/wirecmd-lsp-inspection --direct --config /tmp/wirecmd-lsp-gopls.kdl --format json --color never lsp hover --file main.go --line 21 --column 13
+/tmp/wirecmd-lsp-inspection --direct --config /tmp/wirecmd-lsp-gopls.kdl --format json --color never lsp document-symbols --file main.go
+/tmp/wirecmd-lsp-inspection --direct --config /tmp/wirecmd-lsp-gopls.kdl --format json --color never lsp workspace-symbols --query Run
+```
+
+All three exited successfully with empty stderr. Hover identified `cli.Run`,
+preserved its Markdown code/signature block, and returned a one-based range.
+Document symbols returned the two functions in `main.go`. Workspace symbols
+returned 100 ordered `Run` matches from gopls's current index, including
+`cli.Run`, with file paths, one-based ranges, numeric/readable kinds, container
+names, and provider attribution. Each command started and shut down a fresh
+process as required by `--direct`; retained-session behavior is covered by the
+deterministic daemon integration tests.

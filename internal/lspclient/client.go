@@ -58,6 +58,36 @@ type Location struct {
 	Range Range  `json:"range"`
 }
 
+// HoverBlock is one normalized piece of hover content. Code blocks retain the
+// language supplied by the server; markdown is intentionally kept literal so
+// the caller can choose how to render it.
+type HoverBlock struct {
+	Kind     string `json:"kind"`
+	Text     string `json:"text"`
+	Language string `json:"language,omitempty"`
+}
+
+// Hover is the SDK-independent representation of one non-null hover result.
+type Hover struct {
+	Range   *Range       `json:"range,omitempty"`
+	Content []HoverBlock `json:"content"`
+}
+
+// Symbol is a normalized LSP symbol. Children preserve hierarchical document
+// symbol responses; flat SymbolInformation responses remain flat.
+type Symbol struct {
+	Name           string   `json:"name"`
+	Kind           uint32   `json:"kind"`
+	KindName       string   `json:"kind_name"`
+	Path           string   `json:"path"`
+	Range          Range    `json:"range"`
+	SelectionRange *Range   `json:"selection_range,omitempty"`
+	Detail         *string  `json:"detail,omitempty"`
+	ContainerName  *string  `json:"container_name,omitempty"`
+	Deprecated     bool     `json:"deprecated,omitempty"`
+	Children       []Symbol `json:"children,omitempty"`
+}
+
 // Capabilities is the SDK-independent subset of the initialize result that
 // Wirecmd uses for navigation and document synchronization.
 type Capabilities struct {
@@ -66,6 +96,9 @@ type Capabilities struct {
 	TypeDefinition   bool   `json:"type_definition"`
 	Implementation   bool   `json:"implementation"`
 	References       bool   `json:"references"`
+	Hover            bool   `json:"hover"`
+	DocumentSymbols  bool   `json:"document_symbols"`
+	WorkspaceSymbols bool   `json:"workspace_symbols"`
 	PositionEncoding string `json:"position_encoding"`
 	TextDocumentSync string `json:"text_document_sync"`
 	OpenClose        bool   `json:"open_close"`
@@ -251,6 +284,17 @@ func Start(ctx context.Context, command Command, workspace, version string) (*Se
 	pid := int32(os.Getpid())
 	falseValue := false
 	trueValue := true
+	symbolKinds := []protocol.SymbolKind{
+		protocol.SymbolKindFile, protocol.SymbolKindModule, protocol.SymbolKindNamespace,
+		protocol.SymbolKindPackage, protocol.SymbolKindClass, protocol.SymbolKindMethod,
+		protocol.SymbolKindProperty, protocol.SymbolKindField, protocol.SymbolKindConstructor,
+		protocol.SymbolKindEnum, protocol.SymbolKindInterface, protocol.SymbolKindFunction,
+		protocol.SymbolKindVariable, protocol.SymbolKindConstant, protocol.SymbolKindString,
+		protocol.SymbolKindNumber, protocol.SymbolKindBoolean, protocol.SymbolKindArray,
+		protocol.SymbolKindObject, protocol.SymbolKindKey, protocol.SymbolKindNull,
+		protocol.SymbolKindEnumMember, protocol.SymbolKindStruct, protocol.SymbolKindEvent,
+		protocol.SymbolKindOperator, protocol.SymbolKindTypeParameter,
+	}
 	params := &protocol.InitializeParams{
 		ProcessID:  &pid,
 		ClientInfo: protocol.ClientInfo{Name: "wirecmd", Version: protocol.NewOptional(version)},
@@ -260,14 +304,30 @@ func Start(ctx context.Context, command Command, workspace, version string) (*Se
 			WorkspaceFolders: protocol.NewNullable([]protocol.WorkspaceFolder{{URI: rootURI, Name: filepath.Base(workspace)}}),
 		},
 		Capabilities: protocol.ClientCapabilities{
-			Workspace: &protocol.WorkspaceClientCapabilities{WorkspaceFolders: &trueValue, ApplyEdit: &falseValue, Configuration: &falseValue},
+			Workspace: &protocol.WorkspaceClientCapabilities{
+				WorkspaceFolders: &trueValue,
+				ApplyEdit:        &falseValue,
+				Configuration:    &falseValue,
+				Symbol: &protocol.WorkspaceSymbolClientCapabilities{
+					DynamicRegistration: &falseValue,
+					SymbolKind:          &protocol.ClientSymbolKindOptions{ValueSet: symbolKinds},
+					TagSupport:          protocol.ClientSymbolTagOptions{ValueSet: []protocol.SymbolTag{protocol.SymbolTagDeprecated}},
+				},
+			},
 			TextDocument: &protocol.TextDocumentClientCapabilities{
 				Synchronization: &protocol.TextDocumentSyncClientCapabilities{DynamicRegistration: &falseValue, WillSave: &falseValue, WillSaveWaitUntil: &falseValue, DidSave: &falseValue},
+				Hover:           &protocol.HoverClientCapabilities{DynamicRegistration: &falseValue, ContentFormat: []protocol.MarkupKind{protocol.MarkupKindMarkdown, protocol.MarkupKindPlainText}},
 				Declaration:     &protocol.DeclarationClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
 				Definition:      &protocol.DefinitionClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
 				TypeDefinition:  &protocol.TypeDefinitionClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
 				Implementation:  &protocol.ImplementationClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
 				References:      &protocol.ReferenceClientCapabilities{DynamicRegistration: &falseValue},
+				DocumentSymbol: &protocol.DocumentSymbolClientCapabilities{
+					DynamicRegistration:               &falseValue,
+					SymbolKind:                        &protocol.ClientSymbolKindOptions{ValueSet: symbolKinds},
+					HierarchicalDocumentSymbolSupport: &trueValue,
+					TagSupport:                        protocol.ClientSymbolTagOptions{ValueSet: []protocol.SymbolTag{protocol.SymbolTagDeprecated}},
+				},
 			},
 			General: &protocol.GeneralClientCapabilities{PositionEncodings: []protocol.PositionEncodingKind{protocol.PositionEncodingKindUTF16}},
 		},
@@ -298,6 +358,9 @@ func Start(ctx context.Context, command Command, workspace, version string) (*Se
 			TypeDefinition:   typeDefinitionSupported(initialized.Capabilities.TypeDefinitionProvider),
 			Implementation:   implementationSupported(initialized.Capabilities.ImplementationProvider),
 			References:       referencesSupported(initialized.Capabilities.ReferencesProvider),
+			Hover:            hoverSupported(initialized.Capabilities.HoverProvider),
+			DocumentSymbols:  documentSymbolsSupported(initialized.Capabilities.DocumentSymbolProvider),
+			WorkspaceSymbols: workspaceSymbolsSupported(initialized.Capabilities.WorkspaceSymbolProvider),
 			PositionEncoding: string(encoding),
 			TextDocumentSync: syncKindName(syncKind),
 			OpenClose:        openClose,
@@ -378,6 +441,39 @@ func referencesSupported(provider protocol.ReferencesProvider) bool {
 	}
 }
 
+func hoverSupported(provider protocol.HoverProvider) bool {
+	switch value := provider.(type) {
+	case protocol.Boolean:
+		return bool(value)
+	case *protocol.HoverOptions:
+		return value != nil
+	default:
+		return false
+	}
+}
+
+func documentSymbolsSupported(provider protocol.DocumentSymbolProvider) bool {
+	switch value := provider.(type) {
+	case protocol.Boolean:
+		return bool(value)
+	case *protocol.DocumentSymbolOptions:
+		return value != nil
+	default:
+		return false
+	}
+}
+
+func workspaceSymbolsSupported(provider protocol.WorkspaceSymbolProvider) bool {
+	switch value := provider.(type) {
+	case protocol.Boolean:
+		return bool(value)
+	case *protocol.WorkspaceSymbolOptions:
+		return value != nil
+	default:
+		return false
+	}
+}
+
 func syncKindName(kind protocol.TextDocumentSyncKind) string {
 	switch kind {
 	case protocol.TextDocumentSyncKindFull:
@@ -410,6 +506,22 @@ func synchronization(sync protocol.TextDocumentSync) (protocol.TextDocumentSyncK
 // PrepareTarget validates and snapshots a one-based disk position without
 // starting or consulting an LSP process.
 func PrepareTarget(path string, line, column uint32, languageID string) (*DefinitionTarget, error) {
+	target, err := PrepareDocument(path, languageID)
+	if err != nil {
+		return nil, err
+	}
+	position, err := positionAt([]byte(target.content), line, column)
+	if err != nil {
+		return nil, err
+	}
+	target.position = position
+	return target, nil
+}
+
+// PrepareDocument validates and snapshots a disk document without requiring a
+// position. It is used by document-level LSP requests such as document
+// symbols.
+func PrepareDocument(path, languageID string) (*DefinitionTarget, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read LSP document: %w", err)
@@ -417,11 +529,7 @@ func PrepareTarget(path string, line, column uint32, languageID string) (*Defini
 	if !utf8.Valid(content) {
 		return nil, &PositionError{Message: "LSP document is not valid UTF-8"}
 	}
-	position, err := positionAt(content, line, column)
-	if err != nil {
-		return nil, err
-	}
-	return &DefinitionTarget{path: path, uri: uri.File(path), content: string(content), position: position, languageID: languageID}, nil
+	return &DefinitionTarget{path: path, uri: uri.File(path), content: string(content), languageID: languageID}, nil
 }
 
 // Definition resolves a previously validated disk snapshot.
@@ -450,6 +558,87 @@ func (s *Session) Implementation(ctx context.Context, target *DefinitionTarget) 
 // References resolves references for a previously validated disk snapshot.
 func (s *Session) References(ctx context.Context, target *DefinitionTarget, includeDeclaration bool) ([]Location, error) {
 	return s.navigation(ctx, target, navigationReferences, includeDeclaration)
+}
+
+// Hover returns the normalized hover result for a previously validated disk
+// snapshot. A null protocol hover is represented by an empty, non-nil slice.
+func (s *Session) Hover(ctx context.Context, target *DefinitionTarget) ([]Hover, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, fmt.Errorf("LSP session is closed")
+	}
+	if !s.status.Capabilities.Hover {
+		return nil, fmt.Errorf("%w: hover", ErrCapabilityUnavailable)
+	}
+	if err := s.synchronize(ctx, target.path, target.uri, target.content, target.languageID); err != nil {
+		return nil, err
+	}
+	result, err := s.server.Hover(ctx, &protocol.HoverParams{TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: target.uri}, Position: target.position,
+	}})
+	if err != nil {
+		if method := s.client.takeUnsupported(); method != "" {
+			return nil, fmt.Errorf("%w: %s", ErrServerRequestUnsupported, method)
+		}
+		return nil, fmt.Errorf("request LSP hover: %w", err)
+	}
+	s.client.takeUnsupported()
+	return normalizeHover(result)
+}
+
+// DocumentSymbols returns normalized symbols for a previously validated disk
+// snapshot. It preserves hierarchical and flat protocol response forms.
+func (s *Session) DocumentSymbols(ctx context.Context, target *DefinitionTarget) ([]Symbol, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, fmt.Errorf("LSP session is closed")
+	}
+	if !s.status.Capabilities.DocumentSymbols {
+		return nil, fmt.Errorf("%w: document symbols", ErrCapabilityUnavailable)
+	}
+	if err := s.synchronize(ctx, target.path, target.uri, target.content, target.languageID); err != nil {
+		return nil, err
+	}
+	result, err := s.server.DocumentSymbol(ctx, &protocol.DocumentSymbolParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: target.uri},
+	})
+	if err != nil {
+		if method := s.client.takeUnsupported(); method != "" {
+			return nil, fmt.Errorf("%w: %s", ErrServerRequestUnsupported, method)
+		}
+		return nil, fmt.Errorf("request LSP document symbols: %w", err)
+	}
+	s.client.takeUnsupported()
+	symbols, err := normalizeDocumentSymbols(result)
+	if err != nil {
+		return nil, err
+	}
+	setSymbolPaths(symbols, target.path)
+	return symbols, nil
+}
+
+// WorkspaceSymbols searches the server's current workspace index. It does not
+// open or synchronize a document and passes query through unchanged.
+func (s *Session) WorkspaceSymbols(ctx context.Context, query string) ([]Symbol, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, fmt.Errorf("LSP session is closed")
+	}
+	if !s.status.Capabilities.WorkspaceSymbols {
+		return nil, fmt.Errorf("%w: workspace symbols", ErrCapabilityUnavailable)
+	}
+	result, err := s.server.Symbols(ctx, &protocol.WorkspaceSymbolParams{Query: query})
+	if err != nil {
+		if method := s.client.takeUnsupported(); method != "" {
+			return nil, fmt.Errorf("%w: %s", ErrServerRequestUnsupported, method)
+		}
+		return nil, fmt.Errorf("request LSP workspace symbols: %w", err)
+	}
+	s.client.takeUnsupported()
+	return normalizeWorkspaceSymbols(result)
 }
 
 type navigationKind uint8
@@ -670,6 +859,285 @@ func normalizeLocations(result any) ([]Location, error) {
 		return nil, fmt.Errorf("%w: %T", ErrResultUnsupported, result)
 	}
 	return locations, nil
+}
+
+func normalizeHover(result *protocol.Hover) ([]Hover, error) {
+	hovers := []Hover{}
+	if result == nil {
+		return hovers, nil
+	}
+	content, err := normalizeHoverContents(result.Contents)
+	if err != nil {
+		return nil, err
+	}
+	value := Hover{Content: content}
+	if result.Range != nil {
+		rangeValue := normalizeRange(*result.Range)
+		value.Range = &rangeValue
+	}
+	hovers = append(hovers, value)
+	return hovers, nil
+}
+
+func normalizeHoverContents(contents protocol.HoverContents) ([]HoverBlock, error) {
+	blocks := []HoverBlock{}
+	appendMarkup := func(kind, text string) {
+		blocks = append(blocks, HoverBlock{Kind: kind, Text: text})
+	}
+	switch value := contents.(type) {
+	case nil:
+		return blocks, nil
+	case *protocol.MarkupContent:
+		if value == nil {
+			return blocks, nil
+		}
+		switch value.Kind {
+		case protocol.MarkupKindPlainText:
+			appendMarkup("plaintext", value.Value)
+		case protocol.MarkupKindMarkdown:
+			appendMarkup("markdown", value.Value)
+		default:
+			return nil, fmt.Errorf("%w: hover markup kind %q", ErrResultUnsupported, value.Kind)
+		}
+	case protocol.String:
+		// The deprecated MarkedString string form is Markdown by definition;
+		// only MarkupContent with kind plaintext is plain text.
+		appendMarkup("markdown", string(value))
+	case *protocol.MarkedStringWithLanguage:
+		if value == nil {
+			return blocks, nil
+		}
+		blocks = append(blocks, HoverBlock{Kind: "code", Text: value.Value, Language: value.Language})
+	case protocol.MarkedStringSlice:
+		for _, item := range value {
+			switch itemValue := item.(type) {
+			case protocol.String:
+				appendMarkup("markdown", string(itemValue))
+			case *protocol.MarkedStringWithLanguage:
+				if itemValue == nil {
+					return nil, fmt.Errorf("%w: nil hover marked string", ErrResultUnsupported)
+				}
+				blocks = append(blocks, HoverBlock{Kind: "code", Text: itemValue.Value, Language: itemValue.Language})
+			default:
+				return nil, fmt.Errorf("%w: hover marked string %T", ErrResultUnsupported, item)
+			}
+		}
+	default:
+		return nil, fmt.Errorf("%w: hover contents %T", ErrResultUnsupported, contents)
+	}
+	return blocks, nil
+}
+
+func normalizeDocumentSymbols(result protocol.DocumentSymbolResult) ([]Symbol, error) {
+	symbols := []Symbol{}
+	switch value := result.(type) {
+	case nil:
+		return symbols, nil
+	case protocol.DocumentSymbolSlice:
+		for _, symbol := range value {
+			normalized, err := normalizeDocumentSymbol(symbol)
+			if err != nil {
+				return nil, err
+			}
+			symbols = append(symbols, normalized)
+		}
+	case protocol.SymbolInformationSlice:
+		for _, symbol := range value {
+			normalized, err := normalizeSymbolInformation(symbol)
+			if err != nil {
+				return nil, err
+			}
+			symbols = append(symbols, normalized)
+		}
+	default:
+		return nil, fmt.Errorf("%w: document symbols %T", ErrResultUnsupported, result)
+	}
+	return symbols, nil
+}
+
+func normalizeWorkspaceSymbols(result protocol.WorkspaceSymbolResult) ([]Symbol, error) {
+	symbols := []Symbol{}
+	switch value := result.(type) {
+	case nil:
+		return symbols, nil
+	case protocol.SymbolInformationSlice:
+		for _, symbol := range value {
+			normalized, err := normalizeSymbolInformation(symbol)
+			if err != nil {
+				return nil, err
+			}
+			symbols = append(symbols, normalized)
+		}
+	case protocol.WorkspaceSymbolSlice:
+		for _, symbol := range value {
+			normalized, err := normalizeWorkspaceSymbol(symbol)
+			if err != nil {
+				return nil, err
+			}
+			symbols = append(symbols, normalized)
+		}
+	default:
+		return nil, fmt.Errorf("%w: workspace symbols %T", ErrResultUnsupported, result)
+	}
+	return symbols, nil
+}
+
+func normalizeDocumentSymbol(value protocol.DocumentSymbol) (Symbol, error) {
+	result := Symbol{
+		Name:       value.Name,
+		Kind:       uint32(value.Kind),
+		KindName:   symbolKindName(value.Kind),
+		Range:      normalizeRange(value.Range),
+		Deprecated: symbolDeprecated(value.Tags, value.Deprecated),
+	}
+	result.SelectionRange = normalizedRangePointer(value.SelectionRange)
+	result.Detail = value.Detail
+	for _, child := range value.Children {
+		normalized, err := normalizeDocumentSymbol(child)
+		if err != nil {
+			return Symbol{}, err
+		}
+		result.Children = append(result.Children, normalized)
+	}
+	return result, nil
+}
+
+func setSymbolPaths(symbols []Symbol, path string) {
+	for index := range symbols {
+		if symbols[index].Path == "" {
+			symbols[index].Path = path
+		}
+		setSymbolPaths(symbols[index].Children, path)
+	}
+}
+
+func normalizeSymbolInformation(value protocol.SymbolInformation) (Symbol, error) {
+	path, normalizedRange, err := normalizeLocation(value.Location)
+	if err != nil {
+		return Symbol{}, err
+	}
+	return Symbol{
+		Name:          value.Name,
+		Kind:          uint32(value.Kind),
+		KindName:      symbolKindName(value.Kind),
+		Path:          path,
+		Range:         normalizedRange,
+		ContainerName: value.ContainerName,
+		Deprecated:    symbolDeprecated(value.Tags, value.Deprecated),
+	}, nil
+}
+
+func normalizeWorkspaceSymbol(value protocol.WorkspaceSymbol) (Symbol, error) {
+	var location protocol.Location
+	switch raw := value.Location.(type) {
+	case *protocol.Location:
+		if raw == nil {
+			return Symbol{}, fmt.Errorf("%w: workspace symbol has no location", ErrResultUnsupported)
+		}
+		location = *raw
+	case *protocol.LocationUriOnly:
+		return Symbol{}, fmt.Errorf("%w: workspace symbol location has no range", ErrResultUnsupported)
+	case nil:
+		return Symbol{}, fmt.Errorf("%w: workspace symbol has no location", ErrResultUnsupported)
+	default:
+		return Symbol{}, fmt.Errorf("%w: workspace symbol location %T", ErrResultUnsupported, value.Location)
+	}
+	path, normalizedRange, err := normalizeLocation(location)
+	if err != nil {
+		return Symbol{}, err
+	}
+	return Symbol{
+		Name:          value.Name,
+		Kind:          uint32(value.Kind),
+		KindName:      symbolKindName(value.Kind),
+		Path:          path,
+		Range:         normalizedRange,
+		ContainerName: value.ContainerName,
+		Deprecated:    symbolDeprecated(value.Tags, nil),
+	}, nil
+}
+
+func normalizeLocation(value protocol.Location) (string, Range, error) {
+	if value.URI.Scheme() != "file" {
+		return "", Range{}, fmt.Errorf("%w: URI scheme %q", ErrResultUnsupported, value.URI.Scheme())
+	}
+	return value.URI.FsPath(), normalizeRange(value.Range), nil
+}
+
+func normalizedRangePointer(value protocol.Range) *Range {
+	normalized := normalizeRange(value)
+	return &normalized
+}
+
+func symbolDeprecated(tags []protocol.SymbolTag, value *bool) bool {
+	if value != nil && *value {
+		return true
+	}
+	for _, tag := range tags {
+		if tag == protocol.SymbolTagDeprecated {
+			return true
+		}
+	}
+	return false
+}
+
+func symbolKindName(kind protocol.SymbolKind) string {
+	switch kind {
+	case protocol.SymbolKindFile:
+		return "file"
+	case protocol.SymbolKindModule:
+		return "module"
+	case protocol.SymbolKindNamespace:
+		return "namespace"
+	case protocol.SymbolKindPackage:
+		return "package"
+	case protocol.SymbolKindClass:
+		return "class"
+	case protocol.SymbolKindMethod:
+		return "method"
+	case protocol.SymbolKindProperty:
+		return "property"
+	case protocol.SymbolKindField:
+		return "field"
+	case protocol.SymbolKindConstructor:
+		return "constructor"
+	case protocol.SymbolKindEnum:
+		return "enum"
+	case protocol.SymbolKindInterface:
+		return "interface"
+	case protocol.SymbolKindFunction:
+		return "function"
+	case protocol.SymbolKindVariable:
+		return "variable"
+	case protocol.SymbolKindConstant:
+		return "constant"
+	case protocol.SymbolKindString:
+		return "string"
+	case protocol.SymbolKindNumber:
+		return "number"
+	case protocol.SymbolKindBoolean:
+		return "boolean"
+	case protocol.SymbolKindArray:
+		return "array"
+	case protocol.SymbolKindObject:
+		return "object"
+	case protocol.SymbolKindKey:
+		return "key"
+	case protocol.SymbolKindNull:
+		return "null"
+	case protocol.SymbolKindEnumMember:
+		return "enum_member"
+	case protocol.SymbolKindStruct:
+		return "struct"
+	case protocol.SymbolKindEvent:
+		return "event"
+	case protocol.SymbolKindOperator:
+		return "operator"
+	case protocol.SymbolKindTypeParameter:
+		return "type_parameter"
+	default:
+		return "unknown"
+	}
 }
 
 func normalizeRange(value protocol.Range) Range {

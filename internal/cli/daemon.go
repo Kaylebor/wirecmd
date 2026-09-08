@@ -31,7 +31,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 7
+const daemonProtocol = 8
 
 type daemonAdmin struct {
 	command string
@@ -116,6 +116,8 @@ type daemonRequest struct {
 	LSPFile               string                 `json:"lsp_file,omitempty"`
 	LSPLine               int                    `json:"lsp_line,omitempty"`
 	LSPColumn             int                    `json:"lsp_column,omitempty"`
+	LSPQuery              string                 `json:"lsp_query,omitempty"`
+	LSPQuerySet           bool                   `json:"lsp_query_set,omitempty"`
 	LSPOperation          string                 `json:"lsp_operation,omitempty"`
 	LSPIncludeDeclaration bool                   `json:"lsp_include_declaration,omitempty"`
 }
@@ -772,7 +774,7 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	if request.Admin != "" {
 		return d.executeAdmin(request.Admin)
 	}
-	if request.Operation != listServers && request.Operation != listTools && request.Operation != callTool && request.Operation != inspectTool && request.Operation != navigateLSP && request.Operation != statusLSP {
+	if request.Operation != listServers && request.Operation != listTools && request.Operation != callTool && request.Operation != inspectTool && request.Operation != navigateLSP && request.Operation != inspectLSP && request.Operation != statusLSP {
 		return errorReply(invocationError("daemon_operation_invalid", "invalid daemon operation", "use a compatible Wirecmd client"))
 	}
 	if !filepath.IsAbs(request.CWD) || len(request.Configs) == 0 {
@@ -821,7 +823,7 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	if request.Operation == listServers {
 		return resultReply(serverList(cached.config), warnings)
 	}
-	if request.Operation == navigateLSP || request.Operation == statusLSP {
+	if request.Operation == navigateLSP || request.Operation == inspectLSP || request.Operation == statusLSP {
 		return d.executeLSP(ctx, request, cached, generation, warnings)
 	}
 	server, ok := findServer(cached.config, request.Server)
@@ -952,12 +954,30 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 		}
 		return resultReply(makeLSPStatusEnvelope(cached.config.LSPs, workspace, request.LSPFile, d.lspRuntimeStatuses(cached.config.LSPs, workspace, generation)), warnings)
 	}
-	if !isLSPNavigation(request.LSPOperation) || !filepath.IsAbs(request.LSPFile) || request.LSPLine < 1 || request.LSPColumn < 1 || uint64(request.LSPLine) > math.MaxUint32 || uint64(request.LSPColumn) > math.MaxUint32 {
-		return errorReplyWithWarnings(invocationError("lsp_request_invalid", "daemon LSP requests require a supported operation, absolute file, and positive line and column", "use the Wirecmd CLI"), warnings)
+	if !isLSPNavigation(request.LSPOperation) && !isLSPInspection(request.LSPOperation) {
+		return errorReplyWithWarnings(invocationError("lsp_request_invalid", "daemon LSP request has an unsupported operation", "use a compatible Wirecmd CLI"), warnings)
 	}
-	matches, appErr := matchLSPDefinitions(cached.config.LSPs, workspace, request.LSPFile)
-	if appErr != nil {
-		return errorReplyWithWarnings(appErr, warnings)
+	if (request.Operation == navigateLSP) != isLSPNavigation(request.LSPOperation) || (request.Operation == inspectLSP) != isLSPInspection(request.LSPOperation) {
+		return errorReplyWithWarnings(invocationError("lsp_request_invalid", "daemon LSP operation family does not match its request", "use a compatible Wirecmd CLI"), warnings)
+	}
+	if isLSPFileOperation(request.LSPOperation) && !filepath.IsAbs(request.LSPFile) {
+		return errorReplyWithWarnings(invocationError("lsp_request_invalid", "daemon LSP file operations require an absolute file", "use the Wirecmd CLI"), warnings)
+	}
+	if isLSPPositionOperation(request.LSPOperation) && (request.LSPLine < 1 || request.LSPColumn < 1 || uint64(request.LSPLine) > math.MaxUint32 || uint64(request.LSPColumn) > math.MaxUint32) {
+		return errorReplyWithWarnings(invocationError("lsp_request_invalid", "daemon LSP position operations require positive line and column", "use the Wirecmd CLI"), warnings)
+	}
+	if request.LSPOperation == lspWorkspaceSymbols && !request.LSPQuerySet {
+		return errorReplyWithWarnings(invocationError("lsp_request_invalid", "daemon workspace symbol requests require an explicit query", "use the Wirecmd CLI"), warnings)
+	}
+	var matches []lspMatch
+	var appErr *appError
+	if request.LSPOperation == lspWorkspaceSymbols {
+		matches = allLSPDefinitions(cached.config.LSPs)
+	} else {
+		matches, appErr = matchLSPDefinitions(cached.config.LSPs, workspace, request.LSPFile)
+		if appErr != nil {
+			return errorReplyWithWarnings(appErr, warnings)
+		}
 	}
 	if request.Fingerprint != cached.fingerprint && request.Execution != lspMatchesExecutionFingerprint(matches, cached.config.Root, request.CWD) {
 		return errorReplyWithWarnings(configurationError("config_mismatch", "selected LSP execution configuration differs from the daemon cache", "run wirecmd daemon reload and retry"), warnings)
@@ -966,9 +986,10 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 		if appErr := validateLSPSecretInputs(match.Definition, request.Secrets); appErr != nil {
 			return errorReplyWithWarnings(appErr, warnings)
 		}
-		if _, err := lspclient.PrepareTarget(request.LSPFile, uint32(request.LSPLine), uint32(request.LSPColumn), match.LanguageID); err != nil {
-			return errorReplyWithWarnings(lspOperationError(err, request.LSPOperation), warnings)
-		}
+	}
+	lspReq := lspRequest{Operation: request.LSPOperation, File: request.LSPFile, Line: request.LSPLine, Column: request.LSPColumn, Query: request.LSPQuery, QuerySet: request.LSPQuerySet, IncludeDeclaration: request.LSPIncludeDeclaration}
+	if appErr := validateLSPRequestInput(request.LSPFile, lspReq, matches); appErr != nil {
+		return errorReplyWithWarnings(appErr, warnings)
 	}
 	results := make([]lspProviderRun, len(matches))
 	var wait sync.WaitGroup
@@ -976,11 +997,6 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 		wait.Add(1)
 		go func(index int, match lspMatch) {
 			defer wait.Done()
-			target, err := lspclient.PrepareTarget(request.LSPFile, uint32(request.LSPLine), uint32(request.LSPColumn), match.LanguageID)
-			if err != nil {
-				results[index].Err = lspOperationError(err, request.LSPOperation)
-				return
-			}
 			instance, appErr := d.acquireLSP(ctx, match.Definition, cached.config.Root, request.CWD, request.Secrets, generation)
 			if appErr != nil {
 				results[index].Err = appErr
@@ -997,7 +1013,7 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 				results[index].Err = transportError("lsp_instance_unavailable", "the retained LSP instance is unavailable", "run wirecmd daemon reload or restart the daemon")
 				return
 			}
-			locations, err := callLSPNavigation(ctx, instance.lspSession, target, request.LSPOperation, request.LSPIncludeDeclaration)
+			err := callLSPRequest(ctx, instance.lspSession, request.LSPFile, lspReq, match.LanguageID, &results[index])
 			if errors.Is(err, lspclient.ErrCapabilityUnavailable) {
 				results[index].Unsupported = true
 				return
@@ -1015,11 +1031,11 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 				results[index].Err = mapped
 				return
 			}
-			results[index].Locations = locations
+			redactLSPProviderRun(&results[index], instance.redactor)
 		}(index, match)
 	}
 	wait.Wait()
-	result, appErr := aggregateLSPResults(request.LSPOperation, request.LSPFile, matches, results)
+	result, appErr := aggregateLSPRequestResults(lspReq, workspace, request.LSPFile, matches, results)
 	if appErr != nil {
 		return errorReplyWithWarnings(appErr, warnings)
 	}

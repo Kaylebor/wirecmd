@@ -52,9 +52,9 @@ protocol layers are qualified; legacy HTTP+SSE remains deferred at the SDK
 boundary. Automatic configuration discovery, workspace trust, typed HTTP query
 and header values, and SDK-owned OAuth with encrypted credential persistence
 are also complete. The first native LSP adapter adds automatically routed,
-multi-provider source navigation. Normal commands use a private foreground
-local daemon; `--direct` is the deliberate one-shot path for testing and
-diagnosis.
+multi-provider source navigation and read-only inspection. Normal commands use
+a private foreground local daemon; `--direct` is the deliberate one-shot path
+for testing and diagnosis.
 
 Linux and macOS builds are available. Native macOS CI covers Apple Silicon and
 Intel; the user has smoke-tested the released Apple Silicon build on an M2,
@@ -156,12 +156,12 @@ administration, use `wirecmd --help -- daemon [TOOL]` (likewise `config` or
 `auth`). This prefix separator is distinct from the tool-side `--` raw JSON
 overlay.
 
-## Native LSP navigation
+## Native LSP navigation and inspection
 
-Wirecmd also provides native, workspace-scoped navigation through configured
-Language Server Protocol processes. It does not supply language servers, infer
-executables, or maintain a language catalog. Configure the actual command and
-one or more selectors alongside MCP sources:
+Wirecmd also provides native, workspace-scoped navigation and read-only
+inspection through configured Language Server Protocol processes. It does not
+supply language servers, infer executables, or maintain a language catalog.
+Configure the actual command and one or more selectors alongside MCP sources:
 
 ```kdl
 wirecmd {
@@ -192,6 +192,9 @@ wirecmd --help lsp
 wirecmd --help lsp definition
 wirecmd lsp definition --file ./main.go --line 21 --column 13
 wirecmd lsp references --file ./main.go --line 21 --column 13
+wirecmd lsp hover --file ./main.go --line 21 --column 13
+wirecmd lsp document-symbols --file ./main.go
+wirecmd lsp workspace-symbols --query 'Wirecmd'
 wirecmd lsp status --file ./main.go
 ```
 
@@ -202,10 +205,16 @@ one-based. Results contain provider-attributed, one-based file locations and
 structured provider outcomes when a matching provider fails. The daemon
 retains each configured LSP session; `--direct` starts one-shot sessions.
 `lsp status` reports configured selectors and already-observed runtime identity
-without starting a process. The bare `lsp` form is native help, but an MCP
-server named `lsp` remains available via `--json`, `--stdin`, an exact-call
-object, or `wirecmd --help -- lsp [TOOL]`. See the [LSP plan](docs/lsp-plan.md)
-for the complete contract and qualification boundary.
+without starting a process. Hover preserves ordered plaintext, Markdown, and
+code blocks. `document-symbols` preserves nested symbols; `workspace-symbols`
+passes its explicit query, including an empty query, to every configured
+provider without local ranking or truncation. These inspection results have
+provider outcomes and partial-failure semantics matching navigation, while
+using their own result collections and counts. The bare `lsp` form is native
+help, but an MCP server named `lsp` remains available via `--json`, `--stdin`,
+an exact-call object, or `wirecmd --help -- lsp [TOOL]`. See the
+[LSP plan](docs/lsp-plan.md) for the complete contract and qualification
+boundary.
 
 ## Invocation and output
 
@@ -356,10 +365,11 @@ non-interactive caller to perform login from a local interactive terminal.
   command from the error's action field.
 - `config_mismatch`: reload the daemon after configuration edits.
 - `lsp_not_configured` or `lsp_no_matching_provider`: configure a workspace
-  `lsp` definition and a matching selector.
+  `lsp` definition and a matching selector. `lsp_capability_unavailable` means
+  no routed provider advertises the requested navigation or inspection
+  operation.
 - `lsp_selector_ambiguous`: make matching selectors choose one language ID per
-  provider; `lsp_capability_unavailable` means no matching provider supports
-  the requested operation; `lsp_encoding_unsupported` requires UTF-16 support.
+  provider; `lsp_encoding_unsupported` requires UTF-16 support.
 - Argument errors: read `wirecmd --help SERVER TOOL`; pass complex flag values
   as the value itself, not an object wrapping its property name.
 
@@ -404,9 +414,8 @@ flags, and JSON contents are not completed. Bash/Zsh support is deferred.
   typed query/header configuration milestone.
 - [OAuth plan](docs/oauth-plan.md) defines the authoritative transparent OAuth
   and encrypted credential-persistence milestone.
-- [LSP plan](docs/lsp-plan.md) defines the completed, real-server-qualified
-  native LSP definition milestone and the accepted multi-provider navigation
-  roadmap.
+- [LSP plan](docs/lsp-plan.md) defines the completed multi-provider navigation
+  milestone and the accepted hover/symbol inspection extension.
 - [Output contract](docs/output-plan.md) defines contextual terminal output,
   explicit machine output, and color policy.
 - [Release readiness](docs/release-readiness.md) defines the authoritative

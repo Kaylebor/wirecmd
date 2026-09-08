@@ -2,6 +2,7 @@ package lspclient
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -25,6 +26,16 @@ func TestPositionAtUsesOneBasedRuneColumnsAndUTF16(t *testing.T) {
 		if _, err := positionAt([]byte("abc\n"), test.line, test.column); err == nil {
 			t.Fatalf("positionAt(%d, %d) succeeded", test.line, test.column)
 		}
+	}
+}
+
+func TestPrepareDocumentDoesNotRequirePosition(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.go")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareDocument(path, "go"); err != nil {
+		t.Fatalf("PrepareDocument() = %v", err)
 	}
 }
 
@@ -181,6 +192,9 @@ func TestNavigationOperationsAndStatus(t *testing.T) {
 	if !status.Capabilities.Declaration || !status.Capabilities.Definition || !status.Capabilities.TypeDefinition || !status.Capabilities.Implementation || !status.Capabilities.References {
 		t.Fatalf("status capabilities = %+v", status.Capabilities)
 	}
+	if !status.Capabilities.Hover || !status.Capabilities.DocumentSymbols || !status.Capabilities.WorkspaceSymbols {
+		t.Fatalf("inspection capabilities = %+v", status.Capabilities)
+	}
 	target, err := PrepareTarget(path, 1, 1, "go")
 	if err != nil {
 		t.Fatal(err)
@@ -201,6 +215,31 @@ func TestNavigationOperationsAndStatus(t *testing.T) {
 				t.Fatalf("locations = %#v", locations)
 			}
 		})
+	}
+	hovers, err := session.Hover(context.Background(), target)
+	if err != nil || len(hovers) != 1 || len(hovers[0].Content) != 2 {
+		t.Fatalf("hover = %#v, %v", hovers, err)
+	}
+	documentSymbols, err := session.DocumentSymbols(context.Background(), target)
+	if err != nil || len(documentSymbols) != 1 || documentSymbols[0].Path != path {
+		t.Fatalf("document symbols = %#v, %v", documentSymbols, err)
+	}
+	workspaceSymbols, err := session.WorkspaceSymbols(context.Background(), "")
+	if err != nil || len(workspaceSymbols) != 1 || workspaceSymbols[0].Path == "" {
+		t.Fatalf("workspace symbols = %#v, %v", workspaceSymbols, err)
+	}
+}
+
+func TestWorkspaceSymbolsDoesNotOpenDocument(t *testing.T) {
+	workspace := t.TempDir()
+	session, err := Start(context.Background(), helperCommand("workspace-no-open"), workspace, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	symbols, err := session.WorkspaceSymbols(context.Background(), "")
+	if err != nil || len(symbols) != 1 || symbols[0].Name != "" {
+		t.Fatalf("workspace symbols = %#v, %v", symbols, err)
 	}
 }
 
@@ -253,6 +292,78 @@ func TestNormalizeNavigationResultVariants(t *testing.T) {
 	}
 }
 
+func TestNormalizeHoverVariants(t *testing.T) {
+	rangeValue := protocol.Range{Start: protocol.Position{Line: 1, Character: 2}, End: protocol.Position{Line: 1, Character: 5}}
+	for name, contents := range map[string]protocol.HoverContents{
+		"plaintext":       &protocol.MarkupContent{Kind: protocol.MarkupKindPlainText, Value: "plain"},
+		"legacy-markdown": protocol.String("*legacy*"),
+		"markdown":        &protocol.MarkupContent{Kind: protocol.MarkupKindMarkdown, Value: "**bold**"},
+		"code":            &protocol.MarkedStringWithLanguage{Language: "go", Value: "fmt.Println()"},
+		"mixed": protocol.MarkedStringSlice{
+			protocol.String("text"),
+			&protocol.MarkedStringWithLanguage{Language: "go", Value: "x := 1"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			hovers, err := normalizeHover(&protocol.Hover{Contents: contents, Range: &rangeValue})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(hovers) != 1 || hovers[0].Range == nil || hovers[0].Range.Start != (Point{Line: 2, Column: 3}) {
+				t.Fatalf("hovers = %#v", hovers)
+			}
+		})
+	}
+	legacy, err := normalizeHover(&protocol.Hover{Contents: protocol.String("*legacy*")})
+	if err != nil || len(legacy) != 1 || len(legacy[0].Content) != 1 || legacy[0].Content[0].Kind != "markdown" {
+		t.Fatalf("legacy marked string = %#v, %v", legacy, err)
+	}
+	if hovers, err := normalizeHover(nil); err != nil || len(hovers) != 0 {
+		t.Fatalf("null hover = %#v, %v", hovers, err)
+	}
+	if _, err := normalizeHover(&protocol.Hover{Contents: &protocol.MarkupContent{Kind: protocol.MarkupKind("html"), Value: "<b>bad</b>"}}); !errorsIs(err, ErrResultUnsupported) {
+		t.Fatalf("unsupported hover kind error = %v", err)
+	}
+}
+
+func TestNormalizeSymbolsPreservesFormsAndRejectsUnsupportedWorkspaceLocations(t *testing.T) {
+	file := uri.File("/workspace/input.go")
+	rangeValue := protocol.Range{Start: protocol.Position{Line: 2, Character: 1}, End: protocol.Position{Line: 2, Character: 4}}
+	deprecated := true
+	detail := "func()"
+	container := "pkg"
+	document := protocol.DocumentSymbol{
+		Name: "Parent", Kind: protocol.SymbolKindClass, Detail: &detail, Range: rangeValue,
+		SelectionRange: rangeValue, Tags: []protocol.SymbolTag{protocol.SymbolTagDeprecated},
+		Children: []protocol.DocumentSymbol{{Name: "Child", Kind: protocol.SymbolKindMethod, Range: rangeValue, SelectionRange: rangeValue}},
+	}
+	symbols, err := normalizeDocumentSymbols(protocol.DocumentSymbolSlice{document})
+	if err != nil {
+		t.Fatal(err)
+	}
+	setSymbolPaths(symbols, "/workspace/input.go")
+	if len(symbols) != 1 || symbols[0].Path != "/workspace/input.go" || len(symbols[0].Children) != 1 || !symbols[0].Deprecated || symbols[0].KindName != "class" {
+		t.Fatalf("document symbols = %#v", symbols)
+	}
+	flat := protocol.SymbolInformationSlice{{BaseSymbolInformation: protocol.BaseSymbolInformation{Name: "Flat", Kind: protocol.SymbolKindFunction, ContainerName: &container}, Deprecated: &deprecated, Location: protocol.Location{URI: file, Range: rangeValue}}}
+	symbols, err = normalizeWorkspaceSymbols(flat)
+	if err != nil || len(symbols) != 1 || symbols[0].Path != "/workspace/input.go" || symbols[0].ContainerName == nil || !symbols[0].Deprecated {
+		t.Fatalf("flat symbols = %#v, %v", symbols, err)
+	}
+	workspace := protocol.WorkspaceSymbolSlice{{BaseSymbolInformation: protocol.BaseSymbolInformation{Name: "Partial", Kind: protocol.SymbolKindVariable}, Location: &protocol.LocationUriOnly{URI: file}}}
+	if _, err := normalizeWorkspaceSymbols(workspace); !errorsIs(err, ErrResultUnsupported) {
+		t.Fatalf("range-less workspace symbol error = %v", err)
+	}
+	workspace = protocol.WorkspaceSymbolSlice{{BaseSymbolInformation: protocol.BaseSymbolInformation{Name: "Resolved", Kind: protocol.SymbolKindVariable}, Location: &protocol.Location{URI: file, Range: rangeValue}}}
+	if resolved, err := normalizeWorkspaceSymbols(workspace); err != nil || len(resolved) != 1 || resolved[0].Path != file.FsPath() || resolved[0].Range.Start != (Point{Line: 3, Column: 2}) {
+		t.Fatalf("range-bearing workspace symbol = %#v, %v", resolved, err)
+	}
+	httpURI := uri.MustParse("https://example.test/symbol")
+	if _, err := normalizeWorkspaceSymbols(protocol.WorkspaceSymbolSlice{{BaseSymbolInformation: protocol.BaseSymbolInformation{Name: "Remote", Kind: protocol.SymbolKindVariable}, Location: &protocol.Location{URI: httpURI, Range: rangeValue}}}); !errorsIs(err, ErrResultUnsupported) {
+		t.Fatalf("non-file workspace symbol error = %v", err)
+	}
+}
+
 func helperCommand(mode string) Command {
 	return Command{Path: os.Args[0], Args: []string{"-test.run=TestLSPHelperProcess"}, Env: append(os.Environ(), "WIRECMD_LSP_HELPER="+mode), Stderr: io.Discard}
 }
@@ -297,6 +408,9 @@ func (s *fakeServer) Initialize(context.Context, *protocol.InitializeParams) (*p
 		capabilities.TypeDefinitionProvider = protocol.Boolean(true)
 		capabilities.ImplementationProvider = protocol.Boolean(true)
 		capabilities.ReferencesProvider = protocol.Boolean(true)
+		capabilities.HoverProvider = protocol.Boolean(true)
+		capabilities.DocumentSymbolProvider = protocol.Boolean(true)
+		capabilities.WorkspaceSymbolProvider = protocol.Boolean(true)
 		kind := protocol.TextDocumentSyncKindIncremental
 		open := true
 		capabilities.TextDocumentSync = &protocol.TextDocumentSyncOptions{OpenClose: &open, Change: &kind}
@@ -312,6 +426,12 @@ func (s *fakeServer) Initialize(context.Context, *protocol.InitializeParams) (*p
 	if s.mode == "incremental" {
 		kind := protocol.TextDocumentSyncKindIncremental
 		open := true
+		capabilities.TextDocumentSync = &protocol.TextDocumentSyncOptions{OpenClose: &open, Change: &kind}
+	}
+	if s.mode == "workspace-no-open" {
+		open := true
+		kind := protocol.TextDocumentSyncKindIncremental
+		capabilities.WorkspaceSymbolProvider = protocol.Boolean(true)
 		capabilities.TextDocumentSync = &protocol.TextDocumentSyncOptions{OpenClose: &open, Change: &kind}
 	}
 	return &protocol.InitializeResult{Capabilities: capabilities, ServerInfo: protocol.ServerInfo{Name: "fake", Version: protocol.NewOptional("1.0")}}, nil
@@ -401,4 +521,31 @@ func (s *fakeServer) References(_ context.Context, params *protocol.ReferencePar
 		suffix += ".excluding-declaration"
 	}
 	return []protocol.Location{{URI: uri.File(params.TextDocument.URI.FsPath() + suffix)}}, nil
+}
+
+func (s *fakeServer) Hover(_ context.Context, params *protocol.HoverParams) (*protocol.Hover, error) {
+	return &protocol.Hover{
+		Contents: protocol.MarkedStringSlice{
+			protocol.String("hover text"),
+			&protocol.MarkedStringWithLanguage{Language: "go", Value: "symbol()"},
+		},
+		Range: &protocol.Range{Start: params.Position, End: params.Position},
+	}, nil
+}
+
+func (s *fakeServer) DocumentSymbol(_ context.Context, params *protocol.DocumentSymbolParams) (protocol.DocumentSymbolResult, error) {
+	value := protocol.Range{Start: protocol.Position{Line: 0, Character: 0}, End: protocol.Position{Line: 0, Character: 6}}
+	return protocol.DocumentSymbolSlice{{Name: "Document", Kind: protocol.SymbolKindClass, Range: value, SelectionRange: value}}, nil
+}
+
+func (s *fakeServer) Symbols(_ context.Context, params *protocol.WorkspaceSymbolParams) (protocol.WorkspaceSymbolResult, error) {
+	if s.mode == "workspace-no-open" {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if len(s.documents) != 0 {
+			return nil, fmt.Errorf("workspace symbol request opened a document")
+		}
+	}
+	value := protocol.Range{Start: protocol.Position{Line: 0, Character: 0}, End: protocol.Position{Line: 0, Character: 6}}
+	return protocol.WorkspaceSymbolSlice{{BaseSymbolInformation: protocol.BaseSymbolInformation{Name: params.Query, Kind: protocol.SymbolKindFunction}, Location: &protocol.Location{URI: uri.File("/workspace/input.go"), Range: value}}}, nil
 }

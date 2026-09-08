@@ -189,6 +189,32 @@ func TestOutputEncodingFailureUsesExistingFallback(t *testing.T) {
 	}
 }
 
+func TestPrettyLSPHoverIsReadableAndTerminalSafe(t *testing.T) {
+	value := lspHoverEnvelope{OK: true, LSP: lspHoverResult{
+		Operation: lspHover,
+		File:      "/work/main.go",
+		Line:      2,
+		Column:    3,
+		Partial:   true,
+		Hovers: []lspHoverEntry{{Provider: "first\x1b[31m", Contents: []lspHoverContent{
+			{Kind: "markdown", Text: "**literal**\n\x1b[2J"},
+			{Kind: "code", Language: "go", Text: "func main() {}"},
+		}}},
+		Providers: []lspHoverProviderOutcome{{Name: "first", Status: "ok", Hovers: 1}, {Name: "second", Status: "unsupported"}},
+	}}
+	var output bytes.Buffer
+	writeOutput(&output, value, presentation{pretty: true})
+	got := output.String()
+	for _, want := range []string{"LSP hover", "/work/main.go", "first\\x1B[31m", "**literal**", "\\x1B[2J", "code (go)", "second: unsupported"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("pretty hover missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "\x1b[31m") || strings.Contains(got, "\x1b[2J") {
+		t.Fatalf("upstream terminal control survived: %q", got)
+	}
+}
+
 func stripANSI(value string) string {
 	var output strings.Builder
 	for i := 0; i < len(value); {

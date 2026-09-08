@@ -120,6 +120,7 @@ const (
 	callTool
 	inspectTool
 	navigateLSP
+	inspectLSP
 	statusLSP
 )
 

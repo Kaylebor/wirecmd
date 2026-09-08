@@ -1,6 +1,6 @@
 ---
 name: wirecmd
-description: Discover and compose Wirecmd capabilities from the shell, including trusted workspace configuration, focused help, native LSP navigation, projected arguments, lossless JSON calls, and transparent OAuth-backed HTTP servers.
+description: Discover and compose Wirecmd capabilities from the shell, including trusted workspace configuration, focused help, native LSP navigation and inspection, projected arguments, lossless JSON calls, and transparent OAuth-backed HTTP servers.
 ---
 
 # Wirecmd
@@ -49,7 +49,7 @@ recoverable `workspace_untrusted` error (exit 8); no discovered source is
 `config_not_found` (exit 3). These commands remain non-interactive. A server
 named `config` can still be called through `--json` or an exact-call envelope.
 
-## Use native LSP navigation
+## Use native LSP navigation and inspection
 
 LSP navigation is a native capability rather than an MCP tool. Begin with
 offline help:
@@ -80,20 +80,29 @@ attributed to the provider. Query a saved UTF-8 file with one-based coordinates:
 ```sh
 wirecmd lsp definition --file ./main.go --line 21 --column 13
 wirecmd lsp references --file ./main.go --line 21 --column 13
+wirecmd lsp hover --file ./main.go --line 21 --column 13
+wirecmd lsp document-symbols --file ./main.go
+wirecmd lsp workspace-symbols --query 'Wirecmd'
 wirecmd lsp status --file ./main.go
 ```
 
 Available operations are `definition`, `declaration`, `type-definition`,
 `implementation`, and `references`; references exclude declarations unless
-`--include-declaration` is supplied. Normal calls retain selected sessions
-through the daemon; use `--direct` only for one-shot diagnosis. Results are
-normalized file locations with one-based ranges. Partial provider failures are
-reported in structured provider outcomes without noisy client stderr. Use
-`lsp status` to inspect configured selectors and already-observed runtime
-identity without starting a process. `lsp_not_configured` and
-`lsp_no_matching_provider` mean configuration or selector routing needs
-attention. `lsp_capability_unavailable` means no matching server supports the
-operation; `lsp_encoding_unsupported` requires UTF-16 support.
+`--include-declaration` is supplied. Read-only inspection also provides
+`hover`, `document-symbols`, and `workspace-symbols`. Hover preserves ordered
+plaintext, Markdown, and code blocks. Document symbols preserve nested
+children; workspace symbols pass the explicit query unchanged to all
+configured providers, including an empty query, without local ranking or
+truncation. Normal calls retain selected sessions through the daemon; use
+`--direct` only for one-shot diagnosis. Navigation results are normalized file
+locations with one-based ranges, while inspection uses its own hover/symbol
+collections. Partial provider failures are reported in structured provider
+outcomes without noisy client stderr. Use `lsp status` to inspect configured
+selectors and already-observed runtime identity and capabilities without
+starting a process. `lsp_not_configured` and `lsp_no_matching_provider` mean
+configuration or selector routing needs attention. `lsp_capability_unavailable`
+means no matching server supports the operation; `lsp_encoding_unsupported`
+requires UTF-16 support.
 
 The bare `lsp` form is native help. A configured MCP server named `lsp` remains
 callable through `--json`, `--stdin`, an exact-call object, or

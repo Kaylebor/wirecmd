@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -82,6 +83,86 @@ func TestLSPDefinitionDirectAndDaemon(t *testing.T) {
 	if code != exitOK || stderr != "" {
 		t.Fatalf("post-reload call: code=%d stdout=%s stderr=%q", code, output, stderr)
 	}
+}
+
+func TestLSPInspectionDirectAndDaemon(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	runtime := testRuntimeDirectory(t)
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	startTestDaemon(t)
+	workspace := t.TempDir()
+	input := filepath.Join(workspace, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(workspace, "wirecmd.kdl")
+	writeSource(t, configPath, fmt.Sprintf(`wirecmd {
+root %s
+lsp "fixture" { selector language-id="fixture" pattern="**/*.go"; stdio %s { arg "-test.run=TestCLILSPHelperProcess" } }
+lsp "nonmatching" { selector language-id="html" pattern="**/*.html"; stdio %s { arg "-test.run=TestCLILSPHelperProcess"; env WIRECMD_LSP_PROVIDER=".nonmatching" } }
+}`, strconv.Quote(workspace), strconv.Quote(os.Args[0]), strconv.Quote(os.Args[0])))
+	commands := [][]string{
+		{"lsp", "hover", "--file", input, "--line", "1", "--column", "2"},
+		{"lsp", "document-symbols", "--file", input},
+		{"lsp", "workspace-symbols", "--query", "Needle"},
+		{"lsp", "workspace-symbols", "--query", ""},
+	}
+	for _, command := range commands {
+		args := append([]string{"--config", configPath}, command...)
+		directCode, directOutput, directStderr := invoke(t, append([]string{"--direct"}, args...))
+		if directCode != exitOK || directStderr != "" {
+			t.Fatalf("direct %v: code=%d stdout=%s stderr=%q", command, directCode, directOutput, directStderr)
+		}
+		code, output, stderr := invoke(t, args)
+		if code != exitOK || stderr != "" || !reflect.DeepEqual(decodeOutput(t, output), decodeOutput(t, directOutput)) {
+			t.Fatalf("daemon %v: code=%d stdout=%s stderr=%q direct=%s", command, code, output, stderr, directOutput)
+		}
+	}
+	statusOutput := mustInvokeLSP(t, []string{"--config", configPath, "lsp", "status"})
+	runtimeStatus := decodeOutput(t, statusOutput)["lsp"].(map[string]any)["providers"].([]any)[0].(map[string]any)["runtime"].(map[string]any)
+	capabilities := runtimeStatus["capabilities"].(map[string]any)
+	if capabilities["hover"] != true || capabilities["document_symbols"] != true || capabilities["workspace_symbols"] != true {
+		t.Fatalf("inspection capabilities=%#v", capabilities)
+	}
+
+	hover := decodeOutput(t, mustInvokeLSP(t, []string{"--direct", "--config", configPath, "lsp", "hover", "--file", input, "--line", "1", "--column", "2"}))["lsp"].(map[string]any)
+	if len(hover["hovers"].([]any)) != 1 || hover["providers"].([]any)[0].(map[string]any)["hovers"].(json.Number).String() != "1" {
+		t.Fatalf("hover=%#v", hover)
+	}
+	document := decodeOutput(t, mustInvokeLSP(t, []string{"--direct", "--config", configPath, "lsp", "document-symbols", "--file", input}))["lsp"].(map[string]any)
+	top := document["symbols"].([]any)[0].(map[string]any)
+	if top["provider"] != "fixture" || top["kind_name"] != "function" || len(top["children"].([]any)) != 1 {
+		t.Fatalf("document symbols=%#v", document)
+	}
+	workspaceResult := decodeOutput(t, mustInvokeLSP(t, []string{"--direct", "--config", configPath, "lsp", "workspace-symbols", "--query", "Needle"}))["lsp"].(map[string]any)
+	if workspaceResult["query"] != "Needle" || workspaceResult["workspace"] != workspace || len(workspaceResult["providers"].([]any)) != 2 || workspaceResult["symbols"].([]any)[0].(map[string]any)["name"] != "Needle" {
+		t.Fatalf("workspace symbols=%#v", workspaceResult)
+	}
+}
+
+func TestLSPInspectionRedactsSuccessfulResults(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	t.Setenv("LSP_RESULT_SECRET", "never-print-this-value")
+	workspace := t.TempDir()
+	input := filepath.Join(workspace, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(workspace, "wirecmd.kdl")
+	writeSource(t, configPath, fmt.Sprintf("wirecmd { root %s; lsp \"fixture\" { selector language-id=\"fixture\"; stdio %s { arg \"-test.run=TestCLILSPHelperProcess\"; env WIRECMD_LSP_PROVIDER=(secret)\"env://LSP_RESULT_SECRET\" } } }", strconv.Quote(workspace), strconv.Quote(os.Args[0])))
+	code, output, stderr := invoke(t, []string{"--direct", "--config", configPath, "lsp", "hover", "--file", input, "--line", "1", "--column", "2"})
+	if code != exitOK || strings.Contains(output, "never-print-this-value") || strings.Contains(stderr, "never-print-this-value") || !strings.Contains(output, "[REDACTED]") {
+		t.Fatalf("redaction: code=%d stdout=%q stderr=%q", code, output, stderr)
+	}
+}
+
+func mustInvokeLSP(t *testing.T, args []string) string {
+	t.Helper()
+	code, output, stderr := invoke(t, args)
+	if code != exitOK || stderr != "" {
+		t.Fatalf("%v: code=%d stdout=%s stderr=%q", args, code, output, stderr)
+	}
+	return output
 }
 
 func TestLSPDefinitionUsesTrustedWorkspaceComposition(t *testing.T) {
@@ -207,6 +288,21 @@ lsp "typescript" {
 		providers := lsp["providers"].([]any)
 		if lsp["partial"] != true || len(locations) != 1 || locations[0].(map[string]any)["provider"] != "angular" || len(providers) != 2 || providers[1].(map[string]any)["status"] != "failed" {
 			t.Fatalf("multi-provider output = %#v", lsp)
+		}
+	}
+	for _, command := range [][]string{
+		{"lsp", "hover", "--file", input, "--line", "1", "--column", "2"},
+		{"lsp", "document-symbols", "--file", input},
+		{"lsp", "workspace-symbols", "--query", "value"},
+	} {
+		code, output, stderr := invoke(t, append([]string{"--direct", "--config", configPath}, command...))
+		if code != exitOK || stderr != "" {
+			t.Fatalf("inspection %v: code=%d stdout=%s stderr=%q", command, code, output, stderr)
+		}
+		lsp := decodeOutput(t, output)["lsp"].(map[string]any)
+		providers := lsp["providers"].([]any)
+		if lsp["partial"] != true || providers[0].(map[string]any)["status"] != "ok" || providers[1].(map[string]any)["status"] != "failed" {
+			t.Fatalf("inspection partial %v=%#v", command, lsp)
 		}
 	}
 	code, output, stderr := invoke(t, []string{"--config", configPath, "lsp", "status", "--file", input})
@@ -409,15 +505,40 @@ func (server cliLSPServer) Initialize(context.Context, *protocol.InitializeParam
 	}
 	if !server.unsupported {
 		capabilities = protocol.ServerCapabilities{
-			DeclarationProvider:    protocol.Boolean(true),
-			DefinitionProvider:     protocol.Boolean(true),
-			TypeDefinitionProvider: protocol.Boolean(true),
-			ImplementationProvider: protocol.Boolean(true),
-			ReferencesProvider:     protocol.Boolean(true),
-			TextDocumentSync:       &protocol.TextDocumentSyncOptions{OpenClose: &open, Change: &kind},
+			HoverProvider:           protocol.Boolean(true),
+			DeclarationProvider:     protocol.Boolean(true),
+			DefinitionProvider:      protocol.Boolean(true),
+			TypeDefinitionProvider:  protocol.Boolean(true),
+			ImplementationProvider:  protocol.Boolean(true),
+			ReferencesProvider:      protocol.Boolean(true),
+			DocumentSymbolProvider:  protocol.Boolean(true),
+			WorkspaceSymbolProvider: protocol.Boolean(true),
+			TextDocumentSync:        &protocol.TextDocumentSyncOptions{OpenClose: &open, Change: &kind},
 		}
 	}
 	return &protocol.InitializeResult{Capabilities: capabilities, ServerInfo: protocol.ServerInfo{Name: "wirecmd-test-lsp", Version: protocol.NewOptional("test")}}, nil
+}
+
+func (server cliLSPServer) Hover(_ context.Context, params *protocol.HoverParams) (*protocol.Hover, error) {
+	if server.fail {
+		return nil, fmt.Errorf("provider failed")
+	}
+	return &protocol.Hover{Contents: &protocol.MarkupContent{Kind: protocol.MarkupKindMarkdown, Value: "**hover** " + server.provider}, Range: &protocol.Range{Start: params.Position, End: params.Position}}, nil
+}
+
+func (server cliLSPServer) DocumentSymbol(_ context.Context, params *protocol.DocumentSymbolParams) (protocol.DocumentSymbolResult, error) {
+	if server.fail {
+		return nil, fmt.Errorf("provider failed")
+	}
+	detail := "fixture detail"
+	return protocol.DocumentSymbolSlice{{Name: "Top" + server.provider, Detail: &detail, Kind: protocol.SymbolKindFunction, Range: protocol.Range{}, SelectionRange: protocol.Range{}, Children: []protocol.DocumentSymbol{{Name: "Child", Kind: protocol.SymbolKindVariable, Range: protocol.Range{}, SelectionRange: protocol.Range{}}}}}, nil
+}
+
+func (server cliLSPServer) Symbols(_ context.Context, params *protocol.WorkspaceSymbolParams) (protocol.WorkspaceSymbolResult, error) {
+	if server.fail {
+		return nil, fmt.Errorf("provider failed")
+	}
+	return protocol.SymbolInformationSlice{{BaseSymbolInformation: protocol.BaseSymbolInformation{Name: params.Query + server.provider, Kind: protocol.SymbolKindClass}, Location: protocol.Location{URI: uri.File("/workspace/symbol.go"), Range: protocol.Range{}}}}, nil
 }
 
 func (cliLSPServer) Initialized(context.Context, *protocol.InitializedParams) error { return nil }

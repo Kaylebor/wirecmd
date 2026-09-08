@@ -47,6 +47,35 @@ func TestLSPNavigationGrammar(t *testing.T) {
 	}
 }
 
+func TestLSPInspectionGrammar(t *testing.T) {
+	hover, appErr, handled := parseLSPCommand([]string{"lsp", "hover", "--file", "main.go", "--line", "2", "--column", "3"}, options{})
+	if !handled || appErr != nil || hover.Operation != lspHover || hover.File != "main.go" || hover.Line != 2 || hover.Column != 3 {
+		t.Fatalf("hover parse = %#v %#v %v", hover, appErr, handled)
+	}
+	document, appErr, handled := parseLSPCommand([]string{"lsp", "document-symbols", "--file", "main.go"}, options{})
+	if !handled || appErr != nil || document.Operation != lspDocumentSymbols || document.File != "main.go" {
+		t.Fatalf("document symbols parse = %#v %#v %v", document, appErr, handled)
+	}
+	workspace, appErr, handled := parseLSPCommand([]string{"lsp", "workspace-symbols", "--query", ""}, options{})
+	if !handled || appErr != nil || workspace.Operation != lspWorkspaceSymbols || !workspace.QuerySet || workspace.Query != "" {
+		t.Fatalf("workspace symbols parse = %#v %#v %v", workspace, appErr, handled)
+	}
+	for _, test := range []struct {
+		args []string
+		code string
+	}{
+		{[]string{"lsp", "hover", "--file", "x", "--line", "1"}, "lsp_column_required"},
+		{[]string{"lsp", "document-symbols"}, "lsp_file_required"},
+		{[]string{"lsp", "document-symbols", "--file", "x", "--line", "1"}, "lsp_document_symbols_flags"},
+		{[]string{"lsp", "workspace-symbols"}, "lsp_query_required"},
+	} {
+		_, got, handled := parseLSPCommand(test.args, options{})
+		if !handled || got == nil || got.code != test.code {
+			t.Fatalf("%v: handled=%v err=%#v", test.args, handled, got)
+		}
+	}
+}
+
 func TestLSPReservesOnlyBareNativeForms(t *testing.T) {
 	for _, test := range []struct {
 		positionals []string
@@ -66,6 +95,9 @@ func TestLSPReservesOnlyBareNativeForms(t *testing.T) {
 	}
 	if _, _, handled := lspHelp([]string{"lsp", "references"}, options{help: true}); !handled {
 		t.Fatal("focused references help was not recognized")
+	}
+	if _, _, handled := lspHelp([]string{"lsp", "workspace-symbols"}, options{help: true}); !handled {
+		t.Fatal("focused workspace symbols help was not recognized")
 	}
 	if _, _, handled := lspHelp([]string{"lsp"}, options{help: true, helpServer: true}); handled {
 		t.Fatal("--help -- must preserve MCP server help")
@@ -168,5 +200,57 @@ func TestAggregateLSPResults(t *testing.T) {
 	outcomes := appErr.details.(map[string]any)["providers"].([]lspProviderOutcome)
 	if len(outcomes) != 2 || outcomes[0].Status != "failed" || outcomes[1].Error.Code != "second_failure" {
 		t.Fatalf("all-failed outcomes=%#v", outcomes)
+	}
+}
+
+func TestAggregateLSPInspectionResults(t *testing.T) {
+	matches := []lspMatch{{Definition: config.LSP{Name: "first"}}, {Definition: config.LSP{Name: "second"}}}
+	hoverValue, appErr := aggregateLSPHoverResults(lspRequest{Operation: lspHover, Line: 2, Column: 3}, "/work/main.go", matches, []lspProviderRun{
+		{Hovers: []lspclient.Hover{{Content: []lspclient.HoverBlock{{Kind: "markdown", Text: "**value**"}}}}},
+		{Err: protocolError("hover_failed", "failed", "retry")},
+	})
+	if appErr != nil {
+		t.Fatal(appErr)
+	}
+	hover := hoverValue.(lspHoverEnvelope)
+	if !hover.LSP.Partial || len(hover.LSP.Hovers) != 1 || hover.LSP.Hovers[0].Provider != "first" || hover.LSP.Providers[0].Hovers != 1 || hover.LSP.Providers[1].Status != "failed" {
+		t.Fatalf("hover=%#v", hover)
+	}
+
+	detail, container := "detail", "container"
+	symbolValue, appErr := aggregateLSPSymbolResults(lspRequest{Operation: lspWorkspaceSymbols, Query: "", QuerySet: true}, "/work", "", matches[:1], []lspProviderRun{{Symbols: []lspclient.Symbol{{Name: "Top", Kind: 12, KindName: "function", Path: "/work/main.go", Detail: &detail, ContainerName: &container, Children: []lspclient.Symbol{{Name: "Child", Kind: 13, KindName: "variable", Path: "/work/main.go"}}}}}})
+	if appErr != nil {
+		t.Fatal(appErr)
+	}
+	symbols := symbolValue.(lspSymbolEnvelope)
+	if symbols.LSP.Query == nil || *symbols.LSP.Query != "" || symbols.LSP.Workspace != "/work" || len(symbols.LSP.Symbols) != 1 || symbols.LSP.Symbols[0].Provider != "first" || symbols.LSP.Symbols[0].Children[0].Provider != "first" {
+		t.Fatalf("symbols=%#v", symbols)
+	}
+
+	_, appErr = aggregateLSPSymbolResults(lspRequest{Operation: lspDocumentSymbols}, "/work", "/work/main.go", matches, []lspProviderRun{{Unsupported: true}, {Unsupported: true}})
+	if appErr == nil || appErr.code != "lsp_capability_unavailable" {
+		t.Fatalf("unsupported symbols=%#v", appErr)
+	}
+}
+
+func TestAllLSPDefinitionsIgnoresSelectors(t *testing.T) {
+	definitions := []config.LSP{{Name: "go"}, {Name: "typescript"}}
+	matches := allLSPDefinitions(definitions)
+	if len(matches) != 2 || matches[0].Definition.Name != "go" || matches[1].Definition.Name != "typescript" || matches[0].LanguageID != "" {
+		t.Fatalf("matches=%#v", matches)
+	}
+}
+
+func TestDaemonRejectsMalformedLSPInspectionFrames(t *testing.T) {
+	d := &daemon{}
+	cached := &daemonConfig{config: &config.Config{LSPs: []config.LSP{{Name: "fixture"}}}}
+	for _, request := range []daemonRequest{
+		{Operation: inspectLSP, LSPOperation: lspWorkspaceSymbols},
+		{Operation: navigateLSP, LSPOperation: lspHover, LSPFile: "/work/main.go", LSPLine: 1, LSPColumn: 1},
+	} {
+		reply := d.executeLSP(context.Background(), request, cached, 0, nil)
+		if reply.Error == nil || reply.Error.Code != "lsp_request_invalid" || reply.ExitCode != exitInvocation {
+			t.Fatalf("request=%#v reply=%#v", request, reply)
+		}
 	}
 }

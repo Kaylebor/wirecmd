@@ -23,12 +23,15 @@ import (
 )
 
 const (
-	lspDefinition     = "definition"
-	lspDeclaration    = "declaration"
-	lspTypeDefinition = "type-definition"
-	lspImplementation = "implementation"
-	lspReferences     = "references"
-	lspStatus         = "status"
+	lspDefinition       = "definition"
+	lspDeclaration      = "declaration"
+	lspTypeDefinition   = "type-definition"
+	lspImplementation   = "implementation"
+	lspReferences       = "references"
+	lspHover            = "hover"
+	lspDocumentSymbols  = "document-symbols"
+	lspWorkspaceSymbols = "workspace-symbols"
+	lspStatus           = "status"
 )
 
 type lspRequest struct {
@@ -36,6 +39,8 @@ type lspRequest struct {
 	File               string
 	Line               int
 	Column             int
+	Query              string
+	QuerySet           bool
 	IncludeDeclaration bool
 }
 
@@ -73,6 +78,76 @@ type lspResult struct {
 type lspEnvelope struct {
 	OK  bool      `json:"ok"`
 	LSP lspResult `json:"lsp"`
+}
+
+type lspHoverContent struct {
+	Kind     string `json:"kind"`
+	Text     string `json:"text"`
+	Language string `json:"language,omitempty"`
+}
+
+type lspHoverEntry struct {
+	Provider string            `json:"provider"`
+	Range    *lspRange         `json:"range,omitempty"`
+	Contents []lspHoverContent `json:"contents"`
+}
+
+type lspHoverProviderOutcome struct {
+	Name   string     `json:"name"`
+	Status string     `json:"status"`
+	Hovers int        `json:"hovers"`
+	Error  *errorBody `json:"error,omitempty"`
+}
+
+type lspHoverResult struct {
+	Operation string                    `json:"operation"`
+	File      string                    `json:"file"`
+	Line      int                       `json:"line"`
+	Column    int                       `json:"column"`
+	Partial   bool                      `json:"partial"`
+	Hovers    []lspHoverEntry           `json:"hovers"`
+	Providers []lspHoverProviderOutcome `json:"providers"`
+}
+
+type lspHoverEnvelope struct {
+	OK  bool           `json:"ok"`
+	LSP lspHoverResult `json:"lsp"`
+}
+
+type lspSymbol struct {
+	Provider       string      `json:"provider"`
+	Name           string      `json:"name"`
+	Kind           int         `json:"kind"`
+	KindName       string      `json:"kind_name"`
+	Path           string      `json:"path"`
+	Range          lspRange    `json:"range"`
+	SelectionRange *lspRange   `json:"selection_range,omitempty"`
+	Detail         string      `json:"detail,omitempty"`
+	ContainerName  string      `json:"container_name,omitempty"`
+	Deprecated     bool        `json:"deprecated,omitempty"`
+	Children       []lspSymbol `json:"children,omitempty"`
+}
+
+type lspSymbolProviderOutcome struct {
+	Name    string     `json:"name"`
+	Status  string     `json:"status"`
+	Symbols int        `json:"symbols"`
+	Error   *errorBody `json:"error,omitempty"`
+}
+
+type lspSymbolResult struct {
+	Operation string                     `json:"operation"`
+	File      string                     `json:"file,omitempty"`
+	Workspace string                     `json:"workspace,omitempty"`
+	Query     *string                    `json:"query,omitempty"`
+	Partial   bool                       `json:"partial"`
+	Symbols   []lspSymbol                `json:"symbols"`
+	Providers []lspSymbolProviderOutcome `json:"providers"`
+}
+
+type lspSymbolEnvelope struct {
+	OK  bool            `json:"ok"`
+	LSP lspSymbolResult `json:"lsp"`
 }
 
 type lspStatusSelector struct {
@@ -115,6 +190,8 @@ type lspMatch struct {
 
 type lspProviderRun struct {
 	Locations   []lspclient.Location
+	Hovers      []lspclient.Hover
+	Symbols     []lspclient.Symbol
 	Err         *appError
 	Unsupported bool
 }
@@ -128,6 +205,23 @@ func isLSPNavigation(operation string) bool {
 	}
 }
 
+func isLSPInspection(operation string) bool {
+	switch operation {
+	case lspHover, lspDocumentSymbols, lspWorkspaceSymbols:
+		return true
+	default:
+		return false
+	}
+}
+
+func isLSPFileOperation(operation string) bool {
+	return isLSPNavigation(operation) || operation == lspHover || operation == lspDocumentSymbols
+}
+
+func isLSPPositionOperation(operation string) bool {
+	return isLSPNavigation(operation) || operation == lspHover
+}
+
 // parseLSPCommand reserves only bare native forms. JSON input modes remain
 // structural escapes for an MCP server named lsp.
 func parseLSPCommand(positionals []string, opts options) (lspRequest, *appError, bool) {
@@ -135,7 +229,7 @@ func parseLSPCommand(positionals []string, opts options) (lspRequest, *appError,
 		return lspRequest{}, nil, false
 	}
 	operation := positionals[1]
-	if !isLSPNavigation(operation) && operation != lspStatus {
+	if !isLSPNavigation(operation) && !isLSPInspection(operation) && operation != lspStatus {
 		return lspRequest{}, nil, false
 	}
 	flags := flag.NewFlagSet("wirecmd lsp "+operation, flag.ContinueOnError)
@@ -143,9 +237,11 @@ func parseLSPCommand(positionals []string, opts options) (lspRequest, *appError,
 	var file string
 	var line, column int
 	var lineSet, columnSet bool
+	var query string
+	var querySet bool
 	var includeDeclaration bool
 	flags.StringVar(&file, "file", "", "source file")
-	if operation != lspStatus {
+	if isLSPPositionOperation(operation) {
 		flags.Func("line", "one-based line", func(value string) error {
 			parsed, err := parsePositiveLSPPosition("line", value)
 			if err == nil {
@@ -161,12 +257,22 @@ func parseLSPCommand(positionals []string, opts options) (lspRequest, *appError,
 			return err
 		})
 	}
+	if operation == lspWorkspaceSymbols {
+		flags.Func("query", "workspace symbol query", func(value string) error {
+			query, querySet = value, true
+			return nil
+		})
+	}
 	if operation == lspReferences {
 		flags.BoolVar(&includeDeclaration, "include-declaration", false, "include declarations")
 	}
 	usage := "use wirecmd lsp " + operation
-	if operation != lspStatus {
+	if isLSPPositionOperation(operation) {
 		usage += " --file PATH --line N --column N"
+	} else if operation == lspDocumentSymbols {
+		usage += " --file PATH"
+	} else if operation == lspWorkspaceSymbols {
+		usage += " --query TEXT"
 	}
 	if err := flags.Parse(positionals[2:]); err != nil {
 		return lspRequest{}, invocationError("lsp_"+strings.ReplaceAll(operation, "-", "_")+"_flags", err.Error(), usage), true
@@ -174,10 +280,12 @@ func parseLSPCommand(positionals []string, opts options) (lspRequest, *appError,
 	if flags.NArg() != 0 {
 		return lspRequest{}, invocationError("lsp_"+strings.ReplaceAll(operation, "-", "_")+"_arguments", operation+" does not accept positional arguments", usage), true
 	}
-	if operation != lspStatus {
+	if isLSPFileOperation(operation) {
 		if file == "" {
 			return lspRequest{}, invocationError("lsp_file_required", operation+" requires a non-empty --file", "supply --file PATH"), true
 		}
+	}
+	if isLSPPositionOperation(operation) {
 		if !lineSet {
 			return lspRequest{}, invocationError("lsp_line_required", operation+" requires --line", "supply a one-based --line N"), true
 		}
@@ -185,7 +293,10 @@ func parseLSPCommand(positionals []string, opts options) (lspRequest, *appError,
 			return lspRequest{}, invocationError("lsp_column_required", operation+" requires --column", "supply a one-based --column N"), true
 		}
 	}
-	return lspRequest{Operation: operation, File: file, Line: line, Column: column, IncludeDeclaration: includeDeclaration}, nil, true
+	if operation == lspWorkspaceSymbols && !querySet {
+		return lspRequest{}, invocationError("lsp_query_required", operation+" requires --query", "supply --query TEXT; an explicit empty query is allowed"), true
+	}
+	return lspRequest{Operation: operation, File: file, Line: line, Column: column, Query: query, QuerySet: querySet, IncludeDeclaration: includeDeclaration}, nil, true
 }
 
 func parsePositiveLSPPosition(name, value string) (int, error) {
@@ -206,7 +317,7 @@ func lspHelp(positionals []string, opts options) (helpText, *appError, bool) {
 	if len(positionals) == 1 {
 		return helpText(lspHelpText()), nil, true
 	}
-	if len(positionals) == 2 && (isLSPNavigation(positionals[1]) || positionals[1] == lspStatus) {
+	if len(positionals) == 2 && (isLSPNavigation(positionals[1]) || isLSPInspection(positionals[1]) || positionals[1] == lspStatus) {
 		return helpText(lspOperationHelpText(positionals[1])), nil, true
 	}
 	return "", nil, false
@@ -219,9 +330,13 @@ func lspHelpText() string {
   wirecmd [client flags] lsp type-definition --file PATH --line N --column N
   wirecmd [client flags] lsp implementation --file PATH --line N --column N
   wirecmd [client flags] lsp references [--include-declaration] --file PATH --line N --column N
+  wirecmd [client flags] lsp hover --file PATH --line N --column N
+  wirecmd [client flags] lsp document-symbols --file PATH
+  wirecmd [client flags] lsp workspace-symbols --query TEXT
   wirecmd [client flags] lsp status [--file PATH]
 
-Wirecmd routes navigation to every configured LSP selector matching the file.
+Wirecmd routes file operations to every configured LSP selector matching the
+file; workspace-symbols queries every configured provider.
 Normal calls retain sessions through the daemon; --direct uses one-shot
 processes. The bare lsp command is native help. Use --help --, --json, --stdin,
 or an exact call object to reach a configured MCP server named lsp.
@@ -231,6 +346,12 @@ or an exact call object to reach a configured MCP server named lsp.
 func lspOperationHelpText(operation string) string {
 	if operation == lspStatus {
 		return "Inspect configured LSP providers without starting them.\n\nUsage:\n  wirecmd [client flags] lsp status [--file PATH]\n"
+	}
+	if operation == lspDocumentSymbols {
+		return "Inspect document symbols through every matching capable provider.\n\nUsage:\n  wirecmd [client flags] lsp document-symbols --file PATH\n\nPATH resolves from the caller CWD.\n"
+	}
+	if operation == lspWorkspaceSymbols {
+		return "Search workspace symbols through every configured capable provider.\n\nUsage:\n  wirecmd [client flags] lsp workspace-symbols --query TEXT\n\nThe query is required, may be empty, and is passed unchanged.\n"
 	}
 	extra := ""
 	if operation == lspReferences {
@@ -290,22 +411,53 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 		result, callErr, _ := daemonRequestCallWithClient(client, rpc, errOut)
 		return result, callErr
 	}
-	matches, appErr := matchLSPDefinitions(cfg.LSPs, workspace, file)
-	if appErr != nil {
-		return nil, appErr
-	}
-	for _, match := range matches {
-		if _, err := lspclient.PrepareTarget(file, uint32(request.Line), uint32(request.Column), match.LanguageID); err != nil {
-			return nil, lspOperationError(err, request.Operation)
+	var matches []lspMatch
+	if request.Operation == lspWorkspaceSymbols {
+		matches = allLSPDefinitions(cfg.LSPs)
+	} else {
+		matches, appErr = matchLSPDefinitions(cfg.LSPs, workspace, file)
+		if appErr != nil {
+			return nil, appErr
 		}
+	}
+	if appErr := validateLSPRequestInput(file, request, matches); appErr != nil {
+		return nil, appErr
 	}
 	if !opts.direct {
 		secrets := selectedLSPMatchesSecretInputs(matches, os.LookupEnv)
-		rpc := daemonRequest{Operation: navigateLSP, CWD: cwd, Configs: paths, Discovered: discovered, Fingerprint: configFingerprint(cfg, cwd), Execution: lspMatchesExecutionFingerprint(matches, cfg.Root, cwd), Secrets: secrets, LSPFile: file, LSPLine: request.Line, LSPColumn: request.Column, LSPOperation: request.Operation, LSPIncludeDeclaration: request.IncludeDeclaration}
+		daemonOperation := inspectLSP
+		if isLSPNavigation(request.Operation) {
+			daemonOperation = navigateLSP
+		}
+		rpc := daemonRequest{Operation: daemonOperation, CWD: cwd, Configs: paths, Discovered: discovered, Fingerprint: configFingerprint(cfg, cwd), Execution: lspMatchesExecutionFingerprint(matches, cfg.Root, cwd), Secrets: secrets, LSPFile: file, LSPLine: request.Line, LSPColumn: request.Column, LSPQuery: request.Query, LSPQuerySet: request.QuerySet, LSPOperation: request.Operation, LSPIncludeDeclaration: request.IncludeDeclaration}
 		result, callErr, _ := daemonRequestCallWithClient(client, rpc, errOut)
 		return result, callErr
 	}
-	return runDirectLSPMatches(ctx, cfg.Root, cwd, file, request, matches, errOut)
+	return runDirectLSPMatches(ctx, cfg.Root, cwd, workspace, file, request, matches, errOut)
+}
+
+func allLSPDefinitions(definitions []config.LSP) []lspMatch {
+	matches := make([]lspMatch, len(definitions))
+	for index, definition := range definitions {
+		matches[index] = lspMatch{Definition: definition}
+	}
+	return matches
+}
+
+func validateLSPRequestInput(file string, request lspRequest, matches []lspMatch) *appError {
+	for _, match := range matches {
+		var err error
+		switch {
+		case isLSPPositionOperation(request.Operation):
+			_, err = lspclient.PrepareTarget(file, uint32(request.Line), uint32(request.Column), match.LanguageID)
+		case request.Operation == lspDocumentSymbols:
+			_, err = lspclient.PrepareDocument(file, match.LanguageID)
+		}
+		if err != nil {
+			return lspOperationError(err, request.Operation)
+		}
+	}
+	return nil
 }
 
 func lspConfigPaths(cwd string, configured []string) ([]string, bool, *appError) {
@@ -411,7 +563,7 @@ func selectedLSPMatchesSecretInputs(matches []lspMatch, lookup func(string) (str
 	return result
 }
 
-func runDirectLSPMatches(ctx context.Context, root *config.Root, cwd, file string, request lspRequest, matches []lspMatch, errOut io.Writer) (any, *appError) {
+func runDirectLSPMatches(ctx context.Context, root *config.Root, cwd, workspace, file string, request lspRequest, matches []lspMatch, errOut io.Writer) (any, *appError) {
 	results := make([]lspProviderRun, len(matches))
 	var wait sync.WaitGroup
 	var stderrMu sync.Mutex
@@ -437,21 +589,92 @@ func runDirectLSPMatches(ctx context.Context, root *config.Root, cwd, file strin
 				return
 			}
 			defer session.Close()
-			target, err := lspclient.PrepareTarget(file, uint32(request.Line), uint32(request.Column), match.LanguageID)
-			if err == nil {
-				results[index].Locations, err = callLSPNavigation(ctx, session, target, request.Operation, request.IncludeDeclaration)
-			}
+			err = callLSPRequest(ctx, session, file, request, match.LanguageID, &results[index])
 			if errors.Is(err, lspclient.ErrCapabilityUnavailable) {
 				results[index].Unsupported = true
 				return
 			}
 			if err != nil {
 				results[index].Err = lspOperationError(err, request.Operation).redacted(redactor)
+				return
 			}
+			redactLSPProviderRun(&results[index], redactor)
 		}(index, match)
 	}
 	wait.Wait()
-	return aggregateLSPResults(request.Operation, file, matches, results)
+	return aggregateLSPRequestResults(request, workspace, file, matches, results)
+}
+
+func redactLSPProviderRun(result *lspProviderRun, redactor *redactor) {
+	for hoverIndex := range result.Hovers {
+		for contentIndex := range result.Hovers[hoverIndex].Content {
+			content := &result.Hovers[hoverIndex].Content[contentIndex]
+			content.Kind = redactor.Redact(content.Kind)
+			content.Text = redactor.Redact(content.Text)
+			content.Language = redactor.Redact(content.Language)
+		}
+	}
+	for symbolIndex := range result.Symbols {
+		redactLSPSymbol(&result.Symbols[symbolIndex], redactor)
+	}
+}
+
+func redactLSPSymbol(symbol *lspclient.Symbol, redactor *redactor) {
+	symbol.Name = redactor.Redact(symbol.Name)
+	symbol.KindName = redactor.Redact(symbol.KindName)
+	symbol.Path = redactor.Redact(symbol.Path)
+	if symbol.Detail != nil {
+		value := redactor.Redact(*symbol.Detail)
+		symbol.Detail = &value
+	}
+	if symbol.ContainerName != nil {
+		value := redactor.Redact(*symbol.ContainerName)
+		symbol.ContainerName = &value
+	}
+	for index := range symbol.Children {
+		redactLSPSymbol(&symbol.Children[index], redactor)
+	}
+}
+
+func callLSPRequest(ctx context.Context, session *lspclient.Session, file string, request lspRequest, languageID string, result *lspProviderRun) error {
+	switch request.Operation {
+	case lspHover:
+		target, err := lspclient.PrepareTarget(file, uint32(request.Line), uint32(request.Column), languageID)
+		if err != nil {
+			return err
+		}
+		result.Hovers, err = session.Hover(ctx, target)
+		return err
+	case lspDocumentSymbols:
+		target, err := lspclient.PrepareDocument(file, languageID)
+		if err != nil {
+			return err
+		}
+		result.Symbols, err = session.DocumentSymbols(ctx, target)
+		return err
+	case lspWorkspaceSymbols:
+		var err error
+		result.Symbols, err = session.WorkspaceSymbols(ctx, request.Query)
+		return err
+	default:
+		target, err := lspclient.PrepareTarget(file, uint32(request.Line), uint32(request.Column), languageID)
+		if err != nil {
+			return err
+		}
+		result.Locations, err = callLSPNavigation(ctx, session, target, request.Operation, request.IncludeDeclaration)
+		return err
+	}
+}
+
+func aggregateLSPRequestResults(request lspRequest, workspace, file string, matches []lspMatch, results []lspProviderRun) (any, *appError) {
+	switch request.Operation {
+	case lspHover:
+		return aggregateLSPHoverResults(request, file, matches, results)
+	case lspDocumentSymbols, lspWorkspaceSymbols:
+		return aggregateLSPSymbolResults(request, workspace, file, matches, results)
+	default:
+		return aggregateLSPResults(request.Operation, file, matches, results)
+	}
 }
 
 type writerFunc func([]byte) (int, error)
@@ -512,6 +735,123 @@ func aggregateLSPResults(operation, file string, matches []lspMatch, results []l
 	return nil, firstErr
 }
 
+func aggregateLSPHoverResults(request lspRequest, file string, matches []lspMatch, results []lspProviderRun) (any, *appError) {
+	outcomes := make([]lspHoverProviderOutcome, len(matches))
+	hovers := make([]lspHoverEntry, 0)
+	successes, failures := 0, 0
+	var firstErr *appError
+	for index, match := range matches {
+		outcome := lspHoverProviderOutcome{Name: match.Definition.Name}
+		switch {
+		case results[index].Unsupported:
+			outcome.Status = "unsupported"
+		case results[index].Err != nil:
+			outcome.Status = "failed"
+			outcome.Error = bodyFromAppError(results[index].Err)
+			failures++
+			if firstErr == nil {
+				firstErr = results[index].Err
+			}
+		default:
+			outcome.Status = "ok"
+			outcome.Hovers = len(results[index].Hovers)
+			successes++
+			for _, hover := range results[index].Hovers {
+				entry := lspHoverEntry{Provider: match.Definition.Name, Contents: make([]lspHoverContent, len(hover.Content))}
+				if hover.Range != nil {
+					rng := cliLSPRange(*hover.Range)
+					entry.Range = &rng
+				}
+				for contentIndex, content := range hover.Content {
+					entry.Contents[contentIndex] = lspHoverContent{Kind: content.Kind, Text: content.Text, Language: content.Language}
+				}
+				hovers = append(hovers, entry)
+			}
+		}
+		outcomes[index] = outcome
+	}
+	if successes > 0 {
+		return lspHoverEnvelope{OK: true, LSP: lspHoverResult{Operation: request.Operation, File: file, Line: request.Line, Column: request.Column, Partial: failures > 0, Hovers: hovers, Providers: outcomes}}, nil
+	}
+	if firstErr == nil {
+		firstErr = protocolError("lsp_capability_unavailable", "no matching LSP provider advertises the requested operation", "configure a matching LSP that supports textDocument/hover")
+	}
+	firstErr.details = map[string]any{"providers": outcomes}
+	return nil, firstErr
+}
+
+func aggregateLSPSymbolResults(request lspRequest, workspace, file string, matches []lspMatch, results []lspProviderRun) (any, *appError) {
+	outcomes := make([]lspSymbolProviderOutcome, len(matches))
+	symbols := make([]lspSymbol, 0)
+	successes, failures := 0, 0
+	var firstErr *appError
+	for index, match := range matches {
+		outcome := lspSymbolProviderOutcome{Name: match.Definition.Name}
+		switch {
+		case results[index].Unsupported:
+			outcome.Status = "unsupported"
+		case results[index].Err != nil:
+			outcome.Status = "failed"
+			outcome.Error = bodyFromAppError(results[index].Err)
+			failures++
+			if firstErr == nil {
+				firstErr = results[index].Err
+			}
+		default:
+			outcome.Status = "ok"
+			outcome.Symbols = len(results[index].Symbols)
+			successes++
+			for _, symbol := range results[index].Symbols {
+				symbols = append(symbols, cliLSPSymbol(match.Definition.Name, symbol))
+			}
+		}
+		outcomes[index] = outcome
+	}
+	if successes > 0 {
+		result := lspSymbolResult{Operation: request.Operation, File: file, Partial: failures > 0, Symbols: symbols, Providers: outcomes}
+		if request.Operation == lspWorkspaceSymbols {
+			result.File = ""
+			result.Workspace = workspace
+			result.Query = &request.Query
+		}
+		return lspSymbolEnvelope{OK: true, LSP: result}, nil
+	}
+	if firstErr == nil {
+		method := "textDocument/documentSymbol"
+		if request.Operation == lspWorkspaceSymbols {
+			method = "workspace/symbol"
+		}
+		firstErr = protocolError("lsp_capability_unavailable", "no matching LSP provider advertises the requested operation", "configure an LSP that supports "+method)
+	}
+	firstErr.details = map[string]any{"providers": outcomes}
+	return nil, firstErr
+}
+
+func cliLSPRange(value lspclient.Range) lspRange {
+	return lspRange{Start: lspPosition{Line: int(value.Start.Line), Column: int(value.Start.Column)}, End: lspPosition{Line: int(value.End.Line), Column: int(value.End.Column)}}
+}
+
+func cliLSPSymbol(provider string, value lspclient.Symbol) lspSymbol {
+	result := lspSymbol{Provider: provider, Name: value.Name, Kind: int(value.Kind), KindName: value.KindName, Path: value.Path, Range: cliLSPRange(value.Range), Deprecated: value.Deprecated}
+	if value.SelectionRange != nil {
+		rng := cliLSPRange(*value.SelectionRange)
+		result.SelectionRange = &rng
+	}
+	if value.Detail != nil {
+		result.Detail = *value.Detail
+	}
+	if value.ContainerName != nil {
+		result.ContainerName = *value.ContainerName
+	}
+	if len(value.Children) != 0 {
+		result.Children = make([]lspSymbol, len(value.Children))
+		for index, child := range value.Children {
+			result.Children[index] = cliLSPSymbol(provider, child)
+		}
+	}
+	return result
+}
+
 func bodyFromAppError(value *appError) *errorBody {
 	if value == nil {
 		return nil
@@ -561,12 +901,25 @@ func lspOperationError(err error, operation string) *appError {
 	case errors.Is(err, lspclient.ErrServerRequestUnsupported):
 		return protocolError("lsp_server_request_unsupported", err.Error(), "use an LSP server that does not require unsupported client capabilities for this operation")
 	case errors.Is(err, jsonrpc2.ErrMethodNotFound):
-		return protocolError("lsp_capability_mismatch", "the LSP server advertised support but rejected textDocument/"+operation, "check the selected LSP server and workspace configuration")
+		return protocolError("lsp_capability_mismatch", "the LSP server advertised support but rejected "+lspProtocolMethod(operation), "check the selected LSP server and workspace configuration")
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return transportError("lsp_request_canceled", "the LSP "+operation+" operation was canceled", "retry the request")
 	case errors.Is(err, io.EOF), errors.Is(err, net.ErrClosed):
 		return transportError("lsp_instance_unavailable", err.Error(), "run wirecmd daemon reload or restart the daemon")
 	default:
 		return protocolError("lsp_"+strings.ReplaceAll(operation, "-", "_")+"_failed", err.Error(), "check the LSP server diagnostics and workspace configuration")
+	}
+}
+
+func lspProtocolMethod(operation string) string {
+	switch operation {
+	case lspWorkspaceSymbols:
+		return "workspace/symbol"
+	case lspDocumentSymbols:
+		return "textDocument/documentSymbol"
+	case lspTypeDefinition:
+		return "textDocument/typeDefinition"
+	default:
+		return "textDocument/" + operation
 	}
 }

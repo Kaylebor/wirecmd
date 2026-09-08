@@ -1,15 +1,16 @@
-# Native LSP Navigation
+# Native LSP Navigation and Inspection
 
-Status: automatic multi-provider navigation milestone implemented and qualified
+Status: automatic multi-provider navigation, hover, and symbol inspection are
+implemented and qualified
 
 ## Objective
 
-Expose workspace-scoped Language Server Protocol navigation through Wirecmd's
-shell and retained-daemon contract. Wirecmd owns stable semantic commands,
-configuration, routing, normalization, and lifecycle. It does not supply a
-language-server catalog, infer executable names or file extensions, generate
-launch arguments, or contain server-specific behavior. `gopls` and the
-Angular-like test fixture are qualification targets only.
+Expose workspace-scoped Language Server Protocol navigation and read-only
+inspection through Wirecmd's shell and retained-daemon contract. Wirecmd owns
+stable semantic commands, configuration, routing, normalization, and lifecycle.
+It does not supply a language-server catalog, infer executable names or file
+extensions, generate launch arguments, or contain server-specific behavior.
+`gopls` and the Angular-like test fixture are qualification targets only.
 
 ## Public contract
 
@@ -19,6 +20,9 @@ wirecmd lsp declaration --file PATH --line N --column N
 wirecmd lsp type-definition --file PATH --line N --column N
 wirecmd lsp implementation --file PATH --line N --column N
 wirecmd lsp references [--include-declaration] --file PATH --line N --column N
+wirecmd lsp hover --file PATH --line N --column N
+wirecmd lsp document-symbols --file PATH
+wirecmd lsp workspace-symbols --query TEXT
 wirecmd lsp status [--file PATH]
 wirecmd --help lsp [OPERATION]
 ```
@@ -45,6 +49,32 @@ failures set `partial: true` without producing client stderr warnings. If every
 capable provider fails, the first configured failure is top-level and all
 outcomes remain attached. If no match advertises the operation, Wirecmd returns
 `lsp_capability_unavailable`.
+
+Hover and symbol inspection use the same routing, session, and provider
+outcome rules. Hover takes one-based file coordinates and returns ordered,
+provider-attributed entries. Each entry preserves its optional range and its
+ordered content blocks, normalized as `plaintext`, `markdown`, or `code` with an
+optional code language; Markdown is not interpreted or concatenated. A null
+hover contributes no entry. `document-symbols` returns provider-attributed
+symbols, including nested document-symbol children, with numeric and readable
+kinds, normalized paths and ranges, optional selection ranges, detail,
+container names, and deprecation when reported. Flat server results remain
+flat; Wirecmd does not rebuild hierarchy from container names. `workspace-symbols`
+passes the required query, including an explicitly empty query, unchanged to
+every configured provider and does no local ranking or truncation. Workspace
+symbol results are range-bearing file locations; missing ranges and non-file
+URIs are provider-level upstream errors. The JSON envelopes for these
+operations use their own hover/symbol collections and counts; existing
+navigation `locations` envelopes remain unchanged. File operations include the
+absolute input file, while workspace search includes the effective workspace
+and query.
+
+The three inspection operations advertise the corresponding negotiated
+capabilities in `lsp status`. File inspection opens and synchronizes the
+requested document as needed; workspace search does not open a document.
+Pretty hover output shows the file and position, provider labels, optional
+ranges, and complete content blocks (with code-language labels), while symbol
+output uses the existing indented JSON presentation.
 
 Presentation follows the [output contract](output-plan.md): compact JSON for
 pipes, contextual terminal output by default, and guaranteed machine output
@@ -110,7 +140,8 @@ reload or daemon restart and requests are never replayed.
 Daemon instances are keyed by definition, resolved workspace root, selected
 execution configuration, daemon generation, and sensitive startup identity.
 The LSP slice introduced private daemon protocol version 6; the current client
-and daemon use version 7 after the schema-aware trailing-help change. Status
+and daemon use version 8 after adding schema-aware trailing help and native LSP
+inspection requests. Status
 reports configured definitions, selectors, optional implementation metadata,
 executable, selector matches, and already-observed runtime identity and
 capabilities without starting a process.
@@ -125,12 +156,13 @@ advertises an operation but returns Method Not Found reports
 `lsp_capability_mismatch`.
 
 Tests cover composition, provenance, selector replacement and ambiguity,
-namespace escapes, all five navigation methods, result variants, synchronization,
-capability filtering, provider fan-out and ordering, partial/all failures,
-direct/daemon equivalence, retained state, reload, broken sessions, status, and
-redaction. Real-server qualification uses an explicit disposable `gopls`
-configuration against this repository; exact evidence is recorded in the
-non-authoritative [validation note](notes/lsp-definition-validation.md).
+namespace escapes, all five navigation methods, hover, document symbols,
+workspace symbols, result variants, synchronization, capability filtering,
+provider fan-out and ordering, partial/all failures, direct/daemon equivalence,
+retained state, reload, broken sessions, status, and redaction. Real-server
+qualification uses an explicit disposable `gopls` configuration against this
+repository; exact evidence for navigation, hover, and symbols is recorded in
+the non-authoritative [validation note](notes/lsp-definition-validation.md).
 
 Earlier validation notes may show the pre-rename KDL collection spelling
 `server`; those historical commands remain unchanged and do not describe the
@@ -138,7 +170,8 @@ current contract.
 
 ## Deferred work
 
-- Hover, diagnostics, rename, symbols, code actions, and mutating operations.
+- Diagnostics, rename, code actions, and mutating operations.
+- Symbol resolution, indexing/completeness guarantees, and workspace settings.
 - Routing policy beyond selector matching and automatic provider fan-out.
 - `initializationOptions`, arbitrary KDL structured values, templates, and
   language-specific settings.
