@@ -25,8 +25,9 @@
   encrypted credential-persistence milestone and its acceptance criteria.
 - `docs/lsp-plan.md` is authoritative for the completed server-neutral,
   selector-routed multi-provider LSP navigation milestone.
-- `docs/release-readiness.md` is authoritative for first-alpha installation,
-  Linux qualification, versioning, and the manual publication boundary.
+- `docs/release-readiness.md` is authoritative for stable v0.1 installation,
+  compatibility, qualification, versioning, and the manual publication
+  boundary.
 - `docs/macos-plan.md` is authoritative for the current macOS Apple Silicon
   qualification milestone, Intel CI boundary, and physical M2 release gate.
 - Files under `docs/notes/` are non-authoritative working material. Do not turn

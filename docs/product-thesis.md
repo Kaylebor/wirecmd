@@ -43,10 +43,11 @@ The runtime provides:
 - workspace-scoped native LSP navigation when workspace configuration supplies
   compatible language-server processes and selectors.
 
-The initial upstream adapter consumes MCP sources. Native LSP definition lookup
-is the completed first non-MCP slice, and automatic multi-provider navigation
-is the next accepted extension. Future adapter families are possible only if
-real use demonstrates their value; this does not commit the product to them.
+The initial upstream adapter consumes MCP sources. Native LSP navigation and
+read-only inspection are the completed first non-MCP capability family, with
+automatic selector routing and capable-provider fan-out. Future adapter
+families are possible only if real use demonstrates their value; this does not
+commit the product to them.
 
 ## Interaction principles
 

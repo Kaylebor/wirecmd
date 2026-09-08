@@ -26,22 +26,17 @@ integration or eager injection of every configured tool schema.
 
 ## Install
 
-The canonical Go module is `github.com/Kaylebor/wirecmd`. Until Wirecmd has a
-maintained latest-release installation path, install from an explicit source
-checkout with Go 1.26 or newer:
+The canonical Go module is `github.com/Kaylebor/wirecmd`. Install the latest
+stable release with Go 1.26 or newer:
 
 ```sh
-git clone git@github.com:Kaylebor/wirecmd.git
-cd wirecmd
-go install .
+go install github.com/Kaylebor/wirecmd@latest
+wirecmd --version
 ```
 
-Record the exact commit being qualified. Until the repository is public,
-cloning requires authenticated GitHub access. Published prereleases remain
-recorded in [GitHub releases](https://github.com/Kaylebor/wirecmd/releases),
-but this documentation does not infer which one is newest. Run
-`wirecmd --version` to identify a release build; source builds report
-`wirecmd dev`.
+Use `github.com/Kaylebor/wirecmd@v0.1.0` when an exact version is required.
+Tagged module installations report their version through `wirecmd --version`;
+source-checkout builds report `wirecmd dev`.
 
 The module path deliberately does not depend on a vanity domain. A project
 website such as `wirecmd.dev` may be added independently later.
@@ -56,8 +51,8 @@ multi-provider source navigation and read-only inspection. Normal commands use
 a private foreground local daemon; `--direct` is the deliberate one-shot path
 for testing and diagnosis.
 
-Linux and macOS builds are available. Native macOS CI covers Apple Silicon and
-Intel; the user has smoke-tested the released Apple Silicon build on an M2,
+Linux and macOS are supported. Native macOS CI covers Apple Silicon and Intel;
+the maintainer has smoke-tested the Apple Silicon build on an M2,
 including daemon-backed Cloudflare OAuth and readable terminal output. This is
 not a claim of exhaustive physical-device qualification. The checklist remains in the
 [macOS plan](docs/macos-plan.md).
@@ -419,10 +414,15 @@ flags, and JSON contents are not completed. Bash/Zsh support is deferred.
 - [Output contract](docs/output-plan.md) defines contextual terminal output,
   explicit machine output, and color policy.
 - [Release readiness](docs/release-readiness.md) defines the authoritative
-  first-alpha installation, qualification, and manual publication contract.
+  stable v0.1 installation, compatibility, qualification, and publication
+  contract.
 - [macOS plan](docs/macos-plan.md) defines the authoritative Apple Silicon
   qualification milestone and Intel CI boundary.
 - [Exploratory design notes](docs/notes/exploratory-design.md) retain ideas and
   research that are useful but not committed requirements.
 
 Repository working instructions are in [AGENTS.md](AGENTS.md).
+
+## License
+
+Wirecmd is licensed under the [Apache License 2.0](LICENSE).

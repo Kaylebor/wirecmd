@@ -14,8 +14,9 @@ claim.
 Historical record: this milestone was introduced during the private
 `v0.1.0-alpha.2` prerelease and the user reported M2 daemon/Cloudflare OAuth
 and terminal-output smoke success on 2026-09-04. That evidence does not make a
-version number a future qualification procedure. The repository is still
-private; publication remains a separate user decision.
+version number a future qualification procedure. The maintainer accepted this
+smoke evidence together with native public CI as the stable v0.1 Apple Silicon
+gate; publication remained a separate explicit decision.
 
 ## Runtime contract
 
@@ -45,12 +46,9 @@ tests cover Unix-socket lifecycle, locking, ownership checks, reload,
 cancellation, and SIGTERM child cleanup. Keyring protocol tests remain
 deterministic through the existing mock boundary.
 
-For each physical qualification, build and install Wirecmd from the current
-source checkout at the commit being qualified (for example, `go install .` from
-the checkout). Record that exact commit in the qualification evidence. Do not
-substitute a named prerelease or inferred newest release: until Wirecmd exposes
-a maintained latest-release installation path, a source checkout is the
-repeatable qualification input. On an M2, verify:
+For each physical qualification, build and install Wirecmd from the exact
+version or source commit being qualified. Record that version or commit in the
+qualification evidence. On an M2, the broader reference checklist is:
 
 - version reporting and daemon startup without `XDG_RUNTIME_DIR`;
 - daemon status, reload, interruption, restart, and retained stdio continuity;
@@ -61,9 +59,9 @@ repeatable qualification input. On an M2, verify:
   material in diagnostics or filesystem names.
 
 If physical qualification fails, preserve the evidence and fix forward from the
-source checkout. Only after the checklist passes may the milestone be marked
-complete, release notes be updated with Apple Silicon qualification, and the
-repository be made public.
+qualified version. Stable v0.1 claims Apple Silicon support based on native CI
+and the accepted M2 smoke evidence above, not exhaustive execution of every
+reference checklist item.
 
 ## Deferred
 

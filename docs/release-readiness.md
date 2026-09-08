@@ -1,51 +1,51 @@
-# First Alpha Release Readiness
+# Stable v0.1 Release Readiness
 
-Status: completed authoritative first-alpha release, published 2026-08-26
+Status: authoritative stable v0.1 release contract; publication explicitly
+authorized 2026-09-08
 
 ## Objective
 
-Make the current Linux implementation installable and honestly identifiable as
-Wirecmd's first alpha without implying stable compatibility or broader platform
-support. Release preparation adds version reporting, continuous qualification,
-installation and runtime prerequisites, and a repeatable manual release
-procedure. It does not add a packaging framework or automatic publication.
+Publish Wirecmd's first stable release with an explicit supported surface,
+maintained installation path, compatibility promise, qualification gates, and
+manual release procedure. Stable v0.1 does not imply support for deferred MCP
+transports or primitives, exhaustive physical platform qualification, binary
+packaging, or daemon service management.
 
-Historical evidence: the annotated `v0.1.0-alpha.1` tag and private GitHub
-prerelease were published from CI-qualified commit `84c1d37`. Clean
-explicit-version and `@latest` installations both reported
-`wirecmd v0.1.0-alpha.1`; installed-binary direct and daemon-backed smoke
-operations passed. Those commands describe that release event, not a maintained
-latest-version installation contract. Publication remains manual for later
-releases.
+The private alpha series established version reporting, direct and retained
+daemon behavior, Linux qualification, and the initial macOS smoke evidence.
+That prerelease history was intentionally not migrated when the repository was
+recreated with sanitized public history. Stable qualification applies to the
+current public repository and its exact release commit.
 
 ## Supported release surface
 
-The supported source-build baseline is Go 1.26 or newer. The first release
-target was Linux. Until Wirecmd provides a maintained latest-release path,
-qualify and install an explicit source checkout:
+The supported build baseline is Go 1.26 or newer. Install the latest stable
+release with:
 
 ```sh
-git clone git@github.com:Kaylebor/wirecmd.git
-cd wirecmd
-git checkout COMMIT_TO_QUALIFY
-go install .
+go install github.com/Kaylebor/wirecmd@latest
 ```
 
-Record `COMMIT_TO_QUALIFY` with the resulting evidence. Do not infer a current
-prerelease through `@latest` or copy a version number from this historical
-plan.
-
-While the repository is private, installation requires authenticated GitHub
-access and a private-module configuration such as:
+For reproducible installation of this milestone, use:
 
 ```sh
-go env -w 'GOPRIVATE=github.com/Kaylebor/*'
+go install github.com/Kaylebor/wirecmd@v0.1.0
 ```
 
-That command changes persistent Go environment state and is guidance, not an
-operation Wirecmd performs. Git credentials must already grant repository
-access. Once the repository is public, the ordinary `go install` command needs
-no private-module setup.
+Linux and macOS are supported. Apple Silicon has native CI and maintainer M2
+smoke evidence; Intel macOS is CI-qualified without a physical-device claim.
+Windows remains unsupported.
+
+Stable v0.1 supports the public CLI, KDL configuration, structured result and
+error contracts, daemon/direct split, stdio and Streamable HTTP MCP transports,
+SDK-backed OAuth, and the documented native LSP operations. Modern and legacy
+initialized stdio and Streamable HTTP are qualified. Legacy HTTP+SSE is not
+implemented and remains explicitly deferred at the official SDK boundary.
+
+Within the `v0.1.x` line, backward-incompatible changes to the documented CLI,
+configuration, and structured output contracts require `v0.2.0`. A security or
+correctness defect that cannot safely preserve existing behavior may require a
+documented exception.
 
 `wirecmd --version` is the standalone version query. It prints
 `wirecmd VERSION` as conventional newline-terminated text and performs no
@@ -62,21 +62,24 @@ Normal commands require a separately running foreground daemon:
 wirecmd daemon run
 ```
 
-The daemon requires an absolute, same-user `XDG_RUNTIME_DIR` and creates its
-private socket below that directory. `--direct` remains the deliberate
-daemonless diagnostic and one-shot path; normal commands never fall back to it.
+On Linux, the daemon requires an absolute, same-user `XDG_RUNTIME_DIR`. On
+macOS, an unset value uses the validated private per-user temporary-directory
+path. `--direct` remains the deliberate daemonless diagnostic and one-shot
+path; normal commands never fall back to it.
 
-OAuth-backed HTTP servers additionally require a usable Secret Service through
-the native keyring. Interactive browser authorization uses `xdg-open`. Missing
-or locked keyring service remains an explicit structured user-action failure;
-there is no plaintext credential fallback.
+OAuth-backed HTTP servers require a usable native credential store: Secret
+Service on Linux or Keychain on macOS. Interactive browser authorization uses
+`xdg-open` on Linux and `/usr/bin/open` on macOS. Missing or locked credential
+storage remains an explicit structured user-action failure; there is no
+plaintext fallback.
 
 ## Qualification gates
 
-Linux CI runs for pull requests, pushes to `main` and version tags, and manual
-dispatches using the Go version declared in `go.mod`. It verifies modules, runs
-the complete test suite and race detector, vets all packages, and builds all
-packages. Before release, the same gates must pass locally:
+CI runs on Linux, macOS Apple Silicon, and macOS Intel for pull requests,
+pushes to `main`, version tags, and manual dispatches. It uses the Go version
+declared in `go.mod`, verifies modules, runs the complete test suite and race
+detector, vets all packages, builds all packages, and checks Fish completion on
+Linux. Before release, the same language gates must pass locally:
 
 ```sh
 go mod verify
@@ -91,22 +94,24 @@ git diff --check
 
 Publication remains an explicit maintainer action:
 
-1. Choose the intended semantic prerelease version without copying a version
-   from this historical plan. Confirm `main` is clean, synchronized with
-   `origin/main`, and contains the intended release commit.
+1. Confirm `main` is clean, synchronized with `origin/main`, and contains the
+   intended `v0.1.0` release commit.
 2. Run every local qualification gate above and confirm the GitHub Actions run
    for that commit succeeds.
 3. From a clean checkout of that exact commit, install with `go install .`,
    record the commit, and exercise one direct operation and one daemon-backed
    operation. Source builds identify themselves as `wirecmd dev`.
-4. After separate release authorization, create an annotated tag using the
-   chosen version on that exact commit and push only that tag.
-5. Create a GitHub prerelease from the existing tag, using generated notes as a
-   reviewed starting point, and verify that both the tag and release resolve to
-   the qualified commit.
+4. After separate release authorization, create a signed annotated `v0.1.0`
+   tag on that exact commit and push only that tag.
+5. Create a non-prerelease GitHub Release from the existing tag, using generated
+   notes as a reviewed starting point. Mark it as the latest release.
+6. Verify that `go install github.com/Kaylebor/wirecmd@v0.1.0` and
+   `go install github.com/Kaylebor/wirecmd@latest` both report
+   `wirecmd v0.1.0` and exercise the release smoke operations.
 
-The tag and GitHub prerelease must not be created merely because the repository
-passes its preparation checks. They require a separate explicit release action.
+The tag and GitHub Release require an explicit release action. That action was
+authorized for `v0.1.0` on 2026-09-08, conditional on the exact release commit
+passing the gates above.
 
 ## Deferred
 
@@ -116,4 +121,5 @@ passes its preparation checks. They require a separate explicit release action.
 - Automated tagging or GitHub Release publication.
 - Windows build or runtime qualification. macOS qualification is tracked in
   the [macOS plan](macos-plan.md).
-- Stable-version compatibility promises.
+- Legacy HTTP+SSE and additional MCP primitives listed in the compatibility
+  plan.

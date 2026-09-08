@@ -144,7 +144,7 @@ changing dependencies, configuration, or architecture.
 - Resources, prompts, subscriptions, Tasks, sampling, and richer elicitation.
 - MCP server/proxy mode and non-MCP upstream adapters.
 - Binary archives, distribution packaging, and automated release publication;
-  the source-installable first-alpha contract is recorded in
+  the stable source-installation and manual release contract is recorded in
   [release readiness](release-readiness.md).
 
 These remain valid future slices but are not prerequisites for the completed
