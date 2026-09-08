@@ -437,8 +437,6 @@ Focused help:
   wirecmd [client flags] --help -- SERVER [TOOL]
 The third form forces server help for names such as daemon, config, or auth.
 It also reaches a configured MCP server named lsp; bare lsp is native help.
-When the daemon is offline, exact cached server or tool metadata from a prior
-successful discovery may satisfy focused help. Calls never use that cache.
 
 Conventional trailing help also works for recognized built-in operations, such
 as wirecmd daemon status --help and wirecmd lsp definition --help. After SERVER

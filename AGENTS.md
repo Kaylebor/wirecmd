@@ -7,9 +7,9 @@
   completion. Completion must remain local, read-only, secret-free and must not
   contact the daemon or upstream servers. Prefix `--help --` selects server help;
   tool-side `--` retains raw-overlay ownership.
-- `docs/help-metadata-plan.md` defines conventional suffix help and the private
-  persistent MCP metadata cache. It supersedes the onboarding milestone's
-  no-cache wording without expanding dynamic completion.
+- `docs/help-metadata-plan.md` defines conventional suffix help. MCP server and
+  tool help is live: it needs the daemon or explicit `--direct` execution;
+  persistent MCP metadata is not retained for help or completion.
 - `docs/product-thesis.md` is authoritative for product direction and scope.
 - `docs/output-plan.md` is authoritative for contextual presentation and color;
   it supersedes earlier milestones' always-JSON presentation wording.
@@ -126,7 +126,7 @@
   `<server> <tool>` pair, while arguments after the tool name belong to that
   tool. The narrow trailing-help exception is schema-aware: an explicit
   projected `help` property owns `--help`/`-h`, otherwise Wirecmd renders live
-  focused help. Never use cached schemas to decide that ownership. Handle other
+  focused help. Only the live schema may decide that ownership. Handle other
   rare projected-name collisions with warnings and a structurally distinct
   exact-JSON invocation path rather than a global reserved-name list.
 - Keep stdout machine-composable. Send diagnostics to stderr and never print

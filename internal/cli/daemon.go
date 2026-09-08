@@ -867,9 +867,6 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 			d.noteSDKOperation(instance, appErr)
 			return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
 		}
-		if cacheErr := replaceToolMetadata(cached.config, server, request.CWD, catalog); cacheErr != nil && request.Help != noHelp {
-			warnings = append(warnings, "MCP tool metadata could not be cached; offline focused help may be unavailable")
-		}
 		instance.toolsPrimed = true
 		if ctx.Err() != nil {
 			return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
@@ -887,9 +884,6 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 		}
 		if ctx.Err() != nil {
 			return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
-		}
-		if cacheErr := replaceToolDetailMetadata(cached.config, server, request.CWD, description); cacheErr != nil {
-			warnings = append(warnings, "MCP tool metadata could not be cached; offline focused help may be unavailable")
 		}
 		result = helpResponse{Kind: toolHelp, Server: server.Name, Tool: description}
 	} else {
@@ -917,13 +911,7 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 			if ctx.Err() != nil {
 				return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
 			}
-			if cachedDescription, cacheErr := redactedToolMetadata(description, instance.redactor); cacheErr == nil {
-				_ = mergeProjectedToolMetadata(cached.config, server, request.CWD, cachedDescription)
-			}
 			if wantsToolHelpFallback(request.Projected, request.Overlay) && !hasProjectedArgument(description, "help") {
-				if cacheErr := replaceToolDetailMetadata(cached.config, server, request.CWD, helpDescription); cacheErr != nil {
-					warnings = append(warnings, "MCP tool metadata could not be cached; offline focused help may be unavailable")
-				}
 				return resultReply(helpResponse{Kind: toolHelp, Server: server.Name, Tool: helpDescription}, warnings)
 			}
 			arguments, appErr = resolveProjectedArguments(description, request.Projected, request.Overlay)
@@ -932,12 +920,11 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 			}
 		}
 		if instance.breakOnRequestCancel && !instance.toolsPrimed {
-			catalog, appErr := primeSessionTools(ctx, instance.session, instance.redactor)
+			_, appErr := primeSessionTools(ctx, instance.session, instance.redactor)
 			if appErr != nil {
 				d.noteSDKOperation(instance, appErr)
 				return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
 			}
-			_ = replaceToolMetadata(cached.config, server, request.CWD, catalog)
 			instance.toolsPrimed = true
 		}
 		if ctx.Err() != nil {

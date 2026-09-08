@@ -232,7 +232,7 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	var daemonOpenErr *appError
 	if !opts.direct {
 		daemonClient, daemonOpenErr = openDaemonClient(ctx)
-		if daemonOpenErr != nil && (req.help == noHelp || daemonOpenErr.code != "daemon_unavailable") {
+		if daemonOpenErr != nil {
 			return nil, daemonOpenErr
 		}
 		if daemonClient != nil {
@@ -275,19 +275,6 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		return runDirectAuth(ctx, authAdmin, server, cfg.Root, cwd, in, errOut)
 	}
 	if !opts.direct {
-		if daemonClient == nil {
-			secrets := selectedSecretInputs(server, os.LookupEnv)
-			if appErr := validateSecretInputs(server, secrets); appErr != nil {
-				return nil, appErr
-			}
-			if _, _, appErr := makeTarget(server, cfg.Root, cwd, os.LookupEnv); appErr != nil {
-				return nil, appErr
-			}
-			if cached, ok := cachedFocusedHelp(cfg, server, cwd, req); ok {
-				return cached, nil
-			}
-			return nil, daemonOpenErr
-		}
 		secrets := selectedSecretInputs(server, os.LookupEnv)
 		daemonRequest := daemonRequestFromConfig(req, cfg, cwd, configPaths, discovered, secrets)
 		daemonRequest.Interactive = isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
@@ -328,9 +315,6 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		if runErr != nil {
 			return nil, runErr.redacted(redactor)
 		}
-		if cacheErr := replaceToolMetadata(cfg, server, cwd, catalog); cacheErr != nil && req.help != noHelp {
-			warnToolMetadataCache(errOut)
-		}
 		if req.help == serverHelp {
 			return helpText(renderServerHelp(server.Name, catalog.summaries)), nil
 		}
@@ -341,35 +325,20 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		if runErr != nil {
 			return nil, runErr.redacted(redactor)
 		}
-		if cacheErr := replaceToolDetailMetadata(cfg, server, cwd, description); cacheErr != nil {
-			warnToolMetadataCache(errOut)
-		}
 		return helpText(renderToolHelp(server.Name, description)), nil
 	}
 	arguments := req.arguments
 	if len(req.projected) != 0 || req.overlay != nil {
 		call, description, showHelp, runErr := directProjectedCall(ctx, target, req.tool, req.projected, req.overlay, redactor)
 		if showHelp {
-			if cacheErr := replaceToolDetailMetadata(cfg, server, cwd, description); cacheErr != nil {
-				warnToolMetadataCache(errOut)
-			}
 			return helpText(renderToolHelp(server.Name, description)), nil
-		}
-		if description.Name != "" {
-			cachedDescription, cacheErr := redactedToolMetadata(description, redactor)
-			if cacheErr == nil {
-				_ = mergeProjectedToolMetadata(cfg, server, cwd, cachedDescription)
-			}
 		}
 		if runErr != nil {
 			return nil, runErr.redacted(redactor)
 		}
 		return callEnvelope{OK: true, Server: server.Name, Tool: req.tool, Result: call}, nil
 	}
-	call, catalog, runErr := directCall(ctx, target, req.tool, arguments, redactor)
-	if catalog != nil {
-		_ = replaceToolMetadata(cfg, server, cwd, *catalog)
-	}
+	call, runErr := directCall(ctx, target, req.tool, arguments, redactor)
 	if runErr != nil {
 		return nil, runErr.redacted(redactor)
 	}
@@ -838,6 +807,10 @@ func directTools(ctx context.Context, target connectionTarget, redactor *redacto
 	return catalog.summaries, appErr
 }
 
+type discoveredToolCatalog struct {
+	summaries []toolSummary
+}
+
 func directToolCatalog(ctx context.Context, target connectionTarget, redactor *redactor) (discoveredToolCatalog, *appError) {
 	session, err := connectTarget(ctx, target, redactor)
 	if err != nil {
@@ -853,39 +826,32 @@ func sessionTools(ctx context.Context, session *mcp.ClientSession, redactor *red
 }
 
 func sessionToolCatalog(ctx context.Context, session *mcp.ClientSession, redactor *redactor) (discoveredToolCatalog, *appError) {
-	catalog := discoveredToolCatalog{details: map[string]toolDescription{}}
+	catalog := discoveredToolCatalog{}
 	for tool, err := range session.Tools(ctx, nil) {
 		if err != nil {
 			return discoveredToolCatalog{}, mcpOperationError(err, "tool_list_failed")
 		}
 		summary := toolSummary{Name: redactor.Redact(tool.Name), Title: redactor.Redact(tool.Title), Description: redactor.Redact(tool.Description)}
 		catalog.summaries = append(catalog.summaries, summary)
-		input, inputErr := redactedSchema(tool.InputSchema, redactor)
-		output, outputErr := redactedSchema(tool.OutputSchema, redactor)
-		if inputErr == nil && outputErr == nil {
-			catalog.details[summary.Name] = toolDescription{Name: summary.Name, Title: summary.Title, Description: summary.Description, InputSchema: input, OutputSchema: output}
-		}
 	}
 	sort.Slice(catalog.summaries, func(i, j int) bool { return catalog.summaries[i].Name < catalog.summaries[j].Name })
 	return catalog, nil
 }
 
-func directCall(ctx context.Context, target connectionTarget, tool string, arguments map[string]any, redactor *redactor) (toolResult, *discoveredToolCatalog, *appError) {
+func directCall(ctx context.Context, target connectionTarget, tool string, arguments map[string]any, redactor *redactor) (toolResult, *appError) {
 	session, err := connectTarget(ctx, target, redactor)
 	if err != nil {
-		return toolResult{}, nil, err
+		return toolResult{}, err
 	}
 	defer session.Close()
-	var catalog *discoveredToolCatalog
 	if target.requiresToolPriming() {
-		discovered, appErr := primeSessionTools(ctx, session, redactor)
+		_, appErr := primeSessionTools(ctx, session, redactor)
 		if appErr != nil {
-			return toolResult{}, nil, appErr
+			return toolResult{}, appErr
 		}
-		catalog = &discovered
 	}
 	result, appErr := sessionCall(ctx, session, tool, arguments, redactor)
-	return result, catalog, appErr
+	return result, appErr
 }
 
 // primeSessionTools lets the SDK populate its private schema cache before an

@@ -26,19 +26,22 @@ integration or eager injection of every configured tool schema.
 
 ## Install
 
-The canonical Go module is `github.com/Kaylebor/wirecmd`. Build the current
-source checkout with Go 1.26 or newer. The latest published prerelease verified
-on 2026-09-07 is `v0.1.0-alpha.8`; install it with:
+The canonical Go module is `github.com/Kaylebor/wirecmd`. Until Wirecmd has a
+maintained latest-release installation path, install from an explicit source
+checkout with Go 1.26 or newer:
 
 ```sh
-go install github.com/Kaylebor/wirecmd@v0.1.0-alpha.8
+git clone git@github.com:Kaylebor/wirecmd.git
+cd wirecmd
+go install .
 ```
 
-Until the repository is public, installation also requires authenticated
-GitHub access and appropriate `GOPRIVATE` configuration. The exact prerelease
-is also recorded in [GitHub releases](https://github.com/Kaylebor/wirecmd/releases).
-Run `wirecmd --version` to identify an installed binary; local development
-builds report `wirecmd dev`.
+Record the exact commit being qualified. Until the repository is public,
+cloning requires authenticated GitHub access. Published prereleases remain
+recorded in [GitHub releases](https://github.com/Kaylebor/wirecmd/releases),
+but this documentation does not infer which one is newest. Run
+`wirecmd --version` to identify a release build; source builds report
+`wirecmd dev`.
 
 The module path deliberately does not depend on a vanity domain. A project
 website such as `wirecmd.dev` may be added independently later.
@@ -216,13 +219,12 @@ wirecmd --format pretty --color never daemon status
 wirecmd --format json --color never SERVER TOOL
 ```
 
-Configured servers also accept `wirecmd SERVER --help`. Successful live tool
-discovery refreshes private metadata used for focused help when the daemon is
-offline. Cached metadata never validates or executes a call. Everything after
-an MCP tool name normally belongs to that tool. A final `--help` or `-h` uses
-the live schema: an explicitly projected `help` property remains tool input;
-otherwise Wirecmd renders focused tool help. Use `wirecmd --help SERVER TOOL`
-when offline cache fallback is desired.
+Configured servers also accept `wirecmd SERVER --help`. MCP server and focused
+tool help obtains live metadata, so it requires a running daemon or explicit
+`--direct` execution; it does not fall back while the daemon is offline.
+Everything after an MCP tool name normally belongs to that tool. A final
+`--help` or `-h` uses the live schema: an explicitly projected `help` property
+remains tool input; otherwise Wirecmd renders focused tool help.
 
 `--format auto|json|pretty` and `--color auto|always|never` default to `auto`.
 `--colour` is an exact alias; the last supplied setting wins. Automatic color

@@ -190,12 +190,12 @@ For servers named daemon/config/auth, use `wirecmd --help -- SERVER [TOOL]`
 to bypass administrative help. Only the prefix separator selects help scope;
 the later tool-side separator remains the raw argument overlay.
 
-`wirecmd SERVER --help` is equivalent to server help and may use previously
-discovered metadata when the daemon is offline. Native and administrative
-commands accept a final `--help` or `-h`. After `SERVER TOOL`, a final help flag
-uses the live schema: an explicit projected `help` property receives it;
-otherwise Wirecmd renders tool help. Use the prefix form when offline cache
-fallback is needed.
+`wirecmd SERVER --help` is equivalent to server help. MCP server and tool help
+requires live metadata, so start the daemon or use `--direct` for a deliberate
+one-shot request; it cannot fall back while the daemon is offline. Native and
+administrative commands accept a final `--help` or `-h`. After `SERVER TOOL`, a
+final help flag uses the live schema: an explicit projected `help` property
+receives it; otherwise Wirecmd renders tool help.
 
 Focused help is readable text. It identifies simple projected flags, the
 original JSON names and types, and properties that need JSON input or a

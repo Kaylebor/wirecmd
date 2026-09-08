@@ -11,10 +11,11 @@ or shell contracts already qualified on Linux. Apple Silicon is the physical
 support target. Intel receives the same native CI gates, but no physical-device
 claim.
 
-This milestone was introduced for private prerelease `v0.1.0-alpha.2`.
-As of 2026-09-04, `v0.1.0-alpha.4` is published and the user has reported M2
-daemon/Cloudflare OAuth and terminal-output smoke success. The repository is
-still private; publication remains a separate user decision.
+Historical record: this milestone was introduced during the private
+`v0.1.0-alpha.2` prerelease and the user reported M2 daemon/Cloudflare OAuth
+and terminal-output smoke success on 2026-09-04. That evidence does not make a
+version number a future qualification procedure. The repository is still
+private; publication remains a separate user decision.
 
 ## Runtime contract
 
@@ -44,9 +45,12 @@ tests cover Unix-socket lifecycle, locking, ownership checks, reload,
 cancellation, and SIGTERM child cleanup. Keyring protocol tests remain
 deterministic through the existing mock boundary.
 
-After the PR is squash-merged, the squash commit is tagged as
-`v0.1.0-alpha.2`. Physical qualification installs that exact private release on
-an M2 and verifies:
+For each physical qualification, build and install Wirecmd from the current
+source checkout at the commit being qualified (for example, `go install .` from
+the checkout). Record that exact commit in the qualification evidence. Do not
+substitute a named prerelease or inferred newest release: until Wirecmd exposes
+a maintained latest-release installation path, a source checkout is the
+repeatable qualification input. On an M2, verify:
 
 - version reporting and daemon startup without `XDG_RUNTIME_DIR`;
 - daemon status, reload, interruption, restart, and retained stdio continuity;
@@ -56,10 +60,10 @@ an M2 and verifies:
 - authentication status, protected calls, logout, and absence of secret
   material in diagnostics or filesystem names.
 
-If physical qualification fails, preserve the tag and fix forward in
-`alpha.3`. Only after the checklist passes may the milestone be marked
-complete, the prerelease notes be updated with Apple Silicon qualification,
-and the repository be made public.
+If physical qualification fails, preserve the evidence and fix forward from the
+source checkout. Only after the checklist passes may the milestone be marked
+complete, release notes be updated with Apple Silicon qualification, and the
+repository be made public.
 
 ## Deferred
 
