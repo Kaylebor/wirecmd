@@ -264,6 +264,19 @@ wirecmd --config ./wirecmd.kdl mcp MCP_SERVER tool TOOL --simple value -- '{"too
 every tool input. Wirecmd does not locally validate the full JSON Schema; the
 upstream tool remains responsible for semantic validation.
 
+MCP resources use their own explicit operations. They retain the upstream
+server's ordered read contents, while listings are sorted deterministically:
+
+```sh
+wirecmd mcp SERVER resources
+wirecmd mcp SERVER resource-templates
+wirecmd mcp SERVER resource URI
+```
+
+Resource reads return text directly and binary data as base64 with its URI and
+MIME type. Resource pagination, transport, authorization, and session
+lifecycle remain owned by the official MCP SDK.
+
 Servers may use either a local stdio command or a modern Streamable HTTP
 endpoint. They are mutually exclusive in an effective server definition:
 

@@ -27,6 +27,7 @@ func normalizeTrailingHelp(positionals []string, opts options) ([]string, option
 			return positionals, opts, nil, false
 		}
 		// `mcp SERVER tool TOOL --help` remains owned by the live input schema.
+		// Resource primitives have static help because they own no tool schema.
 		// The shorter forms are namespace/server static or focused help.
 		switch len(positionals) {
 		case 2, 3:
@@ -34,6 +35,20 @@ func normalizeTrailingHelp(positionals []string, opts options) ([]string, option
 			updated := opts
 			updated.help = true
 			return canonical, updated, nil, true
+		case 4:
+			if positionals[2] == "resources" || positionals[2] == "resource-templates" || positionals[2] == "resource" {
+				canonical := append([]string(nil), positionals[:len(positionals)-1]...)
+				updated := opts
+				updated.help = true
+				return canonical, updated, nil, true
+			}
+		case 5:
+			if positionals[2] == "resource" {
+				canonical := append([]string(nil), positionals[:len(positionals)-1]...)
+				updated := opts
+				updated.help = true
+				return canonical, updated, nil, true
+			}
 		}
 	}
 

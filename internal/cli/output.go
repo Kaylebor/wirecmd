@@ -86,12 +86,20 @@ func writeOutput(writer io.Writer, value any, style presentation) {
 	if envelope, ok := outputObject(value); ok {
 		_, hasServers := envelope["servers"]
 		_, hasTools := envelope["tools"]
+		_, hasResources := envelope["resources"]
+		_, hasResourceTemplates := envelope["resource_templates"]
 		switch {
 		case hasServers:
 			writeServers(writer, envelope, style)
 			return
 		case hasTools:
 			writeTools(writer, envelope, style)
+			return
+		case hasResources:
+			writeResources(writer, envelope, style)
+			return
+		case hasResourceTemplates:
+			writeResourceTemplates(writer, envelope, style)
 			return
 		case envelope["auth"] != nil:
 			writeAuth(writer, envelope, style)
@@ -218,6 +226,49 @@ func writeTools(writer io.Writer, envelope map[string]any, style presentation) {
 		rows = append(rows, []string{name, title, description})
 	}
 	writeTable(writer, []string{"NAME", "TITLE", "DESCRIPTION"}, rows, style)
+}
+
+func writeResources(writer io.Writer, envelope map[string]any, style presentation) {
+	server := singleLine(stringValue(envelope["server"]))
+	if server != "" {
+		writeLabel(writer, "Resources for", style)
+		fmt.Fprintln(writer, " "+server+":")
+	}
+	resources, _ := envelope["resources"].([]any)
+	rows := make([][]string, 0, len(resources))
+	for _, raw := range resources {
+		resource, _ := raw.(map[string]any)
+		rows = append(rows, []string{
+			singleLine(stringValue(resource["uri"])),
+			singleLine(stringValue(resource["name"])),
+			singleLine(stringValue(resource["title"])),
+			singleLine(stringValue(resource["mime_type"])),
+			singleLine(scalarString(resource["size"])),
+			readableText(stringValue(resource["description"])),
+		})
+	}
+	writeTable(writer, []string{"URI", "NAME", "TITLE", "MIME TYPE", "SIZE", "DESCRIPTION"}, rows, style)
+}
+
+func writeResourceTemplates(writer io.Writer, envelope map[string]any, style presentation) {
+	server := singleLine(stringValue(envelope["server"]))
+	if server != "" {
+		writeLabel(writer, "Resource templates for", style)
+		fmt.Fprintln(writer, " "+server+":")
+	}
+	templates, _ := envelope["resource_templates"].([]any)
+	rows := make([][]string, 0, len(templates))
+	for _, raw := range templates {
+		template, _ := raw.(map[string]any)
+		rows = append(rows, []string{
+			singleLine(stringValue(template["uri_template"])),
+			singleLine(stringValue(template["name"])),
+			singleLine(stringValue(template["title"])),
+			singleLine(stringValue(template["mime_type"])),
+			readableText(stringValue(template["description"])),
+		})
+	}
+	writeTable(writer, []string{"URI TEMPLATE", "NAME", "TITLE", "MIME TYPE", "DESCRIPTION"}, rows, style)
 }
 
 func writeAuth(writer io.Writer, envelope map[string]any, style presentation) {

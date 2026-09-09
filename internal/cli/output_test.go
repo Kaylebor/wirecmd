@@ -96,6 +96,8 @@ func TestPrettyOutputFamiliesAndControlEscaping(t *testing.T) {
 	}{
 		{"servers", serversEnvelope{OK: true, Servers: []serverSummary{{Name: "memory", Scope: "workspace", Transport: "stdio"}}}, []string{"SERVER", "memory", "workspace", "stdio"}},
 		{"tools", toolsEnvelope{OK: true, Server: "memory", Tools: []toolSummary{{Name: "look", Title: "Look", Description: "first line\nsecond\tline\x1b[2J"}}}, []string{"Tools for memory", "NAME", "first line\nsecond\tline\\x1B[2J"}},
+		{"resources", resourcesEnvelope{OK: true, Server: "memory\x1b[31m", Resources: []resourceSummary{{URI: "test://resource?token=[REDACTED]\x1b[2J", Name: "na\rme", Title: "Title", MIMEType: "text/plain", Size: 42, Description: "first line\nsecond\tline\x1b[2J"}}}, []string{"Resources for memory\\x1B[31m", "URI", "test://resource?token=[REDACTED]\\x1B[2J", "first line\nsecond\tline\\x1B[2J"}},
+		{"resource-templates", resourceTemplatesEnvelope{OK: true, Server: "memory", ResourceTemplates: []resourceTemplateSummary{{URITemplate: "test://resource/{id}\x1b[2J", Name: "name", Title: "Title", MIMEType: "text/plain", Description: "template\x1b[2J"}}}, []string{"Resource templates for memory", "URI TEMPLATE", "test://resource/{id}\\x1B[2J", "template\\x1B[2J"}},
 		{"auth", authEnvelope{OK: true, Auth: authStatus{Server: "remote", Status: "authenticated", Registration: "dynamic", ExpiresAt: "2026-01-01T00:00:00Z"}}, []string{"Authentication", "Registration: dynamic", "Expires: 2026"}},
 		{"trust", map[string]any{"ok": true, "trust": map[string]any{"workspace": "/work", "status": "trusted"}}, []string{"Workspace trust", "Status: trusted", "Workspace: /work"}},
 		{"trust-list", map[string]any{"ok": true, "trust": map[string]any{"workspaces": []string{"/one", "/two"}}}, []string{"Trusted workspaces", "/one", "/two"}},
@@ -158,6 +160,8 @@ func TestPrettyOutputHandlesEmptyListsOptionalFieldsAndOrder(t *testing.T) {
 		map[string]any{"ok": true, "trust": map[string]any{"workspaces": nil}},
 		map[string]any{"ok": true, "trust": map[string]any{"workspaces": []any{}}},
 		toolsEnvelope{OK: true, Server: "memory", Tools: []toolSummary{}},
+		resourcesEnvelope{OK: true, Server: "memory", Resources: []resourceSummary{}},
+		resourceTemplatesEnvelope{OK: true, Server: "memory", ResourceTemplates: []resourceTemplateSummary{}},
 		authEnvelope{OK: true, Auth: authStatus{Server: "remote", Status: "unauthenticated"}},
 	} {
 		var output bytes.Buffer
@@ -167,6 +171,12 @@ func TestPrettyOutputHandlesEmptyListsOptionalFieldsAndOrder(t *testing.T) {
 		}
 		if object, ok := outputObject(value); ok && object["trust"] != nil && !strings.Contains(output.String(), "Trusted workspaces") {
 			t.Fatalf("empty trust list fell through to generic rendering: %q", output.String())
+		}
+		if object, ok := outputObject(value); ok && object["resources"] != nil && !strings.Contains(output.String(), "Resources for memory") {
+			t.Fatalf("empty resource list fell through to generic rendering: %q", output.String())
+		}
+		if object, ok := outputObject(value); ok && object["resource_templates"] != nil && !strings.Contains(output.String(), "Resource templates for memory") {
+			t.Fatalf("empty resource template list fell through to generic rendering: %q", output.String())
 		}
 	}
 	var authOutput bytes.Buffer
@@ -178,6 +188,23 @@ func TestPrettyOutputHandlesEmptyListsOptionalFieldsAndOrder(t *testing.T) {
 	writeOutput(&output, toolsEnvelope{OK: true, Server: "memory", Tools: []toolSummary{{Name: "second"}, {Name: "first"}}}, presentation{pretty: true})
 	if strings.Index(output.String(), "second") > strings.Index(output.String(), "first") {
 		t.Fatalf("tool order changed: %q", output.String())
+	}
+}
+
+func TestResourceListingsHonorPrettyColorAndJSONModes(t *testing.T) {
+	value := resourcesEnvelope{OK: true, Server: "memory", Resources: []resourceSummary{{URI: "test://resource", Name: "resource", Description: "description"}}}
+	var pretty, compact bytes.Buffer
+	writeOutput(&pretty, value, presentation{pretty: true, color: true})
+	writeOutput(&compact, value, presentation{})
+	if !strings.Contains(pretty.String(), ansiReset) || !strings.Contains(pretty.String(), "Resources for") || strings.Contains(pretty.String(), "\"resources\"") {
+		t.Fatalf("colored pretty resources = %q", pretty.String())
+	}
+	if strings.Count(compact.String(), "\n") != 1 || strings.Contains(compact.String(), ansiReset) {
+		t.Fatalf("compact resource JSON = %q", compact.String())
+	}
+	decoded := decodeOutput(t, compact.String())
+	if decoded["server"] != "memory" || len(decoded["resources"].([]any)) != 1 {
+		t.Fatalf("compact resource JSON semantics changed: %#v", decoded)
 	}
 }
 

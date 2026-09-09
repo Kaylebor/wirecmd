@@ -17,6 +17,8 @@
   validation milestone and its acceptance criteria.
 - `docs/compatibility-plan.md` is the authoritative record of the completed
   supported-protocol qualification; legacy HTTP+SSE remains deferred there.
+- `docs/resources-plan.md` is authoritative for the MCP resources slice and
+  its SDK-owned pagination, reading, normalization, and redaction boundary.
 - `docs/discovery-plan.md` is authoritative for the completed automatic
   configuration-discovery milestone and its acceptance criteria.
 - `docs/http-values-plan.md` is authoritative for the completed typed HTTP

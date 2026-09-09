@@ -29,6 +29,10 @@ encoded JSON syntax. Upstream terminal controls never become executable ANSI.
 
 - Servers: name, scope, transport columns in configured order.
 - Tools: name, optional title, full description in existing tool order.
+- Resources and resource templates: contextual discovery tables with their
+  complete normalized identifiers and metadata. Resource reads keep their
+  existing generic, two-space-indented JSON envelope rather than interpreting
+  text or binary contents.
 - Trust: explicit confirmation/status and workspace/root; list one root per line.
 - Auth: server, status, registration and expiry when present.
 - Daemon: labeled readiness/status and reload counts.

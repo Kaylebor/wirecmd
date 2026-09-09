@@ -197,6 +197,18 @@ wirecmd --help mcp SERVER tool TOOL
 wirecmd mcp SERVER tool TOOL --help
 ```
 
+MCP resources are separate from tools:
+
+```sh
+wirecmd mcp SERVER resources
+wirecmd mcp SERVER resource-templates
+wirecmd mcp SERVER resource URI
+```
+
+Lists are deterministic. Resource reads preserve upstream content order, using
+text directly and base64 for blobs. Do not supply tool JSON or projected flags
+to these operations.
+
 Use `--config PATH` in these forms when an explicit source list is required.
 Servers named daemon/config/auth/lsp remain reachable through `wirecmd mcp
 SERVER`. The tool-side separator remains the raw argument overlay.

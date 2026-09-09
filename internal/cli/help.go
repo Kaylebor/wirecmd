@@ -478,6 +478,9 @@ func mcpHelpText() string {
   wirecmd mcp -- --help                        list tools for a server named --help
   wirecmd mcp SERVER tool TOOL [arguments]     invoke one tool
   wirecmd mcp SERVER '{"tool":"TOOL","arguments":{}}'  exact call envelope
+  wirecmd mcp SERVER resources                 list resources
+  wirecmd mcp SERVER resource-templates        list resource templates
+  wirecmd mcp SERVER resource URI               read one resource
 
 Focused help:
   wirecmd --help mcp SERVER [tool TOOL]
