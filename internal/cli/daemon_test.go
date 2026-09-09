@@ -232,7 +232,7 @@ func TestDaemonCancellationReleasesHTTPInstance(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		var stdout, stderr bytes.Buffer
-		done <- Run(ctx, []string{"--config", config, "remote", "block"}, strings.NewReader(""), &stdout, &stderr)
+		done <- Run(ctx, namespacedTestArgs([]string{"--config", config, "remote", "block"}), strings.NewReader(""), &stdout, &stderr)
 	}()
 	select {
 	case <-fixture.blockStarted:
@@ -304,7 +304,7 @@ func assertDaemonCanceledHTTPToolListBreaksInstance(t *testing.T, operation []st
 	args := append([]string{"--config", config}, operation...)
 	go func() {
 		var stdout, stderr bytes.Buffer
-		done <- Run(ctx, args, strings.NewReader(""), &stdout, &stderr)
+		done <- Run(ctx, namespacedTestArgs(args), strings.NewReader(""), &stdout, &stderr)
 	}()
 	select {
 	case <-fixture.toolListStarted:
@@ -337,7 +337,7 @@ func TestDaemonCanceledQueuedHTTPRequestDoesNotBreakInstance(t *testing.T) {
 	activeDone := make(chan int, 1)
 	go func() {
 		var stdout, stderr bytes.Buffer
-		activeDone <- Run(context.Background(), []string{"--config", config, "remote", "hold"}, strings.NewReader(""), &stdout, &stderr)
+		activeDone <- Run(context.Background(), namespacedTestArgs([]string{"--config", config, "remote", "hold"}), strings.NewReader(""), &stdout, &stderr)
 	}()
 	select {
 	case <-fixture.holdStarted:
@@ -348,7 +348,7 @@ func TestDaemonCanceledQueuedHTTPRequestDoesNotBreakInstance(t *testing.T) {
 	queuedDone := make(chan int, 1)
 	go func() {
 		var stdout, stderr bytes.Buffer
-		queuedDone <- Run(queuedCtx, []string{"--config", config, "remote", "a_tool"}, strings.NewReader(""), &stdout, &stderr)
+		queuedDone <- Run(queuedCtx, namespacedTestArgs([]string{"--config", config, "remote", "a_tool"}), strings.NewReader(""), &stdout, &stderr)
 	}()
 	cancel()
 	select {
@@ -382,14 +382,8 @@ func TestDaemonRedactsHTTPQueryInConnectionDiagnostics(t *testing.T) {
 	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)
 	startTestDaemon(t)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	endpoint := "http://" + listener.Addr().String() + "/mcp?access_token=daemon-query-secret"
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
+	nonMCP := newAbruptCloseHTTPServer(t)
+	endpoint := nonMCP.URL + "/mcp?access_token=daemon-query-secret"
 	config := httpConfig(t, endpoint)
 	code, output, stderr := invoke(t, []string{"--config", config, "remote"})
 	if code != exitTransport || strings.Contains(output, "access_token") || strings.Contains(output, "daemon-query-secret") || strings.Contains(stderr, "access_token") || strings.Contains(stderr, "daemon-query-secret") {
@@ -543,7 +537,7 @@ func TestDaemonCoalescedStartupSurvivesInitiatorCancellation(t *testing.T) {
 	firstDone := make(chan int, 1)
 	go func() {
 		var stdout, stderr bytes.Buffer
-		firstDone <- Run(firstCtx, []string{"--config", configPath, "helper", "a_tool"}, strings.NewReader(""), &stdout, &stderr)
+		firstDone <- Run(firstCtx, namespacedTestArgs([]string{"--config", configPath, "helper", "a_tool"}), strings.NewReader(""), &stdout, &stderr)
 	}()
 	waitForFile(t, started)
 
@@ -555,7 +549,7 @@ func TestDaemonCoalescedStartupSurvivesInitiatorCancellation(t *testing.T) {
 	secondDone := make(chan invocation, 1)
 	go func() {
 		var stdout, stderr bytes.Buffer
-		code := Run(context.Background(), []string{"--config", configPath, "helper", "a_tool"}, strings.NewReader(""), &stdout, &stderr)
+		code := Run(context.Background(), namespacedTestArgs([]string{"--config", configPath, "helper", "a_tool"}), strings.NewReader(""), &stdout, &stderr)
 		secondDone <- invocation{code: code, output: stdout.String(), stderr: stderr.String()}
 	}()
 	waitForDaemonConnections(t, d, 2)
@@ -598,7 +592,7 @@ func TestDaemonClientCancellationCancelsUpstreamOperation(t *testing.T) {
 	done := make(chan int, 1)
 	go func() {
 		var stdout, stderr bytes.Buffer
-		done <- Run(ctx, []string{"--config", configPath, "helper", "block"}, strings.NewReader(""), &stdout, &stderr)
+		done <- Run(ctx, namespacedTestArgs([]string{"--config", configPath, "helper", "block"}), strings.NewReader(""), &stdout, &stderr)
 	}()
 	waitForFile(t, started)
 	cancel()
@@ -617,7 +611,7 @@ func TestDaemonClientCancellationCancelsUpstreamOperation(t *testing.T) {
 	done = make(chan int, 1)
 	go func() {
 		var stdout, stderr bytes.Buffer
-		code := Run(context.Background(), []string{"--config", configPath, "helper", "a_tool"}, strings.NewReader(""), &stdout, &stderr)
+		code := Run(context.Background(), namespacedTestArgs([]string{"--config", configPath, "helper", "a_tool"}), strings.NewReader(""), &stdout, &stderr)
 		if code != exitOK || stderr.Len() != 0 || !strings.Contains(stdout.String(), `"tool":"a_tool"`) {
 			code = -1
 		}

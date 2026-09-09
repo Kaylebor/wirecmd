@@ -70,25 +70,26 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	return exitOK
 }
 
-const usage = "wirecmd [--config PATH] [--direct] [--format auto|json|pretty] [--color auto|always|never] [--json OBJECT|--stdin] [<server> [<tool>|<exact-call-object>]]"
+const usage = "wirecmd [--config PATH] [--direct] [--format auto|json|pretty] [--color auto|always|never] [--json OBJECT|--stdin] mcp [<server> [tool <tool>|<exact-call-object>]]"
 
 var isInteractiveTerminal = terminalIO
 var openAuthorizationURL = openBrowserURL
 
 type options struct {
-	configs           []string
-	direct            bool
-	json              string
-	jsonSet           bool
-	stdin             bool
-	help              bool
-	version           bool
-	format            outputFormat
-	color             colorMode
-	formatSet         bool
-	colorSet          bool
-	helpServer        bool // a prefix -- explicitly selects server/tool help
-	completionServers bool
+	configs             []string
+	direct              bool
+	json                string
+	jsonSet             bool
+	stdin               bool
+	help                bool
+	version             bool
+	format              outputFormat
+	color               colorMode
+	formatSet           bool
+	colorSet            bool
+	legacyHelpSeparator bool
+	mcpServerEscaped    bool
+	completionServers   bool
 }
 
 type stringList []string
@@ -130,6 +131,11 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	if parseErr != nil {
 		return nil, invocationError("invalid_flags", parseErr.Error(), "place Wirecmd flags before the server and tool names")
 	}
+	var escapeErr *appError
+	positionals, opts, escapeErr = normalizeMCPServerEscape(positionals, opts)
+	if escapeErr != nil {
+		return nil, escapeErr
+	}
 	var suffixErr *appError
 	positionals, opts, suffixErr, _ = normalizeTrailingHelp(positionals, opts)
 	if suffixErr != nil {
@@ -141,7 +147,24 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		}
 		return versionText(buildinfo.Version()), nil
 	}
+	if opts.help && (opts.jsonSet || opts.stdin) {
+		return nil, invocationError("input_with_help", "--json and --stdin cannot be used with --help", "request help without a tool input mode")
+	}
+	if opts.help && opts.legacyHelpSeparator {
+		if len(positionals) == 0 {
+			return nil, namespaceRequired(positionals, opts)
+		}
+		return nil, namespaceHelpRequired(positionals)
+	}
+	// The empty form is deliberately static. It must not discover configuration,
+	// connect to the daemon, or initialize any upstream capability.
+	if len(positionals) == 0 && !opts.jsonSet && !opts.stdin && !opts.direct && len(opts.configs) == 0 {
+		return helpText(globalHelpText()), nil
+	}
 	if opts.help {
+		if len(positionals) == 1 && positionals[0] == "mcp" {
+			return helpText(mcpHelpText()), nil
+		}
 		if result, err, handled := lspHelp(positionals, opts); handled {
 			return result, err
 		}
@@ -152,7 +175,7 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 			return result, err
 		}
 	}
-	if !opts.help && !opts.helpServer && len(positionals) == 1 && positionals[0] == "lsp" && !opts.jsonSet && !opts.stdin {
+	if !opts.help && len(positionals) == 1 && positionals[0] == "lsp" && !opts.jsonSet && !opts.stdin {
 		return helpText(lspHelpText()), nil
 	}
 	if !opts.help {
@@ -165,6 +188,18 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	}
 	if admin, ok := parseConfigAdmin(positionals, opts); ok && !opts.help {
 		return runConfigAdmin(admin)
+	}
+	if admin, ok := parseDaemonAdmin(positionals, opts); ok && !opts.help {
+		if admin.err != nil {
+			return nil, admin.err
+		}
+		switch admin.command {
+		case "run":
+			return foregroundDaemon{}, nil
+		case "status", "reload":
+			result, appErr := runDaemonAdmin(ctx, admin.command, errOut)
+			return result, appErr
+		}
 	}
 	authAdmin, isAuthAdmin := parseAuthAdmin(positionals, opts)
 	if opts.help {
@@ -187,18 +222,6 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	}
 	if req.help == globalHelp {
 		return helpText(globalHelpText()), nil
-	}
-	if admin, ok := parseDaemonAdmin(positionals, opts); ok && !opts.help {
-		if admin.err != nil {
-			return nil, admin.err
-		}
-		switch admin.command {
-		case "run":
-			return foregroundDaemon{}, nil
-		case "status", "reload":
-			result, appErr := runDaemonAdmin(ctx, admin.command, errOut)
-			return result, appErr
-		}
 	}
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -346,6 +369,25 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	return callEnvelope{OK: true, Server: server.Name, Tool: req.tool, Result: call}, nil
 }
 
+// normalizeMCPServerEscape gives help-shaped aliases an unambiguous server
+// position without changing tool-side -- ownership. It is deliberately
+// namespace-local: the removed top-level `--help -- SERVER` grammar remains
+// invalid.
+func normalizeMCPServerEscape(positionals []string, opts options) ([]string, options, *appError) {
+	if len(positionals) < 3 || positionals[0] != "mcp" || positionals[1] != "--" {
+		return positionals, opts, nil
+	}
+	if positionals[2] != "--help" && positionals[2] != "-h" {
+		return positionals, opts, nil
+	}
+	canonical := make([]string, 0, len(positionals)-1)
+	canonical = append(canonical, positionals[0])
+	canonical = append(canonical, positionals[2:]...)
+	updated := opts
+	updated.mcpServerEscaped = true
+	return canonical, updated, nil
+}
+
 func hasAuthorizationHeader(transport config.HTTP) bool {
 	for _, header := range transport.Headers {
 		if strings.EqualFold(header.Name, "Authorization") {
@@ -449,92 +491,182 @@ func parseOptions(args []string) (options, []string, error) {
 	if err := flags.Parse(args); err != nil {
 		return opts, nil, err
 	}
-	// Walk only consumed prefix tokens. A -- used as a flag value is not the
-	// separator, and tool-side tokens must never influence help ownership.
-	for i := 0; i < len(args)-flags.NArg(); i++ {
-		if args[i] == "--" {
-			opts.helpServer = true
+	// A -- consumed before positional parsing used to make --help select an
+	// MCP collision escape. The v0.2 namespace removes that grammar. Tool-side
+	// -- remains untouched because flag parsing stops at the first positional.
+	for index := 0; index < len(args)-flags.NArg(); index++ {
+		if args[index] == "--" {
+			opts.legacyHelpSeparator = true
 			break
 		}
-		name, _, assigned := strings.Cut(strings.TrimLeft(args[i], "-"), "=")
-		if !assigned {
-			f := flags.Lookup(name)
-			if boolean, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !boolean.IsBoolFlag() {
-				i++
-			}
+		name, _, assigned := strings.Cut(strings.TrimLeft(args[index], "-"), "=")
+		if assigned {
+			continue
+		}
+		flag := flags.Lookup(name)
+		if flag == nil {
+			continue
+		}
+		boolean, isBoolean := flag.Value.(interface{ IsBoolFlag() bool })
+		if !isBoolean || !boolean.IsBoolFlag() {
+			index++
 		}
 	}
 	return opts, flags.Args(), nil
 }
 
 func parseRequest(positionals []string, opts options, in io.Reader) (request, *appError) {
+	if len(positionals) != 0 && positionals[0] == "mcp" {
+		return parseMCPRequest(positionals, opts, in)
+	}
+	if len(positionals) == 0 {
+		if opts.jsonSet || opts.stdin {
+			return request{}, invocationError("input_without_call", "JSON input is only valid when calling a tool", "supply mcp <server> tool <tool> before JSON input flags")
+		}
+		return request{}, namespaceRequired(nil, opts)
+	}
+	return request{}, namespaceRequired(positionals, opts)
+}
+
+// parseMCPRequest owns the public MCP namespace. Keeping the grammar here
+// makes tool names unambiguous as MCP primitives are added beside `tool`.
+func parseMCPRequest(positionals []string, opts options, in io.Reader) (request, *appError) {
 	if opts.jsonSet && opts.stdin {
 		return request{}, invocationError("input_mode_conflict", "--json and --stdin cannot be used together", "choose exactly one JSON input mode")
 	}
 	switch len(positionals) {
-	case 0:
-		if opts.jsonSet || opts.stdin {
-			return request{}, invocationError("input_without_call", "JSON input is only valid when calling a tool", "supply <server> <tool> before JSON input flags")
-		}
-		return request{operation: listServers}, nil
 	case 1:
 		if opts.jsonSet || opts.stdin {
-			return request{}, invocationError("input_without_call", "JSON input is only valid when calling a tool", "supply a tool name after the server")
+			return request{}, invocationError("input_without_call", "JSON input is only valid when calling a tool", "supply mcp <server> tool <tool> before JSON input flags")
 		}
-		return request{operation: listTools, server: positionals[0]}, nil
+		return request{operation: listServers}, nil
 	case 2:
-		if !opts.jsonSet && !opts.stdin && startsJSONObject(positionals[1]) {
-			tool, arguments, err := parseExactCall(positionals[1])
+		if opts.jsonSet || opts.stdin {
+			return request{}, invocationError("input_without_call", "JSON input is only valid when calling a tool", "supply tool <tool> after the MCP server")
+		}
+		return request{operation: listTools, server: positionals[1]}, nil
+	case 3:
+		if !opts.jsonSet && !opts.stdin && startsJSONObject(positionals[2]) {
+			tool, arguments, err := parseExactCall(positionals[2])
 			if err != nil {
 				return request{}, err
 			}
-			return request{operation: callTool, server: positionals[0], tool: tool, arguments: arguments}, nil
+			return request{operation: callTool, server: positionals[1], tool: tool, arguments: arguments}, nil
+		}
+		if positionals[2] != "tool" {
+			return request{}, invocationError("mcp_operation_required", "MCP server operations must name tool, resources, or another MCP primitive", "use wirecmd mcp "+shellQuote(positionals[1])+" tool <tool>")
+		}
+		return request{}, invocationError("tool_required", "MCP tool calls require a non-empty tool name", "use wirecmd mcp "+shellQuote(positionals[1])+" tool <tool>")
+	default:
+		if positionals[2] != "tool" {
+			return request{}, invocationError("mcp_operation_required", "MCP server operations must name tool, resources, or another MCP primitive", "use wirecmd mcp "+shellQuote(positionals[1])+" tool <tool>")
+		}
+		if positionals[3] == "" {
+			return request{}, invocationError("tool_required", "tool name must not be empty", "supply a non-empty tool name")
+		}
+		return parseMCPToolCall(positionals[1], positionals[3], positionals[4:], opts, in)
+	}
+}
+
+func parseMCPToolCall(server, tool string, suffix []string, opts options, in io.Reader) (request, *appError) {
+	if opts.jsonSet || opts.stdin {
+		if len(suffix) != 0 {
+			return request{}, invocationError("input_with_projected_arguments", "--json and --stdin cannot be combined with projected tool arguments", "choose either exact JSON input or projected arguments")
 		}
 		arguments, err := parseArguments(opts, in)
 		if err != nil {
 			return request{}, err
 		}
-		if positionals[1] == "" {
-			return request{}, invocationError("tool_required", "tool name must not be empty", "supply a non-empty tool name")
-		}
-		return request{operation: callTool, server: positionals[0], tool: positionals[1], arguments: arguments}, nil
-	default:
-		if opts.jsonSet || opts.stdin {
-			return request{}, invocationError("input_with_projected_arguments", "--json and --stdin cannot be combined with projected tool arguments", "choose either exact JSON input or projected arguments")
-		}
-		suffix := positionals[2:]
-		if len(suffix) != 0 && suffix[len(suffix)-1] == "-h" {
-			suffix = append([]string(nil), suffix...)
-			suffix[len(suffix)-1] = "--help"
-		}
-		projected, overlay, err := parseProjectedSuffix(suffix)
-		if err != nil {
-			return request{}, err
-		}
-		if positionals[1] == "" {
-			return request{}, invocationError("tool_required", "tool name must not be empty", "supply a non-empty tool name")
-		}
-		return request{operation: callTool, server: positionals[0], tool: positionals[1], arguments: map[string]any{}, projected: projected, overlay: overlay}, nil
+		return request{operation: callTool, server: server, tool: tool, arguments: arguments}, nil
 	}
+	if len(suffix) == 0 {
+		return request{operation: callTool, server: server, tool: tool, arguments: map[string]any{}}, nil
+	}
+	if suffix[len(suffix)-1] == "-h" {
+		suffix = append([]string(nil), suffix...)
+		suffix[len(suffix)-1] = "--help"
+	}
+	projected, overlay, err := parseProjectedSuffix(suffix)
+	if err != nil {
+		return request{}, err
+	}
+	return request{operation: callTool, server: server, tool: tool, arguments: map[string]any{}, projected: projected, overlay: overlay}, nil
 }
 
 func parseHelpRequest(positionals []string, opts options) (request, *appError) {
 	if opts.jsonSet || opts.stdin {
 		return request{}, invocationError("input_with_help", "--json and --stdin cannot be used with --help", "request help without a tool input mode")
 	}
+	if len(positionals) != 0 && positionals[0] == "mcp" {
+		switch len(positionals) {
+		case 1:
+			return request{help: globalHelp}, nil
+		case 2:
+			return request{operation: listTools, server: positionals[1], help: serverHelp}, nil
+		case 4:
+			if positionals[2] != "tool" || positionals[3] == "" {
+				return request{}, invocationError("mcp_help_arity", "focused MCP help accepts mcp <server> [tool <tool>]", "use wirecmd --help mcp <server> [tool <tool>]")
+			}
+			return request{operation: inspectTool, server: positionals[1], tool: positionals[3], help: toolHelp}, nil
+		default:
+			return request{}, invocationError("mcp_help_arity", "focused MCP help accepts mcp <server> [tool <tool>]", "use wirecmd --help mcp <server> [tool <tool>]")
+		}
+	}
 	switch len(positionals) {
 	case 0:
 		return request{help: globalHelp}, nil
-	case 1:
-		return request{operation: listTools, server: positionals[0], help: serverHelp}, nil
-	case 2:
-		if positionals[1] == "" {
-			return request{}, invocationError("tool_required", "tool name must not be empty", "supply a non-empty tool name")
-		}
-		return request{operation: inspectTool, server: positionals[0], tool: positionals[1], help: toolHelp}, nil
 	default:
-		return request{}, invocationError("help_arity", "focused help accepts at most <server> <tool>", "use wirecmd --help [<server> [<tool>]]")
+		return request{}, namespaceHelpRequired(positionals)
 	}
+}
+
+func namespaceHelpRequired(positionals []string) *appError {
+	server := mcpServerSpelling(positionals[0])
+	if len(positionals) == 1 || startsJSONObject(positionals[1]) {
+		return invocationError("mcp_namespace_required", "top-level server help was removed", "use wirecmd --help mcp "+server)
+	}
+	return invocationError("mcp_namespace_required", "top-level server help was removed", "use wirecmd --help mcp "+server+" tool "+shellQuote(positionals[1]))
+}
+
+func namespaceRequired(positionals []string, opts options) *appError {
+	if len(positionals) == 0 {
+		return invocationError("mcp_namespace_required", "MCP operations are under the mcp namespace", "use wirecmd mcp to list configured MCP servers")
+	}
+	server := mcpServerSpelling(positionals[0])
+	if len(positionals) == 1 {
+		return invocationError("mcp_namespace_required", "top-level server dispatch was removed", "use wirecmd mcp "+server+" to list that server's tools")
+	}
+	tool := shellQuote(positionals[1])
+	if startsJSONObject(positionals[1]) {
+		// Explicit input modes make this a literal tool name, but echoing an
+		// arbitrary JSON-looking name could disclose exact-call-shaped input.
+		tool = "'<TOOL_NAME>'"
+	}
+	if opts.jsonSet {
+		return invocationError("mcp_namespace_required", "top-level server dispatch was removed", "rerun with the original JSON object: wirecmd --json '<JSON_OBJECT>' mcp "+server+" tool "+tool)
+	}
+	if opts.stdin {
+		return invocationError("mcp_namespace_required", "top-level server dispatch was removed", "rerun with the original JSON object: printf '%s\\n' '<JSON_OBJECT>' | wirecmd --stdin mcp "+server+" tool "+tool)
+	}
+	last := positionals[len(positionals)-1]
+	if last == "--help" || last == "-h" {
+		return invocationError("mcp_namespace_required", "top-level server dispatch was removed", "use wirecmd --help mcp "+server+" tool "+tool)
+	}
+	if startsJSONObject(positionals[1]) {
+		return invocationError("mcp_namespace_required", "top-level server dispatch was removed", "use wirecmd mcp "+server+" '<exact-call-object>'")
+	}
+	if len(positionals) > 2 {
+		return invocationError("mcp_namespace_required", "top-level server dispatch was removed", "migrate the original tool arguments manually: wirecmd mcp "+server+" tool "+tool+" <original-tool-arguments>")
+	}
+	return invocationError("mcp_namespace_required", "top-level server dispatch was removed", "use wirecmd mcp "+server+" tool "+tool)
+}
+
+func mcpServerSpelling(server string) string {
+	quoted := shellQuote(server)
+	if server == "--help" || server == "-h" {
+		return "-- " + quoted
+	}
+	return quoted
 }
 
 func startsJSONObject(value string) bool {

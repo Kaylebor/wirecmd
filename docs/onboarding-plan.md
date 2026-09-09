@@ -16,19 +16,25 @@ group page. Auth help accepts configuration/direct selection without resolving
 it. Daemon/config help retains restrictions on those flags. Known Wirecmd flags
 in a reserved administrative path position produce contextual ownership errors
 instead of being interpreted as paths. This recognition remains narrow so
-ordinary tool suffixes keep their existing ownership outside the documented
-administrative-name collisions, whose JSON and explicit-help escapes remain
-available. All help rejects tool input modes and remains plain text.
+ordinary tool suffixes keep their existing ownership. MCP operations are under
+the explicit `mcp` namespace, so servers named like native groups need no
+collision escape. All help rejects tool input modes and remains plain text.
 
-`wirecmd --help -- SERVER [TOOL]` forces server/tool interpretation. Only a
-separator consumed in the flag prefix has this meaning; later `--` still belongs
-to the existing raw argument overlay. Ordinary invocation and standalone version
-semantics do not change. Invalid admin help returns an invocation error.
+MCP-focused help uses `wirecmd --help mcp SERVER [tool TOOL]`. For a configured
+alias literally named `--help` or `-h`, use the unambiguous
+`wirecmd --help mcp -- --help [tool TOOL]` or `... mcp -- -h [tool TOOL]` form;
+the corresponding ordinary paths are `wirecmd mcp -- --help` and
+`wirecmd mcp -- -h`. Later `--` after a tool name belongs only to the raw
+argument overlay. Ordinary invocation and standalone version semantics do not
+change. The distinct prefix form `wirecmd --help mcp --` targets a configured
+alias literally named `--`; it is not the `--help` escape. Invalid admin help
+returns an invocation error.
 
 ## Completion contract
 
 Fish completion is manually installed. It covers prefix syntax, administrative
-verbs, paths and local server names, not upstream tools, projected flags or JSON.
+verbs, paths, the `mcp` namespace, and local server names, not upstream tools,
+projected flags or JSON.
 It must honor repeated configuration order, trust, and prefix/positional ownership.
 
 The private `--completion-servers` prefix flag accepts only repeated `--config`

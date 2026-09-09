@@ -8,8 +8,8 @@ placement remains current.
 
 A final `--help` or `-h` selects help for a configured MCP server or a
 recognized native or administrative command. Native and administrative suffix
-help is offline and side-effect-free. `SERVER --help` follows the same
-configuration, trust, daemon, and `--direct` behavior as `--help SERVER`.
+help is offline and side-effect-free. `mcp SERVER --help` follows the same
+configuration, trust, daemon, and `--direct` behavior as `--help mcp SERVER`.
 
 At the tool boundary, a final `--help` or `-h` is resolved against the live
 input schema. An explicitly projectable `help` property owns the argument;
@@ -17,9 +17,12 @@ otherwise Wirecmd renders focused tool help. Generic additional properties do
 not claim the flag. MCP server and tool help always obtains live metadata: it
 requires a running daemon, or explicit `--direct` execution for a one-shot
 request. An offline daemon fails normally for both prefix and suffix MCP help.
-Exact JSON remains the lossless escape for a literal `help` property. Prefix
-`--help -- SERVER [TOOL]` continues to select MCP help when a server name
-collides with administration or native LSP.
+Exact JSON remains the lossless escape for a literal `help` property. A server
+alias literally named `--help` or `-h` uses the namespace-local
+`mcp -- --help` or `mcp -- -h` escape, including the corresponding prefix help
+form for focused help. The distinct prefix form `--help mcp --` targets a
+literal `--` alias, not the `--help` escape. The explicit `mcp` namespace
+selects MCP help when a server name collides with administration or native LSP.
 
 ## Withdrawn persistent metadata cache
 

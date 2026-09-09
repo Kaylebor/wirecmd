@@ -239,10 +239,10 @@ run_wirecmd_arm() {
 
     if [[ $preparation == warm ]]; then
         capture wirecmd_warm_servers "$logs/warm-servers.json" "$logs/warm-servers.stderr" \
-            env XDG_RUNTIME_DIR="$runtime" "$wirecmd" --config "$capability_config" || return 1
+            env XDG_RUNTIME_DIR="$runtime" "$wirecmd" --config "$capability_config" mcp || return 1
         for server in memory remote-tests everything; do
             capture "wirecmd_warm_tools_$server" "$logs/warm-tools-$server.json" "$logs/warm-tools-$server.stderr" \
-                env XDG_RUNTIME_DIR="$runtime" "$wirecmd" --config "$capability_config" "$server" || return 1
+                env XDG_RUNTIME_DIR="$runtime" "$wirecmd" --config "$capability_config" mcp "$server" || return 1
         done
     fi
 
@@ -262,7 +262,7 @@ run_wirecmd_arm() {
     fi
 
     if capture wirecmd_parent_verify "$logs/parent-memory.json" "$logs/parent-memory.stderr" \
-        env XDG_RUNTIME_DIR="$runtime" "$wirecmd" --config "$capability_config" memory read_graph; then
+        env XDG_RUNTIME_DIR="$runtime" "$wirecmd" --config "$capability_config" mcp memory tool read_graph; then
         if empty_graph_file "$logs/parent-memory.json"; then
             event wirecmd_parent_verify 'graph=empty'
         else

@@ -58,9 +58,9 @@ wirecmd config trust list
 ```
 
 `PATH` defaults to the caller's current directory. These forms reject ordinary
-execution flags. A server named `config` remains callable through `--json` or
-an exact-call envelope, so the administrative namespace does not remove that
-server name from the public contract.
+execution flags. A server named `config` remains callable through `wirecmd mcp
+config`, so the administrative namespace does not remove that server name from
+the public contract.
 
 Trust means that future configuration edits within the canonical directory are
 accepted; it does not create a content-hash approval or require reapproval for

@@ -99,9 +99,6 @@ func TestLSPReservesOnlyBareNativeForms(t *testing.T) {
 	if _, _, handled := lspHelp([]string{"lsp", "workspace-symbols"}, options{help: true}); !handled {
 		t.Fatal("focused workspace symbols help was not recognized")
 	}
-	if _, _, handled := lspHelp([]string{"lsp"}, options{help: true, helpServer: true}); handled {
-		t.Fatal("--help -- must preserve MCP server help")
-	}
 }
 
 func TestLSPStaticHelpDoesNotRequireConfiguration(t *testing.T) {
@@ -123,9 +120,9 @@ func TestLSPMCPServerEscapesRemainReachable(t *testing.T) {
 	}
 	configPath := writeConfig(t, strings.Replace(string(source), `mcp "helper"`, `mcp "lsp"`, 1))
 	for _, args := range [][]string{
-		{"--direct", "--config", configPath, "lsp", `{"tool":"a_tool","arguments":{}}`},
-		{"--direct", "--config", configPath, "--json", `{}`, "lsp", "a_tool"},
-		{"--direct", "--config", configPath, "--help", "--", "lsp"},
+		{"--direct", "--config", configPath, "mcp", "lsp", `{"tool":"a_tool","arguments":{}}`},
+		{"--direct", "--config", configPath, "--json", `{}`, "mcp", "lsp", "tool", "a_tool"},
+		{"--direct", "--config", configPath, "--help", "mcp", "lsp"},
 	} {
 		code, output, stderr := invoke(t, args)
 		if code != exitOK || stderr != "" || !strings.Contains(output, "lsp") {
