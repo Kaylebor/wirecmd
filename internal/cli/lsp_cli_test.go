@@ -52,6 +52,10 @@ func TestLSPInspectionGrammar(t *testing.T) {
 	if !handled || appErr != nil || hover.Operation != lspHover || hover.File != "main.go" || hover.Line != 2 || hover.Column != 3 {
 		t.Fatalf("hover parse = %#v %#v %v", hover, appErr, handled)
 	}
+	signature, appErr, handled := parseLSPCommand([]string{"lsp", "signature-help", "--file", "main.go", "--line", "2", "--column", "3"}, options{})
+	if !handled || appErr != nil || signature.Operation != lspSignatureHelp || signature.File != "main.go" || signature.Line != 2 || signature.Column != 3 {
+		t.Fatalf("signature-help parse = %#v %#v %v", signature, appErr, handled)
+	}
 	document, appErr, handled := parseLSPCommand([]string{"lsp", "document-symbols", "--file", "main.go"}, options{})
 	if !handled || appErr != nil || document.Operation != lspDocumentSymbols || document.File != "main.go" {
 		t.Fatalf("document symbols parse = %#v %#v %v", document, appErr, handled)
@@ -65,6 +69,7 @@ func TestLSPInspectionGrammar(t *testing.T) {
 		code string
 	}{
 		{[]string{"lsp", "hover", "--file", "x", "--line", "1"}, "lsp_column_required"},
+		{[]string{"lsp", "signature-help", "--file", "x", "--line", "1"}, "lsp_column_required"},
 		{[]string{"lsp", "document-symbols"}, "lsp_file_required"},
 		{[]string{"lsp", "document-symbols", "--file", "x", "--line", "1"}, "lsp_document_symbols_flags"},
 		{[]string{"lsp", "workspace-symbols"}, "lsp_query_required"},
@@ -99,12 +104,15 @@ func TestLSPReservesOnlyBareNativeForms(t *testing.T) {
 	if _, _, handled := lspHelp([]string{"lsp", "workspace-symbols"}, options{help: true}); !handled {
 		t.Fatal("focused workspace symbols help was not recognized")
 	}
+	if _, _, handled := lspHelp([]string{"lsp", "signature-help"}, options{help: true}); !handled {
+		t.Fatal("focused signature-help help was not recognized")
+	}
 }
 
 func TestLSPStaticHelpDoesNotRequireConfiguration(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "relative-path-is-invalid-for-discovery")
 	t.Setenv("XDG_RUNTIME_DIR", "/not-an-available-runtime")
-	for _, args := range [][]string{{"lsp"}, {"--help", "lsp"}, {"--help", "lsp", "definition"}, {"--help", "lsp", "status"}} {
+	for _, args := range [][]string{{"lsp"}, {"--help", "lsp"}, {"--help", "lsp", "definition"}, {"--help", "lsp", "signature-help"}, {"--help", "lsp", "status"}} {
 		code, output, stderr := invoke(t, args)
 		if code != exitOK || stderr != "" || json.Valid([]byte(output)) || !strings.Contains(output, "lsp") {
 			t.Fatalf("%v: code=%d stdout=%q stderr=%q", args, code, output, stderr)
@@ -227,6 +235,25 @@ func TestAggregateLSPInspectionResults(t *testing.T) {
 	_, appErr = aggregateLSPSymbolResults(lspRequest{Operation: lspDocumentSymbols}, "/work", "/work/main.go", matches, []lspProviderRun{{Unsupported: true}, {Unsupported: true}})
 	if appErr == nil || appErr.code != "lsp_capability_unavailable" {
 		t.Fatalf("unsupported symbols=%#v", appErr)
+	}
+}
+
+func TestAggregateLSPSignatureResults(t *testing.T) {
+	matches := []lspMatch{{Definition: config.LSP{Name: "first"}}, {Definition: config.LSP{Name: "second"}}}
+	value, appErr := aggregateLSPSignatureResults(lspRequest{Operation: lspSignatureHelp, Line: 2, Column: 3}, "/work/main.go", matches, []lspProviderRun{
+		{Signatures: []lspclient.Signature{{Label: "first(value)", Active: true, Parameters: []lspclient.SignatureParameter{{Label: "value", Active: true}}}}},
+		{Err: protocolError("signature_help_failed", "failed", "retry")},
+	})
+	if appErr != nil {
+		t.Fatal(appErr)
+	}
+	envelope := value.(lspSignatureEnvelope)
+	if !envelope.LSP.Partial || len(envelope.LSP.Signatures) != 1 || envelope.LSP.Signatures[0].Provider != "first" || !envelope.LSP.Signatures[0].Parameters[0].Active || envelope.LSP.Providers[0].Signatures != 1 || envelope.LSP.Providers[1].Status != "failed" {
+		t.Fatalf("signatures=%#v", envelope)
+	}
+	_, appErr = aggregateLSPSignatureResults(lspRequest{Operation: lspSignatureHelp}, "/work/main.go", matches, []lspProviderRun{{Unsupported: true}, {Unsupported: true}})
+	if appErr == nil || appErr.code != "lsp_capability_unavailable" {
+		t.Fatalf("unsupported signatures=%#v", appErr)
 	}
 }
 

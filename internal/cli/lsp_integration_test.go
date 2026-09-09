@@ -103,6 +103,7 @@ lsp "nonmatching" { selector language-id="html" pattern="**/*.html"; stdio %s { 
 }`, strconv.Quote(workspace), strconv.Quote(os.Args[0]), strconv.Quote(os.Args[0])))
 	commands := [][]string{
 		{"lsp", "hover", "--file", input, "--line", "1", "--column", "2"},
+		{"lsp", "signature-help", "--file", input, "--line", "1", "--column", "2"},
 		{"lsp", "document-symbols", "--file", input},
 		{"lsp", "workspace-symbols", "--query", "Needle"},
 		{"lsp", "workspace-symbols", "--query", ""},
@@ -121,13 +122,17 @@ lsp "nonmatching" { selector language-id="html" pattern="**/*.html"; stdio %s { 
 	statusOutput := mustInvokeLSP(t, []string{"--config", configPath, "lsp", "status"})
 	runtimeStatus := decodeOutput(t, statusOutput)["lsp"].(map[string]any)["providers"].([]any)[0].(map[string]any)["runtime"].(map[string]any)
 	capabilities := runtimeStatus["capabilities"].(map[string]any)
-	if capabilities["hover"] != true || capabilities["document_symbols"] != true || capabilities["workspace_symbols"] != true {
+	if capabilities["hover"] != true || capabilities["signature_help"] != true || capabilities["document_symbols"] != true || capabilities["workspace_symbols"] != true {
 		t.Fatalf("inspection capabilities=%#v", capabilities)
 	}
 
 	hover := decodeOutput(t, mustInvokeLSP(t, []string{"--direct", "--config", configPath, "lsp", "hover", "--file", input, "--line", "1", "--column", "2"}))["lsp"].(map[string]any)
 	if len(hover["hovers"].([]any)) != 1 || hover["providers"].([]any)[0].(map[string]any)["hovers"].(json.Number).String() != "1" {
 		t.Fatalf("hover=%#v", hover)
+	}
+	signatures := decodeOutput(t, mustInvokeLSP(t, []string{"--direct", "--config", configPath, "lsp", "signature-help", "--file", input, "--line", "1", "--column", "2"}))["lsp"].(map[string]any)
+	if len(signatures["signatures"].([]any)) != 1 || signatures["providers"].([]any)[0].(map[string]any)["signatures"].(json.Number).String() != "1" {
+		t.Fatalf("signature help=%#v", signatures)
 	}
 	document := decodeOutput(t, mustInvokeLSP(t, []string{"--direct", "--config", configPath, "lsp", "document-symbols", "--file", input}))["lsp"].(map[string]any)
 	top := document["symbols"].([]any)[0].(map[string]any)
@@ -150,9 +155,31 @@ func TestLSPInspectionRedactsSuccessfulResults(t *testing.T) {
 	}
 	configPath := filepath.Join(workspace, "wirecmd.kdl")
 	writeSource(t, configPath, fmt.Sprintf("wirecmd { root %s; lsp \"fixture\" { selector language-id=\"fixture\"; stdio %s { arg \"-test.run=TestCLILSPHelperProcess\"; env WIRECMD_LSP_PROVIDER=(secret)\"env://LSP_RESULT_SECRET\" } } }", strconv.Quote(workspace), strconv.Quote(os.Args[0])))
-	code, output, stderr := invoke(t, []string{"--direct", "--config", configPath, "lsp", "hover", "--file", input, "--line", "1", "--column", "2"})
-	if code != exitOK || strings.Contains(output, "never-print-this-value") || strings.Contains(stderr, "never-print-this-value") || !strings.Contains(output, "[REDACTED]") {
-		t.Fatalf("redaction: code=%d stdout=%q stderr=%q", code, output, stderr)
+	for _, operation := range []string{"hover", "signature-help"} {
+		code, output, stderr := invoke(t, []string{"--direct", "--config", configPath, "lsp", operation, "--file", input, "--line", "1", "--column", "2"})
+		if code != exitOK || strings.Contains(output, "never-print-this-value") || strings.Contains(stderr, "never-print-this-value") || !strings.Contains(output, "[REDACTED]") {
+			t.Fatalf("%s redaction: code=%d stdout=%q stderr=%q", operation, code, output, stderr)
+		}
+	}
+}
+
+func TestLSPSignatureHelpCapabilityMismatch(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	runtime := testRuntimeDirectory(t)
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	startTestDaemon(t)
+	workspace := t.TempDir()
+	input := filepath.Join(workspace, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(workspace, "wirecmd.kdl")
+	writeSource(t, configPath, fmt.Sprintf("wirecmd { root %s; lsp \"fixture\" { selector language-id=\"fixture\"; stdio %s { arg \"-test.run=TestCLILSPHelperProcess\"; env WIRECMD_LSP_SIGNATURE_METHOD_NOT_FOUND=\"1\" } } }", strconv.Quote(workspace), strconv.Quote(os.Args[0])))
+	for _, prefix := range [][]string{{"--direct"}, {}} {
+		code, output, stderr := invoke(t, append(prefix, "--config", configPath, "lsp", "signature-help", "--file", input, "--line", "1", "--column", "2"))
+		if code != exitProtocol || stderr != "" || decodeOutput(t, output)["error"].(map[string]any)["code"] != "lsp_capability_mismatch" {
+			t.Fatalf("%v: code=%d stdout=%s stderr=%q", prefix, code, output, stderr)
+		}
 	}
 }
 
@@ -292,6 +319,7 @@ lsp "typescript" {
 	}
 	for _, command := range [][]string{
 		{"lsp", "hover", "--file", input, "--line", "1", "--column", "2"},
+		{"lsp", "signature-help", "--file", input, "--line", "1", "--column", "2"},
 		{"lsp", "document-symbols", "--file", input},
 		{"lsp", "workspace-symbols", "--query", "value"},
 	} {
@@ -477,7 +505,7 @@ func TestCLILSPHelperProcess(t *testing.T) {
 	}
 	stream := jsonrpc2.NewStream(&cliLSPStdio{Reader: os.Stdin, Writer: os.Stdout})
 	delay, _ := strconv.Atoi(os.Getenv("WIRECMD_LSP_DELAY_MS"))
-	_, connection, _ := protocol.NewServer(context.Background(), cliLSPServer{UnimplementedServer: protocol.UnimplementedServer{}, mode: os.Getenv("WIRECMD_CLI_LSP_HELPER"), provider: os.Getenv("WIRECMD_LSP_PROVIDER"), fail: os.Getenv("WIRECMD_LSP_FAIL") == "1", unsupported: os.Getenv("WIRECMD_LSP_UNSUPPORTED") == "1", delay: time.Duration(delay) * time.Millisecond, active: &atomic.Int32{}}, stream)
+	_, connection, _ := protocol.NewServer(context.Background(), cliLSPServer{UnimplementedServer: protocol.UnimplementedServer{}, mode: os.Getenv("WIRECMD_CLI_LSP_HELPER"), provider: os.Getenv("WIRECMD_LSP_PROVIDER"), fail: os.Getenv("WIRECMD_LSP_FAIL") == "1", unsupported: os.Getenv("WIRECMD_LSP_UNSUPPORTED") == "1", signatureMethodNotFound: os.Getenv("WIRECMD_LSP_SIGNATURE_METHOD_NOT_FOUND") == "1", delay: time.Duration(delay) * time.Millisecond, active: &atomic.Int32{}}, stream)
 	<-connection.Done()
 }
 
@@ -490,12 +518,13 @@ func (*cliLSPStdio) Close() error { return nil }
 
 type cliLSPServer struct {
 	protocol.UnimplementedServer
-	mode        string
-	provider    string
-	fail        bool
-	unsupported bool
-	delay       time.Duration
-	active      *atomic.Int32
+	mode                    string
+	provider                string
+	fail                    bool
+	unsupported             bool
+	signatureMethodNotFound bool
+	delay                   time.Duration
+	active                  *atomic.Int32
 }
 
 func (server cliLSPServer) Initialize(context.Context, *protocol.InitializeParams) (*protocol.InitializeResult, error) {
@@ -506,6 +535,7 @@ func (server cliLSPServer) Initialize(context.Context, *protocol.InitializeParam
 	if !server.unsupported {
 		capabilities = protocol.ServerCapabilities{
 			HoverProvider:           protocol.Boolean(true),
+			SignatureHelpProvider:   &protocol.SignatureHelpOptions{},
 			DeclarationProvider:     protocol.Boolean(true),
 			DefinitionProvider:      protocol.Boolean(true),
 			TypeDefinitionProvider:  protocol.Boolean(true),
@@ -524,6 +554,19 @@ func (server cliLSPServer) Hover(_ context.Context, params *protocol.HoverParams
 		return nil, fmt.Errorf("provider failed")
 	}
 	return &protocol.Hover{Contents: &protocol.MarkupContent{Kind: protocol.MarkupKindMarkdown, Value: "**hover** " + server.provider}, Range: &protocol.Range{Start: params.Position, End: params.Position}}, nil
+}
+
+func (server cliLSPServer) SignatureHelp(_ context.Context, _ *protocol.SignatureHelpParams) (*protocol.SignatureHelp, error) {
+	if server.fail {
+		return nil, fmt.Errorf("provider failed")
+	}
+	if server.signatureMethodNotFound {
+		return nil, jsonrpc2.ErrMethodNotFound
+	}
+	return &protocol.SignatureHelp{Signatures: []protocol.SignatureInformation{{
+		Label: "fixture(value)", Documentation: &protocol.MarkupContent{Kind: protocol.MarkupKindMarkdown, Value: "**signature** " + server.provider},
+		Parameters: []protocol.ParameterInformation{{Label: protocol.String("value"), Documentation: protocol.String("fixture parameter")}},
+	}}}, nil
 }
 
 func (server cliLSPServer) DocumentSymbol(_ context.Context, params *protocol.DocumentSymbolParams) (protocol.DocumentSymbolResult, error) {

@@ -93,7 +93,7 @@ func canonicalNativeHelp(positionals []string, opts options) ([]string, options,
 			// selects the existing focused static help page.
 			canonical = canonical[:2]
 		} else {
-			return canonical, opts, invocationError("lsp_help_usage", "unrecognized LSP help form", "use wirecmd --help lsp [definition|declaration|type-definition|implementation|references|hover|document-symbols|workspace-symbols|status]"), true
+			return canonical, opts, invocationError("lsp_help_usage", "unrecognized LSP help form", "use wirecmd --help lsp [definition|declaration|type-definition|implementation|references|hover|signature-help|document-symbols|workspace-symbols|status]"), true
 		}
 	case "daemon":
 		// Leave command arity and misplaced-flag diagnostics to the existing

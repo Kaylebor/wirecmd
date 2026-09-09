@@ -81,6 +81,7 @@ attributed to the provider. Query a saved UTF-8 file with one-based coordinates:
 wirecmd lsp definition --file ./main.go --line 21 --column 13
 wirecmd lsp references --file ./main.go --line 21 --column 13
 wirecmd lsp hover --file ./main.go --line 21 --column 13
+wirecmd lsp signature-help --file ./main.go --line 21 --column 13
 wirecmd lsp document-symbols --file ./main.go
 wirecmd lsp workspace-symbols --query 'Wirecmd'
 wirecmd lsp status --file ./main.go
@@ -89,14 +90,17 @@ wirecmd lsp status --file ./main.go
 Available operations are `definition`, `declaration`, `type-definition`,
 `implementation`, and `references`; references exclude declarations unless
 `--include-declaration` is supplied. Read-only inspection also provides
-`hover`, `document-symbols`, and `workspace-symbols`. Hover preserves ordered
-plaintext, Markdown, and code blocks. Document symbols preserve nested
+`hover`, `signature-help`, `document-symbols`, and `workspace-symbols`. Hover preserves ordered
+plaintext, Markdown, and code blocks. Signature help preserves provider-attributed
+callable labels, active states, optional plaintext/Markdown documentation, and
+parameter labels resolved from validated UTF-16 offsets. Document symbols preserve nested
 children; workspace symbols pass the explicit query unchanged to all
 configured providers, including an empty query, without local ranking or
 truncation. Normal calls retain selected sessions through the daemon; use
 `--direct` only for one-shot diagnosis. Navigation results are normalized file
-locations with one-based ranges, while inspection uses its own hover/symbol
-collections. Partial provider failures are reported in structured provider
+locations with one-based ranges, while inspection uses its own hover,
+signature, or symbol collections and matching per-provider counts. Partial
+provider failures are reported in structured provider
 outcomes without noisy client stderr. Use `lsp status` to inspect configured
 selectors and already-observed runtime identity and capabilities without
 starting a process. `lsp_not_configured` and `lsp_no_matching_provider` mean

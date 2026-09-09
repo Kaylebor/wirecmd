@@ -1,6 +1,6 @@
 # Native LSP Navigation and Inspection
 
-Status: automatic multi-provider navigation, hover, and symbol inspection are
+Status: automatic multi-provider navigation, signature help, hover, and symbol inspection are
 implemented and qualified
 
 ## Objective
@@ -21,6 +21,7 @@ wirecmd lsp type-definition --file PATH --line N --column N
 wirecmd lsp implementation --file PATH --line N --column N
 wirecmd lsp references [--include-declaration] --file PATH --line N --column N
 wirecmd lsp hover --file PATH --line N --column N
+wirecmd lsp signature-help --file PATH --line N --column N
 wirecmd lsp document-symbols --file PATH
 wirecmd lsp workspace-symbols --query TEXT
 wirecmd lsp status [--file PATH]
@@ -49,7 +50,7 @@ capable provider fails, the first configured failure is top-level and all
 outcomes remain attached. If no match advertises the operation, Wirecmd returns
 `lsp_capability_unavailable`.
 
-Hover and symbol inspection use the same routing, session, and provider
+Hover, signature help, and symbol inspection use the same routing, session, and provider
 outcome rules. Hover takes one-based file coordinates and returns ordered,
 provider-attributed entries. Each entry preserves its optional range and its
 ordered content blocks, normalized as `plaintext`, `markdown`, or `code` with an
@@ -63,12 +64,22 @@ passes the required query, including an explicitly empty query, unchanged to
 every configured provider and does no local ranking or truncation. Workspace
 symbol results are range-bearing file locations; missing ranges and non-file
 URIs are provider-level upstream errors. The JSON envelopes for these
-operations use their own hover/symbol collections and counts; existing
+operations use their own hover, signature, or symbol collections and counts; existing
 navigation `locations` envelopes remain unchanged. File operations include the
 absolute input file, while workspace search includes the effective workspace
 and query.
 
-The three inspection operations advertise the corresponding negotiated
+Signature help synchronizes the selected document and returns ordered,
+provider-attributed callable signatures. Each entry includes a label, active
+state, optional plaintext or Markdown documentation, and ordered parameters
+with normalized textual labels, active state, and optional documentation. Tuple
+parameter labels are resolved using validated UTF-16 offsets against their
+signature label. Signature-level active parameters override the top-level
+value; explicit null preserves no-active-parameter, while absent and
+out-of-range values use the LSP defaults. A null result is a successful empty
+signature list.
+
+The four inspection operations advertise the corresponding negotiated
 capabilities in `lsp status`. File inspection opens and synchronizes the
 requested document as needed; workspace search does not open a document.
 Pretty hover output shows the file and position, provider labels, optional
@@ -139,8 +150,8 @@ reload or daemon restart and requests are never replayed.
 Daemon instances are keyed by definition, resolved workspace root, selected
 execution configuration, daemon generation, and sensitive startup identity.
 The LSP slice introduced private daemon protocol version 6; the current client
-and daemon use version 8 after adding schema-aware trailing help and native LSP
-inspection requests. Status
+and daemon use version 9 after adding schema-aware trailing help, native LSP
+inspection requests, and signature help. Status
 reports configured definitions, selectors, optional implementation metadata,
 executable, selector matches, and already-observed runtime identity and
 capabilities without starting a process.
@@ -155,12 +166,12 @@ advertises an operation but returns Method Not Found reports
 `lsp_capability_mismatch`.
 
 Tests cover composition, provenance, selector replacement and ambiguity,
-namespace escapes, all five navigation methods, hover, document symbols,
+namespace escapes, all five navigation methods, hover, signature help, document symbols,
 workspace symbols, result variants, synchronization, capability filtering,
 provider fan-out and ordering, partial/all failures, direct/daemon equivalence,
 retained state, reload, broken sessions, status, and redaction. Real-server
 qualification uses an explicit disposable `gopls` configuration against this
-repository; exact evidence for navigation, hover, and symbols is recorded in
+repository; exact evidence for navigation, signature help, hover, and symbols is recorded in
 the non-authoritative [validation note](notes/lsp-definition-validation.md).
 
 Earlier validation notes may show the pre-rename KDL collection spelling

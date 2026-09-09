@@ -31,7 +31,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 8
+const daemonProtocol = 9
 
 type daemonAdmin struct {
 	command string

@@ -403,6 +403,7 @@ Start here:
   wirecmd mcp -- --help               reach a server literally named --help
   wirecmd --help mcp SERVER tool TOOL inspect arguments before calling
   wirecmd lsp definition --file PATH --line N --column N
+  wirecmd lsp signature-help --file PATH --line N --column N
   wirecmd lsp status [--file PATH]
 
 Prefix flags (before mcp/server/tool names):
@@ -430,6 +431,7 @@ Static help (offline: wirecmd --help daemon|config|auth|lsp):
   wirecmd [--config PATH] [--direct] auth login|status|logout SERVER
   wirecmd [client flags] lsp definition|declaration|type-definition|implementation --file PATH --line N --column N
   wirecmd [client flags] lsp references [--include-declaration] --file PATH --line N --column N
+  wirecmd [client flags] lsp signature-help --file PATH --line N --column N
   wirecmd [client flags] lsp status [--file PATH]
 
 Focused help:

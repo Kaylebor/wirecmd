@@ -123,3 +123,47 @@ returned 100 ordered `Run` matches from gopls's current index, including
 names, and provider attribution. Each command started and shut down a fresh
 process as required by `--direct`; retained-session behavior is covered by the
 deterministic daemon integration tests.
+
+## Signature-help qualification (2026-09-10)
+
+The installed `golang.org/x/tools/gopls v0.23.0` was configured only by an
+explicit workspace KDL `stdio` block with `serve`; Wirecmd supplied no
+server-specific initialization options or command construction. The complete
+qualification-only configuration was:
+
+```kdl
+wirecmd {
+    root "."
+
+    lsp "go" {
+        implementation-id "golang.org/x/tools/gopls"
+        selector language-id="go" pattern="**/*.go"
+
+        stdio "gopls" {
+            arg "serve"
+            env XDG_CACHE_HOME="/tmp/wirecmd-signature-gopls-cache"
+            env GOCACHE="/tmp/wirecmd-signature-go-cache"
+        }
+    }
+}
+```
+
+After building the branch binary, this one-shot command ran from the repository
+root:
+
+```sh
+GOCACHE=/tmp/wirecmd-signature-go-cache go build -o /tmp/wirecmd-signature-bin .
+XDG_CACHE_HOME=/tmp/wirecmd-signature-gopls-cache /tmp/wirecmd-signature-bin --direct --config wirecmd-signature-qualification.kdl --format json --color never lsp signature-help --file main.go --line 21 --column 18
+```
+
+It exited `0` with empty stderr. Exact stdout:
+
+```json
+{"ok":true,"lsp":{"operation":"signature-help","file":"/tmp/wirecmd-lsp-signature-help/main.go","line":21,"column":18,"partial":false,"signatures":[{"provider":"go","label":"Run(ctx context.Context, args []string, in io.Reader, out io.Writer, errOut io.Writer) int","active":true,"documentation":{"kind":"markdown","text":"Run executes Wirecmd with args. Successful help and version output are deliberately conventional plain text; other output is rendered according to the selected presentation mode."},"parameters":[{"label":"ctx context.Context","active":true},{"label":"args []string","active":false},{"label":"in io.Reader","active":false},{"label":"out io.Writer","active":false},{"label":"errOut io.Writer","active":false}]}],"providers":[{"name":"go","status":"ok","signatures":1}]}}
+```
+
+This qualifies the request/response, capability, documentation,
+active-parameter, and result normalization path for this server only.
+Deterministic fixtures cover UTF-16 tuple labels, explicit null/no-active
+parameters, malformed offsets, direct and daemon equivalence, retention,
+fan-out, and partial failures.

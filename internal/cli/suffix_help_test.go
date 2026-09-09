@@ -23,6 +23,7 @@ func TestNormalizeTrailingHelp(t *testing.T) {
 		{name: "config leaf", positionals: []string{"config", "trust", "status", "--help"}, want: []string{"config", "trust", "status"}, wantHelp: true, handled: true},
 		{name: "auth server", positionals: []string{"auth", "login", "figma", "--help"}, want: []string{"auth", "login", "figma"}, wantHelp: true, handled: true},
 		{name: "lsp flags removed", positionals: []string{"lsp", "definition", "--file", "main.go", "--line", "1", "--column", "2", "--help"}, want: []string{"lsp", "definition"}, wantHelp: true, handled: true},
+		{name: "lsp signature flags removed", positionals: []string{"lsp", "signature-help", "--file", "main.go", "--line", "1", "--column", "2", "--help"}, want: []string{"lsp", "signature-help"}, wantHelp: true, handled: true},
 		{name: "lsp status file removed", positionals: []string{"lsp", "status", "--file", "main.go", "--help"}, want: []string{"lsp", "status"}, wantHelp: true, handled: true},
 		{name: "tool suffix preserved", positionals: []string{"mcp", "memory", "tool", "search", "--help"}, want: []string{"mcp", "memory", "tool", "search", "--help"}, handled: false},
 		{name: "non-final help preserved", positionals: []string{"mcp", "memory", "--help", "tool"}, want: []string{"mcp", "memory", "--help", "tool"}, handled: false},

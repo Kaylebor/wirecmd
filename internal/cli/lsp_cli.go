@@ -29,6 +29,7 @@ const (
 	lspImplementation   = "implementation"
 	lspReferences       = "references"
 	lspHover            = "hover"
+	lspSignatureHelp    = "signature-help"
 	lspDocumentSymbols  = "document-symbols"
 	lspWorkspaceSymbols = "workspace-symbols"
 	lspStatus           = "status"
@@ -114,6 +115,47 @@ type lspHoverEnvelope struct {
 	LSP lspHoverResult `json:"lsp"`
 }
 
+type lspSignatureDocumentation struct {
+	Kind string `json:"kind"`
+	Text string `json:"text"`
+}
+
+type lspSignatureParameter struct {
+	Label         string                     `json:"label"`
+	Active        bool                       `json:"active"`
+	Documentation *lspSignatureDocumentation `json:"documentation,omitempty"`
+}
+
+type lspSignature struct {
+	Provider      string                     `json:"provider"`
+	Label         string                     `json:"label"`
+	Active        bool                       `json:"active"`
+	Documentation *lspSignatureDocumentation `json:"documentation,omitempty"`
+	Parameters    []lspSignatureParameter    `json:"parameters"`
+}
+
+type lspSignatureProviderOutcome struct {
+	Name       string     `json:"name"`
+	Status     string     `json:"status"`
+	Signatures int        `json:"signatures"`
+	Error      *errorBody `json:"error,omitempty"`
+}
+
+type lspSignatureResult struct {
+	Operation  string                        `json:"operation"`
+	File       string                        `json:"file"`
+	Line       int                           `json:"line"`
+	Column     int                           `json:"column"`
+	Partial    bool                          `json:"partial"`
+	Signatures []lspSignature                `json:"signatures"`
+	Providers  []lspSignatureProviderOutcome `json:"providers"`
+}
+
+type lspSignatureEnvelope struct {
+	OK  bool               `json:"ok"`
+	LSP lspSignatureResult `json:"lsp"`
+}
+
 type lspSymbol struct {
 	Provider       string      `json:"provider"`
 	Name           string      `json:"name"`
@@ -191,6 +233,7 @@ type lspMatch struct {
 type lspProviderRun struct {
 	Locations   []lspclient.Location
 	Hovers      []lspclient.Hover
+	Signatures  []lspclient.Signature
 	Symbols     []lspclient.Symbol
 	Err         *appError
 	Unsupported bool
@@ -207,7 +250,7 @@ func isLSPNavigation(operation string) bool {
 
 func isLSPInspection(operation string) bool {
 	switch operation {
-	case lspHover, lspDocumentSymbols, lspWorkspaceSymbols:
+	case lspHover, lspSignatureHelp, lspDocumentSymbols, lspWorkspaceSymbols:
 		return true
 	default:
 		return false
@@ -215,11 +258,11 @@ func isLSPInspection(operation string) bool {
 }
 
 func isLSPFileOperation(operation string) bool {
-	return isLSPNavigation(operation) || operation == lspHover || operation == lspDocumentSymbols
+	return isLSPNavigation(operation) || operation == lspHover || operation == lspSignatureHelp || operation == lspDocumentSymbols
 }
 
 func isLSPPositionOperation(operation string) bool {
-	return isLSPNavigation(operation) || operation == lspHover
+	return isLSPNavigation(operation) || operation == lspHover || operation == lspSignatureHelp
 }
 
 // parseLSPCommand reserves only bare native forms. JSON input modes remain
@@ -331,6 +374,7 @@ func lspHelpText() string {
   wirecmd [client flags] lsp implementation --file PATH --line N --column N
   wirecmd [client flags] lsp references [--include-declaration] --file PATH --line N --column N
   wirecmd [client flags] lsp hover --file PATH --line N --column N
+  wirecmd [client flags] lsp signature-help --file PATH --line N --column N
   wirecmd [client flags] lsp document-symbols --file PATH
   wirecmd [client flags] lsp workspace-symbols --query TEXT
   wirecmd [client flags] lsp status [--file PATH]
@@ -352,6 +396,9 @@ func lspOperationHelpText(operation string) string {
 	}
 	if operation == lspWorkspaceSymbols {
 		return "Search workspace symbols through every configured capable provider.\n\nUsage:\n  wirecmd [client flags] lsp workspace-symbols --query TEXT\n\nThe query is required, may be empty, and is passed unchanged.\n"
+	}
+	if operation == lspSignatureHelp {
+		return "Inspect callable signatures through every matching capable provider.\n\nUsage:\n  wirecmd [client flags] lsp signature-help --file PATH --line N --column N\n\nPATH resolves from the caller CWD; line and column are one-based.\n"
 	}
 	extra := ""
 	if operation == lspReferences {
@@ -614,6 +661,22 @@ func redactLSPProviderRun(result *lspProviderRun, redactor *redactor) {
 			content.Language = redactor.Redact(content.Language)
 		}
 	}
+	for signatureIndex := range result.Signatures {
+		signature := &result.Signatures[signatureIndex]
+		signature.Label = redactor.Redact(signature.Label)
+		if signature.Documentation != nil {
+			signature.Documentation.Kind = redactor.Redact(signature.Documentation.Kind)
+			signature.Documentation.Text = redactor.Redact(signature.Documentation.Text)
+		}
+		for parameterIndex := range signature.Parameters {
+			parameter := &signature.Parameters[parameterIndex]
+			parameter.Label = redactor.Redact(parameter.Label)
+			if parameter.Documentation != nil {
+				parameter.Documentation.Kind = redactor.Redact(parameter.Documentation.Kind)
+				parameter.Documentation.Text = redactor.Redact(parameter.Documentation.Text)
+			}
+		}
+	}
 	for symbolIndex := range result.Symbols {
 		redactLSPSymbol(&result.Symbols[symbolIndex], redactor)
 	}
@@ -645,6 +708,13 @@ func callLSPRequest(ctx context.Context, session *lspclient.Session, file string
 		}
 		result.Hovers, err = session.Hover(ctx, target)
 		return err
+	case lspSignatureHelp:
+		target, err := lspclient.PrepareTarget(file, uint32(request.Line), uint32(request.Column), languageID)
+		if err != nil {
+			return err
+		}
+		result.Signatures, err = session.SignatureHelp(ctx, target)
+		return err
 	case lspDocumentSymbols:
 		target, err := lspclient.PrepareDocument(file, languageID)
 		if err != nil {
@@ -670,11 +740,50 @@ func aggregateLSPRequestResults(request lspRequest, workspace, file string, matc
 	switch request.Operation {
 	case lspHover:
 		return aggregateLSPHoverResults(request, file, matches, results)
+	case lspSignatureHelp:
+		return aggregateLSPSignatureResults(request, file, matches, results)
 	case lspDocumentSymbols, lspWorkspaceSymbols:
 		return aggregateLSPSymbolResults(request, workspace, file, matches, results)
 	default:
 		return aggregateLSPResults(request.Operation, file, matches, results)
 	}
+}
+
+func aggregateLSPSignatureResults(request lspRequest, file string, matches []lspMatch, results []lspProviderRun) (any, *appError) {
+	outcomes := make([]lspSignatureProviderOutcome, len(matches))
+	signatures := make([]lspSignature, 0)
+	successes, failures := 0, 0
+	var firstErr *appError
+	for index, match := range matches {
+		outcome := lspSignatureProviderOutcome{Name: match.Definition.Name}
+		switch {
+		case results[index].Unsupported:
+			outcome.Status = "unsupported"
+		case results[index].Err != nil:
+			outcome.Status = "failed"
+			outcome.Error = bodyFromAppError(results[index].Err)
+			failures++
+			if firstErr == nil {
+				firstErr = results[index].Err
+			}
+		default:
+			outcome.Status = "ok"
+			outcome.Signatures = len(results[index].Signatures)
+			successes++
+			for _, signature := range results[index].Signatures {
+				signatures = append(signatures, cliLSPSignature(match.Definition.Name, signature))
+			}
+		}
+		outcomes[index] = outcome
+	}
+	if successes > 0 {
+		return lspSignatureEnvelope{OK: true, LSP: lspSignatureResult{Operation: request.Operation, File: file, Line: request.Line, Column: request.Column, Partial: failures > 0, Signatures: signatures, Providers: outcomes}}, nil
+	}
+	if firstErr == nil {
+		firstErr = protocolError("lsp_capability_unavailable", "no matching LSP provider advertises the requested operation", "configure a matching LSP that supports textDocument/signatureHelp")
+	}
+	firstErr.details = map[string]any{"providers": outcomes}
+	return nil, firstErr
 }
 
 type writerFunc func([]byte) (int, error)
@@ -852,6 +961,20 @@ func cliLSPSymbol(provider string, value lspclient.Symbol) lspSymbol {
 	return result
 }
 
+func cliLSPSignature(provider string, value lspclient.Signature) lspSignature {
+	result := lspSignature{Provider: provider, Label: value.Label, Active: value.Active, Parameters: make([]lspSignatureParameter, len(value.Parameters))}
+	if value.Documentation != nil {
+		result.Documentation = &lspSignatureDocumentation{Kind: value.Documentation.Kind, Text: value.Documentation.Text}
+	}
+	for index, parameter := range value.Parameters {
+		result.Parameters[index] = lspSignatureParameter{Label: parameter.Label, Active: parameter.Active}
+		if parameter.Documentation != nil {
+			result.Parameters[index].Documentation = &lspSignatureDocumentation{Kind: parameter.Documentation.Kind, Text: parameter.Documentation.Text}
+		}
+	}
+	return result
+}
+
 func bodyFromAppError(value *appError) *errorBody {
 	if value == nil {
 		return nil
@@ -897,7 +1020,7 @@ func lspOperationError(err error, operation string) *appError {
 	case errors.Is(err, lspclient.ErrEncodingUnsupported):
 		return protocolError("lsp_encoding_unsupported", err.Error(), "configure an LSP server that supports UTF-16 positions")
 	case errors.Is(err, lspclient.ErrResultUnsupported):
-		return protocolError("lsp_result_unsupported", err.Error(), "use an LSP server that returns file locations")
+		return protocolError("lsp_result_unsupported", err.Error(), "use an LSP server that returns a supported result")
 	case errors.Is(err, lspclient.ErrServerRequestUnsupported):
 		return protocolError("lsp_server_request_unsupported", err.Error(), "use an LSP server that does not require unsupported client capabilities for this operation")
 	case errors.Is(err, jsonrpc2.ErrMethodNotFound):
@@ -919,6 +1042,8 @@ func lspProtocolMethod(operation string) string {
 		return "textDocument/documentSymbol"
 	case lspTypeDefinition:
 		return "textDocument/typeDefinition"
+	case lspSignatureHelp:
+		return "textDocument/signatureHelp"
 	default:
 		return "textDocument/" + operation
 	}

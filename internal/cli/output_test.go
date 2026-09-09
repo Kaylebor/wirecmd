@@ -103,6 +103,7 @@ func TestPrettyOutputFamiliesAndControlEscaping(t *testing.T) {
 		{"reload", map[string]any{"ok": true, "reload": map[string]any{"contexts_retired": 2, "instances_retired": 3}}, []string{"Daemon reload", "Contexts retired: 2", "Instances retired: 3"}},
 		{"failure", failure{OK: false, Error: errorBody{Category: "transport", Code: "offline", Message: "not connected", Action: "start daemon"}, Result: &toolResult{Data: map[string]any{"count": 2}, Messages: []string{"failed"}}}, []string{"Error", "Category: transport", "Action: start daemon", "Result", "\"count\": 2"}},
 		{"call", callEnvelope{OK: true, Server: "memory", Tool: "look", Result: toolResult{Data: map[string]any{"count": 1234567890123456789}, Messages: []string{}}}, []string{"\n  \"ok\": true", "1234567890123456789", "\"messages\": []"}},
+		{"signature-help", lspSignatureEnvelope{OK: true, LSP: lspSignatureResult{Operation: lspSignatureHelp, File: "/work/main.go", Signatures: []lspSignature{{Provider: "fixture", Label: "call(value)", Active: true, Parameters: []lspSignatureParameter{{Label: "value", Active: true}}}}}}, []string{"\n    \"operation\": \"signature-help\"", "\"signatures\": [", "call(value)"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
