@@ -211,6 +211,17 @@
 
 - Update authoritative documents when an accepted decision changes the product
   boundary or current milestone.
+- Feature PRs do not edit `CHANGELOG.md`. Release preparation owns the manual
+  changelog update: freeze unrelated feature merges; curate `[Unreleased]`
+  against the intended release contents into a dated version entry; recreate
+  an empty `[Unreleased]` section; roll comparison links from
+  `vPREVIOUS...vX.Y.Z` to `vX.Y.Z...HEAD`; then commit and publish that
+  preparation through the normal reviewed PR/merge path. Use the same reviewed
+  summary for the GitHub Release. GitHub-generated notes are a draft, never an
+  authoritative replacement for that review. If an unrelated change lands
+  before that PR merges, re-curate against the new `main` before proceeding.
+  Changelog headings use `X.Y.Z`; tags, module versions, and binary versions
+  use `vX.Y.Z`.
 - Put unresolved alternatives, research fragments, and speculative mechanisms
   in `docs/notes/` with an explicit non-authoritative label.
 - Do not commit generated artifacts, credentials, local runtime state, or test
