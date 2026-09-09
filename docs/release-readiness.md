@@ -94,20 +94,37 @@ git diff --check
 
 Publication remains an explicit maintainer action:
 
-1. Confirm `main` is clean, synchronized with `origin/main`, and contains the
-   intended `v0.1.0` release commit.
-2. Run every local qualification gate above and confirm the GitHub Actions run
-   for that commit succeeds.
-3. From a clean checkout of that exact commit, install with `go install .`,
+1. Confirm `main` is clean and synchronized with `origin/main`, then freeze
+   unrelated feature merges until release preparation lands. Before choosing
+   the release commit, prepare the release notes manually: use
+   GitHub-generated notes only as a reviewed draft, move the curated
+   `[Unreleased]` content in `CHANGELOG.md` into a dated `[X.Y.Z]` entry,
+   recreate an empty `[Unreleased]` section, and roll the comparison links
+   forward. The new `[X.Y.Z]` link compares `vPREVIOUS...vX.Y.Z`, and
+   `[Unreleased]` compares `vX.Y.Z...HEAD`. The first release may link directly
+   to its GitHub Release because it has no prior tag. Review this complete
+   changelog against the intended release contents, then commit it. Use bare
+   `X.Y.Z` for changelog headings, and `vX.Y.Z` for Git tags, module
+   installation, and reported binary versions.
+2. Publish the release-preparation commit through the normal reviewed PR and
+   merge path. If an unrelated change lands before it merges, re-curate the
+   changelog against the resulting `main` and submit that revision for review;
+   do not qualify a commit whose release summary was prepared for different
+   contents. Then resynchronize `main` with the merged result; do not qualify
+   or tag an unmerged release-preparation branch.
+3. Select that exact merged `main` commit, then run every local qualification
+   gate above and confirm the GitHub Actions run for that commit succeeds.
+4. From a clean checkout of that exact commit, install with `go install .`,
    record the commit, and exercise one direct operation and one daemon-backed
    operation. Source builds identify themselves as `wirecmd dev`.
-4. After separate release authorization, create a signed annotated `v0.1.0`
+5. After separate release authorization, create a signed annotated `vX.Y.Z`
    tag on that exact commit and push only that tag.
-5. Create a non-prerelease GitHub Release from the existing tag, using generated
-   notes as a reviewed starting point. Mark it as the latest release.
-6. Verify that `go install github.com/Kaylebor/wirecmd@v0.1.0` and
-   `go install github.com/Kaylebor/wirecmd@latest` both report
-   `wirecmd v0.1.0` and exercise the release smoke operations.
+6. Create a non-prerelease GitHub Release from the existing tag, using the
+   same curated summary as the changelog, and mark it as
+   the latest release.
+7. Verify that `go install github.com/Kaylebor/wirecmd@vX.Y.Z` and
+   `go install github.com/Kaylebor/wirecmd@latest` both report the intended
+   version and exercise the release smoke operations.
 
 The tag and GitHub Release require an explicit release action. That action was
 authorized for `v0.1.0` on 2026-09-08, conditional on the exact release commit
