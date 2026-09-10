@@ -630,7 +630,7 @@ func parseMCPRequest(positionals []string, opts options, in io.Reader) (request,
 }
 
 func validResourceURI(raw string) bool {
-	parsed, err := url.Parse(raw)
+	parsed, err := url.Parse(resourceURLParseSentinel(raw))
 	return err == nil && parsed.Scheme != "" && validResourceURICharacters(raw) && validResourceBracketPlacement(raw)
 }
 
@@ -677,7 +677,55 @@ func validResourceBracketPlacement(raw string) bool {
 	if open != 0 || close <= open || strings.Count(authority, "[") != 1 || strings.Count(authority, "]") != 1 {
 		return false
 	}
-	return close == len(authority)-1 || authority[close+1] == ':'
+	if close != len(authority)-1 && authority[close+1] != ':' {
+		return false
+	}
+	return validResourceIPLiteral(authority[open+1 : close])
+}
+
+func validResourceIPLiteral(value string) bool {
+	if strings.Contains(value, ":") && net.ParseIP(value) != nil {
+		return true
+	}
+	if len(value) < 4 || value[0] != 'v' && value[0] != 'V' {
+		return false
+	}
+	index := 1
+	for index < len(value) && isHex(value[index]) {
+		index++
+	}
+	if index == 1 || index+1 >= len(value) || value[index] != '.' {
+		return false
+	}
+	for index++; index < len(value); index++ {
+		character := value[index]
+		if !(resourceASCIILetter(character) || character >= '0' && character <= '9' || strings.ContainsRune("-._~!$&'()*+,;=:", rune(character))) {
+			return false
+		}
+	}
+	return true
+}
+
+func resourceURLParseSentinel(raw string) string {
+	var value strings.Builder
+	for len(raw) != 0 {
+		open := strings.IndexByte(raw, '[')
+		if open < 0 {
+			return value.String() + raw
+		}
+		value.WriteString(raw[:open])
+		raw = raw[open:]
+		close := strings.IndexByte(raw, ']')
+		if close < 0 || !validResourceIPLiteral(raw[1:close]) || raw[1] != 'v' && raw[1] != 'V' {
+			value.WriteString(raw)
+			return value.String()
+		}
+		// net/url does not accept RFC 3986 IPvFuture literals. Replacing an
+		// already-validated literal lets it perform its remaining URI checks.
+		value.WriteString("[::1]")
+		raw = raw[close+1:]
+	}
+	return value.String()
 }
 
 func parseMCPToolCall(server, tool string, suffix []string, opts options, in io.Reader) (request, *appError) {
@@ -1140,7 +1188,7 @@ func validResourceTemplate(raw string) bool {
 		return false
 	}
 	plain := replaceResourceTemplateExpressions(raw)
-	parsed, err := url.Parse(plain)
+	parsed, err := url.Parse(resourceURLParseSentinel(plain))
 	return err == nil && parsed.Scheme != "" && validResourceScheme(parsed.Scheme) && validResourceTemplateURICharacters(plain) && validResourceBracketPlacement(plain)
 }
 
@@ -1190,6 +1238,8 @@ func validResourceTemplateURICharacters(raw string) bool {
 
 func replaceResourceTemplateExpressions(raw string) string {
 	var value strings.Builder
+	schemeEnd := resourceTemplateSchemeEnd(raw)
+	consumed := 0
 	for len(raw) != 0 {
 		open := strings.IndexByte(raw, '{')
 		if open < 0 {
@@ -1201,16 +1251,35 @@ func replaceResourceTemplateExpressions(raw string) string {
 		// absolute-capability substitution runs.
 		close += open
 		// A numeric replacement is valid in authority port positions as well as
-		// ordinary path, query, and fragment positions. A scheme expression
-		// needs a letter to leave an absolute URI for net/url to inspect.
-		if value.Len() == 0 && strings.HasPrefix(raw[close+1:], ":") {
+		// ordinary path, query, and fragment positions. Any expression before
+		// the URI scheme delimiter needs a letter to leave an absolute URI for
+		// net/url to inspect.
+		if schemeEnd >= 0 && consumed+open < schemeEnd {
 			value.WriteByte('x')
 		} else {
 			value.WriteByte('1')
 		}
+		consumed += close + 1
 		raw = raw[close+1:]
 	}
 	return value.String()
+}
+
+func resourceTemplateSchemeEnd(raw string) int {
+	inExpression := false
+	for index := 0; index < len(raw); index++ {
+		switch raw[index] {
+		case '{':
+			inExpression = true
+		case '}':
+			inExpression = false
+		case ':':
+			if !inExpression {
+				return index
+			}
+		}
+	}
+	return -1
 }
 
 func redactedResourceIdentifier(raw string, redactor *redactor, preserveTemplates bool) string {

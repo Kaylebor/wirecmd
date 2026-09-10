@@ -294,6 +294,8 @@ func TestResourceNormalizationErrors(t *testing.T) {
 		{raw: "test://authority?token={token}", template: true, want: "test://authority?token={token}"},
 		{raw: "https://{tenant}.example.com/items/{id}", template: true, want: "https://{tenant}.example.com/items/{id}"},
 		{raw: "{scheme}://example.test/items/{id}", template: true, want: "{scheme}://example.test/items/{id}"},
+		{raw: "{prefix:1}ttp://example.test/items/{id}", template: true, want: "{prefix:1}ttp://example.test/items/{id}"},
+		{raw: "ht{suffix:2}://example.test/items/{id}", template: true, want: "ht{suffix:2}://example.test/items/{id}"},
 		{raw: "https://example.test:{port}/items/{id}", template: true, want: "https://example.test:{port}/items/{id}"},
 		{raw: "https://{user}@example.test/items/{id}", template: true, want: "https://{user}@example.test/items/{id}"},
 		{raw: "https://{user}@example.test/items/{id}{?query}{#fragment}", template: true, want: "https://{user}@example.test/items/{id}{?query}{#fragment}"},
@@ -321,14 +323,20 @@ func TestResourceNormalizationErrors(t *testing.T) {
 	if got, appErr := normalizedResourceTemplate("test://authority/{token}?value={token}&literal=token", secretNamedTemplate); appErr != nil || got != "test://authority/{token}?value={token}&literal=[REDACTED]" {
 		t.Fatalf("template secret redaction = %q, %#v", got, appErr)
 	}
-	for _, raw := range []string{"test://authority/a[b]", "test://authority/a#b#c", "test://authority/a b", "test://authority/a\\b", "test://authority/a%ZZ"} {
+	for _, raw := range []string{"test://authority/a[b]", "test://authority/a#b#c", "test://authority/a b", "test://authority/a\\b", "test://authority/a%ZZ", "test://[foo]/path", "test://[]/path", "test://[::zz]/path", "test://[v1.]/path"} {
 		if validResourceURI(raw) {
 			t.Fatalf("invalid concrete resource URI accepted: %q", raw)
 		}
+		if validResourceTemplate(raw) {
+			t.Fatalf("invalid resource template accepted: %q", raw)
+		}
 	}
-	for _, raw := range []string{"urn:example:opaque", "test://authority/path?query=value#fragment", "test://[::1]:8443/path"} {
+	for _, raw := range []string{"urn:example:opaque", "test://authority/path?query=value#fragment", "test://[::1]:8443/path", "test://[v1.fe80::a]/path", "test://[Vf.name]/path"} {
 		if !validResourceURI(raw) {
 			t.Fatalf("valid concrete resource URI rejected: %q", raw)
+		}
+		if !validResourceTemplate(raw) {
+			t.Fatalf("valid resource template rejected: %q", raw)
 		}
 	}
 	protected := newRedactor(nil, io.Discard)
