@@ -417,6 +417,8 @@ flags, and JSON contents are not completed. Bash/Zsh support is deferred.
   help, the MCP namespace, and local-only Fish completion.
 - [Product thesis](docs/product-thesis.md) defines the authoritative product
   direction and boundaries.
+- [Current roadmap](docs/roadmap.md) records the post-v0.2.0 state, open
+  decision queue, and external compatibility trigger.
 - [Validation plan](docs/validation-plan.md) records the completed first
   falsifiable implementation milestone.
 - [Compatibility plan](docs/compatibility-plan.md) defines the current

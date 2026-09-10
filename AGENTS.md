@@ -11,6 +11,9 @@
   tool help is live: it needs the daemon or explicit `--direct` execution;
   persistent MCP metadata is not retained for help or completion.
 - `docs/product-thesis.md` is authoritative for product direction and scope.
+- `docs/roadmap.md` is the authoritative current-state handoff and decision
+  queue. Its future candidates are not accepted implementation milestones;
+  each requires the corresponding deliberate plan and authorization.
 - `docs/output-plan.md` is authoritative for contextual presentation and color;
   it supersedes earlier milestones' always-JSON presentation wording.
 - `docs/validation-plan.md` is the authoritative record of the completed first
