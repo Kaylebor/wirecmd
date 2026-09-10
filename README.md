@@ -34,7 +34,7 @@ go install github.com/Kaylebor/wirecmd@latest
 wirecmd --version
 ```
 
-Use `github.com/Kaylebor/wirecmd@v0.1.0` when an exact version is required.
+Use `github.com/Kaylebor/wirecmd@v0.2.0` when an exact version is required.
 Tagged module installations report their version through `wirecmd --version`;
 source-checkout builds report `wirecmd dev`.
 
@@ -428,13 +428,14 @@ flags, and JSON contents are not completed. Bash/Zsh support is deferred.
   typed query/header configuration milestone.
 - [OAuth plan](docs/oauth-plan.md) defines the authoritative transparent OAuth
   and encrypted credential-persistence milestone.
-- [LSP plan](docs/lsp-plan.md) defines the completed multi-provider navigation
-  milestone and the accepted hover/symbol inspection extension.
+- [MCP resources plan](docs/resources-plan.md) defines the completed resource,
+  resource-template, and read operations and their redaction boundary.
+- [LSP plan](docs/lsp-plan.md) defines the completed multi-provider navigation,
+  signature-help, hover, and symbol-inspection milestone.
 - [Output contract](docs/output-plan.md) defines contextual terminal output,
   explicit machine output, and color policy.
 - [Release readiness](docs/release-readiness.md) defines the authoritative
-  stable v0.1 installation, compatibility, qualification, and publication
-  contract.
+  stable installation, compatibility, qualification, and publication contract.
 - [macOS plan](docs/macos-plan.md) defines the authoritative Apple Silicon
   qualification milestone and Intel CI boundary.
 - [Exploratory design notes](docs/notes/exploratory-design.md) retain ideas and

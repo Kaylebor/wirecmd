@@ -11,8 +11,8 @@ the maintained CLI comparison. The evidence is sufficient to continue product
 work, without claiming broad MCP compatibility or production readiness.
 
 The immutable run evidence, limitations, and qualification commands are
-recorded in `docs/notes/comparative-evaluation-2026-08-25.md`. The current work
-is defined by `docs/compatibility-plan.md`.
+recorded in `docs/notes/comparative-evaluation-2026-08-25.md`. Subsequent
+authoritative milestones are indexed in `README.md` and `AGENTS.md`.
 
 ## Objective
 

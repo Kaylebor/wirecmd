@@ -26,8 +26,9 @@
 - `docs/oauth-plan.md` is authoritative for the completed transparent OAuth and
   encrypted credential-persistence milestone and its acceptance criteria.
 - `docs/lsp-plan.md` is authoritative for the completed server-neutral,
-  selector-routed multi-provider LSP navigation, signature-help, and inspection milestone.
-- `docs/release-readiness.md` is authoritative for stable v0.1 installation,
+  selector-routed multi-provider LSP navigation, signature-help, and inspection
+  milestone.
+- `docs/release-readiness.md` is authoritative for stable installation,
   compatibility, qualification, versioning, and the manual publication
   boundary.
 - `docs/macos-plan.md` is authoritative for the current macOS Apple Silicon
@@ -63,12 +64,11 @@
   it, not a general service-management subsystem.
 - MCP proxy/server compatibility is optional. Do not let it shape or delay the
   agent-facing shell contract.
-- Native LSP definition is the completed first non-MCP capability. The accepted
-  next slice adds selector-based multi-provider navigation and contextual
-  status. Keep it server-neutral: configuration owns executables, arguments,
-  environment, language IDs, selectors, and workspace selection; Wirecmd must
-  not add a language-server catalog, executable inference, presets, or
-  server-specific behavior.
+- Native LSP navigation and read-only inspection are the completed first
+  non-MCP capability. Keep them server-neutral: configuration owns executables,
+  arguments, environment, language IDs, selectors, and workspace selection;
+  Wirecmd must not add a language-server catalog, executable inference,
+  presets, or server-specific behavior.
 
 ## Scope discipline
 

@@ -1,15 +1,14 @@
-# Stable v0.1 Release Readiness
+# Stable Release Readiness
 
-Status: authoritative stable v0.1 release contract; publication explicitly
-authorized 2026-09-08
+Status: authoritative stable release contract; v0.2.0 published 2026-09-10
 
 ## Objective
 
-Publish Wirecmd's first stable release with an explicit supported surface,
+Publish Wirecmd stable releases with an explicit supported surface,
 maintained installation path, compatibility promise, qualification gates, and
-manual release procedure. Stable v0.1 does not imply support for deferred MCP
-transports or primitives, exhaustive physical platform qualification, binary
-packaging, or daemon service management.
+manual release procedure. A stable release does not imply support for deferred
+MCP transports or primitives, exhaustive physical platform qualification,
+binary packaging, or daemon service management.
 
 The private alpha series established version reporting, direct and retained
 daemon behavior, Linux qualification, and the initial macOS smoke evidence.
@@ -26,26 +25,27 @@ release with:
 go install github.com/Kaylebor/wirecmd@latest
 ```
 
-For reproducible installation of this milestone, use:
+For reproducible installation of the current release, use:
 
 ```sh
-go install github.com/Kaylebor/wirecmd@v0.1.0
+go install github.com/Kaylebor/wirecmd@v0.2.0
 ```
 
 Linux and macOS are supported. Apple Silicon has native CI and maintainer M2
 smoke evidence; Intel macOS is CI-qualified without a physical-device claim.
 Windows remains unsupported.
 
-Stable v0.1 supports the public CLI, KDL configuration, structured result and
-error contracts, daemon/direct split, stdio and Streamable HTTP MCP transports,
-SDK-backed OAuth, and the documented native LSP operations. Modern and legacy
-initialized stdio and Streamable HTTP are qualified. Legacy HTTP+SSE is not
-implemented and remains explicitly deferred at the official SDK boundary.
+The current v0.2.0 release supports the public CLI, KDL configuration,
+structured result and error contracts, daemon/direct split, stdio and
+Streamable HTTP MCP transports, SDK-backed OAuth, MCP resources, and the
+documented native LSP operations. Modern and legacy initialized stdio and
+Streamable HTTP are qualified. Legacy HTTP+SSE is not implemented and remains
+explicitly deferred at the official SDK boundary.
 
-Within the `v0.1.x` line, backward-incompatible changes to the documented CLI,
-configuration, and structured output contracts require `v0.2.0`. A security or
-correctness defect that cannot safely preserve existing behavior may require a
-documented exception.
+Within the pre-1.0 stable line, backward-incompatible changes to the documented
+CLI, configuration, and structured output contracts require the next minor
+version. A security or correctness defect that cannot safely preserve existing
+behavior may require a documented exception.
 
 `wirecmd --version` is the standalone version query. It prints
 `wirecmd VERSION` as conventional newline-terminated text and performs no
@@ -126,9 +126,9 @@ Publication remains an explicit maintainer action:
    `go install github.com/Kaylebor/wirecmd@latest` both report the intended
    version and exercise the release smoke operations.
 
-The tag and GitHub Release require an explicit release action. That action was
-authorized for `v0.1.0` on 2026-09-08, conditional on the exact release commit
-passing the gates above.
+Every tag and GitHub Release requires a separate explicit release action.
+`v0.1.0` was published on 2026-09-08 and `v0.2.0` on 2026-09-10 after their
+exact release commits passed the gates above.
 
 ## Deferred
 

@@ -126,8 +126,9 @@ provenance. The same rules serve explicit repeated `--config` paths and trusted
 global-to-local discovery.
 
 The KDL collection for MCP configurations is `mcp "name"`. The former `server`
-node is unknown; this alpha change has no compatibility alias. Internal Go
-model names and public CLI terminology continue to use server where appropriate.
+node is unknown; this released v0.2 contract has no compatibility alias.
+Internal Go model names and public CLI terminology continue to use server where
+appropriate.
 
 ## Runtime and lifecycle
 
@@ -150,8 +151,8 @@ reload or daemon restart and requests are never replayed.
 Daemon instances are keyed by definition, resolved workspace root, selected
 execution configuration, daemon generation, and sensitive startup identity.
 The LSP slice introduced private daemon protocol version 6; the current client
-and daemon use version 9 after adding schema-aware trailing help, native LSP
-inspection requests, and signature help. Status
+and daemon use version 10 after adding schema-aware trailing help, native LSP
+inspection and signature-help requests, and MCP resources. Status
 reports configured definitions, selectors, optional implementation metadata,
 executable, selector matches, and already-observed runtime identity and
 capabilities without starting a process.

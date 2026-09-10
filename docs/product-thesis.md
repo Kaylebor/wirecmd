@@ -179,10 +179,10 @@ The first full MVP should support three deployed MCP compatibility layers:
 
 Implementation and validation proceed newest to oldest. Establish the public
 shell contract and daemon boundary against modern MCP first, then exercise the
-SDK's legacy initialized behavior, and finally add the isolated legacy SSE
-transport path. The public command and result contract must not branch by era;
-differences remain within the SDK and diagnostics unless they change an actual
-capability available to the caller.
+SDK's legacy initialized behavior, and finally re-evaluate legacy HTTP+SSE
+through a stable official SDK API. The public command and result contract must
+not branch by era; differences remain within the SDK and diagnostics unless
+they change an actual capability available to the caller.
 
 The first validation milestone found the shell interaction model viable, and
 the supported legacy stdio and Streamable HTTP layers are now qualified. Legacy
@@ -195,10 +195,11 @@ recorded in the [HTTP values plan](http-values-plan.md) and
 surface, with Wirecmd adding only interaction, persistence, daemon
 coordination, redaction, and error mapping.
 
-Native LSP navigation completed direct and retained-daemon qualification with a
-configured real server and deterministic overlapping-provider fixtures. It
-remains server-neutral; `gopls` and the Angular-like overlap fixture are test
-inputs, not product dependencies, defaults, or routing knowledge.
+Native LSP navigation and read-only inspection, including signature help,
+completed direct and retained-daemon qualification with a configured real
+server and deterministic overlapping-provider fixtures. They remain
+server-neutral; `gopls` and the Angular-like overlap fixture are test inputs,
+not product dependencies, defaults, or routing knowledge.
 
 For this milestone, endpoint values remain structural configuration rather than
 preassembled URL or request strings. `query NAME=value` and `header NAME=value`
@@ -221,9 +222,9 @@ identity so retained instances cannot cross credential boundaries.
   subsystems.
 - Supporting every MCP primitive before validating the agent-facing contract.
 - Designing future non-MCP adapters without a demonstrated consumer.
-- Expanding native LSP beyond the accepted selector-routed navigation slice
-  into a language-server catalog, editor integration, or general LSP client
-  without separate evidence.
+- Expanding native LSP beyond the accepted selector-routed navigation and
+  read-only inspection slice into a language-server catalog, editor
+  integration, or general LSP client without separate evidence.
 - Client ID Metadata Documents, device authorization, client credentials,
   provider-side revocation, non-loopback callbacks, multiple accounts per
   identity, and provider-specific OAuth compatibility guards are deferred.
