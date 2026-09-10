@@ -7,6 +7,20 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-10
+
+### Added
+
+- Native LSP signature help through the existing selector-routed direct and
+  retained daemon sessions.
+- MCP resource discovery, resource-template discovery, and resource reads,
+  including deterministic JSON and terminal-aware output.
+
+### Changed
+
+- MCP operations now use the explicit `wirecmd mcp` namespace, removing the
+  former server-first command ambiguity.
+
 ## [0.1.0] - 2026-09-08
 
 ### Added
@@ -20,5 +34,6 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hover, document symbols, and workspace symbols.
 - Terminal-aware pretty output alongside deterministic compact JSON.
 
-[Unreleased]: https://github.com/Kaylebor/wirecmd/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Kaylebor/wirecmd/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Kaylebor/wirecmd/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Kaylebor/wirecmd/releases/tag/v0.1.0
