@@ -36,11 +36,13 @@ provider-specific behavior must be qualified before adding a shim.
 
 Modern stdio and stateless Streamable HTTP work in direct and daemon-backed
 modes. The public CLI supports server and tool discovery, focused schema help,
-projected top-level arguments, raw JSON overlays, exact JSON calls, structured
-results and errors, retained daemon sessions, and the current SDK-backed OAuth
-surface for protected HTTP endpoints. Cold Streamable HTTP calls prime the
-SDK's schema cache through its public `Tools` iterator so SDK-owned features
-such as `x-mcp-header` work without local header logic.
+projected top-level arguments, raw JSON overlays, exact JSON calls, resources,
+structured results and errors, retained daemon sessions, and the current
+SDK-backed OAuth surface for protected HTTP endpoints. Resource lists use the
+SDK's paginated `Resources` and `ResourceTemplates` iterators; reads use
+`ReadResource`. Cold Streamable HTTP calls prime the SDK's schema cache through
+its public `Tools` iterator so SDK-owned features such as `x-mcp-header` work
+without local header logic.
 
 Legacy initialized stdio and stateful Streamable HTTP are qualified against the
 isolated v1.6.1 SDK fixture. Both initialized at `2025-11-25`; retained daemon
@@ -141,7 +143,7 @@ changing dependencies, configuration, or architecture.
 - Templates and additional secret providers.
 - Detached daemon startup, service-manager integration, watchers, idle
   eviction, automatic recovery, and pool widths above one.
-- Resources, prompts, subscriptions, Tasks, sampling, and richer elicitation.
+- Prompts, subscriptions, Tasks, sampling, and richer elicitation.
 - MCP server/proxy mode and non-MCP upstream adapters.
 - Binary archives, distribution packaging, and automated release publication;
   the stable source-installation and manual release contract is recorded in

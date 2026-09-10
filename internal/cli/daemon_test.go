@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -59,6 +61,217 @@ func TestDaemonRetainsSessionAndReloads(t *testing.T) {
 		t.Fatalf("direct recall: code=%d output=%s", code, output)
 	}
 	_ = d
+}
+
+func TestDaemonResourcesMatchDirectAndRetainSession(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	runtime := testRuntimeDirectory(t)
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	d := startTestDaemon(t)
+	configPath := helperConfig(t, "", "")
+	directArgs := []string{"--direct", "--config", configPath, "mcp", "helper", "resources"}
+	directCode, directOutput, directStderr := invokeRaw(t, directArgs)
+	if directCode != exitOK || directStderr != "" {
+		t.Fatalf("direct resources: code=%d stderr=%q output=%s", directCode, directStderr, directOutput)
+	}
+	code, output, stderr := invokeRaw(t, []string{"--config", configPath, "mcp", "helper", "resources"})
+	if code != exitOK || stderr != "" || !reflect.DeepEqual(decodeOutput(t, output), decodeOutput(t, directOutput)) {
+		t.Fatalf("daemon resources: code=%d stderr=%q output=%s want=%s", code, stderr, output, directOutput)
+	}
+	code, output, stderr = invokeRaw(t, []string{"--config", configPath, "mcp", "helper", "resource", "test://a"})
+	if code != exitOK || stderr != "" || len(decodeOutput(t, output)["contents"].([]any)) != 2 {
+		t.Fatalf("daemon resource read: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, stderr = invokeRaw(t, []string{"--config", configPath, "mcp", "helper", "resource", "test://presigned?signature=resource-presigned-query"})
+	if code != exitOK || stderr != "" || strings.Contains(output, "resource-presigned-query") || strings.Contains(output, "content-presigned-query") {
+		t.Fatalf("daemon presigned resource read: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	presigned := decodeOutput(t, output)
+	if presigned["uri"] != "test://presigned?signature=[REDACTED]" || presigned["contents"].([]any)[0].(map[string]any)["uri"] != "test://content?signature=[REDACTED]" {
+		t.Fatalf("daemon presigned resource output=%s", output)
+	}
+	directCode, directOutput, directStderr = invokeRaw(t, []string{"--direct", "--config", configPath, "mcp", "helper", "resource", "test://content-echo?token=request-secret"})
+	if directCode != exitOK || directStderr != "" || strings.Contains(directOutput, "request-secret") || strings.Contains(directOutput, "response-secret") {
+		t.Fatalf("direct content echo: code=%d stderr=%q output=%s", directCode, directStderr, directOutput)
+	}
+	code, output, stderr = invokeRaw(t, []string{"--config", configPath, "mcp", "helper", "resource", "test://content-echo?token=request-secret"})
+	if code != exitOK || stderr != "" || strings.Contains(output, "request-secret") || strings.Contains(output, "response-secret") || !reflect.DeepEqual(decodeOutput(t, output), decodeOutput(t, directOutput)) {
+		t.Fatalf("daemon content echo: code=%d stderr=%q output=%s want=%s", code, stderr, output, directOutput)
+	}
+	code, output, stderr = invokeRaw(t, []string{"--config", configPath, "mcp", "helper", "resource", "test://page?page=1"})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("daemon page resource read: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, stderr = invokeRaw(t, []string{"--config", configPath, "--json", `{"message":"Report response-secret has 100 rows"}`, "mcp", "helper", "tool", "a_tool"})
+	if code != exitOK || stderr != "" || !strings.Contains(output, "Report response-secret has 100 rows") {
+		t.Fatalf("retained redactor altered ordinary payload: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	directCode, directOutput, directStderr = invokeRaw(t, []string{"--direct", "--config", configPath, "mcp", "helper", "resource", "test://failure?token=issued-secret"})
+	if directCode != exitProtocol || directStderr != "" || strings.Contains(directOutput, "issued-secret") {
+		t.Fatalf("direct resource error: code=%d stderr=%q output=%s", directCode, directStderr, directOutput)
+	}
+	code, output, stderr = invokeRaw(t, []string{"--config", configPath, "mcp", "helper", "resource", "test://failure?token=issued-secret"})
+	if code != exitProtocol || stderr != "" || strings.Contains(output, "issued-secret") || !reflect.DeepEqual(decodeOutput(t, output), decodeOutput(t, directOutput)) {
+		t.Fatalf("daemon resource error: code=%d stderr=%q output=%s want=%s", code, stderr, output, directOutput)
+	}
+	directCode, directOutput, directStderr = invokeRaw(t, []string{"--direct", "--config", configPath, "mcp", "helper", "resource", "test://input"})
+	if directCode != exitUserAction || directStderr != "" || decodeOutput(t, directOutput)["error"].(map[string]any)["code"] != "input_required" {
+		t.Fatalf("direct input-required resource: code=%d stderr=%q output=%s", directCode, directStderr, directOutput)
+	}
+	code, output, stderr = invokeRaw(t, []string{"--config", configPath, "mcp", "helper", "resource", "test://input"})
+	if code != exitUserAction || stderr != "" || !reflect.DeepEqual(decodeOutput(t, output), decodeOutput(t, directOutput)) {
+		t.Fatalf("daemon input-required resource: code=%d stderr=%q output=%s want=%s", code, stderr, output, directOutput)
+	}
+	d.mu.Lock()
+	active := len(d.pools)
+	d.mu.Unlock()
+	if active != 1 {
+		t.Fatalf("daemon retained resource session pools=%d, want 1", active)
+	}
+}
+
+func TestDaemonResourceReadRedactsAcrossContents(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	t.Setenv("WIRECMD_RESOURCE_CROSS_CONTENT", "1")
+	runtime := testRuntimeDirectory(t)
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	_ = startTestDaemon(t)
+	configPath := helperConfig(t, "", "")
+	args := []string{"--direct", "--config", configPath, "mcp", "helper", "resource", "test://content-cross?token=request-cross-secret"}
+	directCode, directOutput, directStderr := invokeRaw(t, args)
+	for _, secret := range []string{"request-cross-secret", "cross-one-secret", "cross-two-secret"} {
+		if strings.Contains(directOutput, secret) || strings.Contains(directStderr, secret) {
+			t.Fatalf("direct cross-content output leaked %q: stderr=%q output=%s", secret, directStderr, directOutput)
+		}
+	}
+	if directCode != exitOK || directStderr != "" {
+		t.Fatalf("direct cross-content read: code=%d stderr=%q output=%s", directCode, directStderr, directOutput)
+	}
+	contents := decodeOutput(t, directOutput)["contents"].([]any)
+	if len(contents) != 2 || contents[0].(map[string]any)["text"] != "text [REDACTED]" {
+		t.Fatalf("direct cross-content text: %#v", contents)
+	}
+	blob, err := base64.StdEncoding.DecodeString(contents[1].(map[string]any)["blob"].(string))
+	if err != nil || string(blob) != "blob [REDACTED]" {
+		t.Fatalf("direct cross-content blob: %#v, %v", contents, err)
+	}
+	code, output, stderr := invokeRaw(t, []string{"--config", configPath, "mcp", "helper", "resource", "test://content-cross?token=request-cross-secret"})
+	if code != exitOK || stderr != "" || !reflect.DeepEqual(decodeOutput(t, output), decodeOutput(t, directOutput)) {
+		t.Fatalf("daemon cross-content read: code=%d stderr=%q output=%s want=%s", code, stderr, output, directOutput)
+	}
+	code, output, stderr = invokeRaw(t, []string{"--config", configPath, "--json", `{"message":"cross-one-secret remains ordinary tool data"}`, "mcp", "helper", "tool", "a_tool"})
+	if code != exitOK || stderr != "" || !strings.Contains(output, "cross-one-secret remains ordinary tool data") {
+		t.Fatalf("cross-content redactor altered later payload: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+}
+
+func TestResourceListPageFailureRedactsPriorEntries(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	t.Setenv("WIRECMD_RESOURCE_LIST_PAGE_FAILURE", "1")
+	runtime := testRuntimeDirectory(t)
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	_ = startTestDaemon(t)
+	configPath := helperConfig(t, "", "")
+	for _, test := range []struct {
+		operation string
+		secret    string
+		code      string
+	}{
+		{operation: "resources", secret: "prior-page-resource-secret", code: "resource_list_failed"},
+		{operation: "resource-templates", secret: "prior-page-template-secret", code: "resource_template_list_failed"},
+	} {
+		t.Run(test.operation, func(t *testing.T) {
+			directCode, directOutput, directStderr := invokeRaw(t, []string{"--direct", "--config", configPath, "mcp", "helper", test.operation})
+			if directCode != exitProtocol || directStderr != "" || strings.Contains(directOutput, test.secret) || decodeOutput(t, directOutput)["error"].(map[string]any)["code"] != test.code {
+				t.Fatalf("direct %s page failure: code=%d stderr=%q output=%s", test.operation, directCode, directStderr, directOutput)
+			}
+			code, output, stderr := invokeRaw(t, []string{"--config", configPath, "mcp", "helper", test.operation})
+			if code != exitProtocol || stderr != "" || strings.Contains(output, test.secret) || !reflect.DeepEqual(decodeOutput(t, output), decodeOutput(t, directOutput)) {
+				t.Fatalf("daemon %s page failure: code=%d stderr=%q output=%s want=%s", test.operation, code, stderr, output, directOutput)
+			}
+		})
+	}
+}
+
+func TestResourceListingRedactionScopesAllEntriesWithoutRetainingSecrets(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	const secret = "entry_uri_secret"
+	t.Setenv("WIRECMD_RESOURCE_ENTRY_SECRET", secret)
+	runtime := testRuntimeDirectory(t)
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	_ = startTestDaemon(t)
+	configPath := helperConfig(t, "", "")
+
+	for _, operation := range []string{"resources", "resource-templates"} {
+		directCode, directOutput, directStderr := invokeRaw(t, []string{"--direct", "--config", configPath, "mcp", "helper", operation})
+		if directCode != exitOK || directStderr != "" {
+			t.Fatalf("direct %s: code=%d stderr=%q output=%s", operation, directCode, directStderr, directOutput)
+		}
+		code, output, stderr := invokeRaw(t, []string{"--config", configPath, "mcp", "helper", operation})
+		if code != exitOK || stderr != "" || !reflect.DeepEqual(decodeOutput(t, output), decodeOutput(t, directOutput)) {
+			t.Fatalf("daemon %s: code=%d stderr=%q output=%s want=%s", operation, code, stderr, output, directOutput)
+		}
+		decoded := decodeOutput(t, output)
+		if operation == "resources" {
+			found := 0
+			for _, raw := range decoded["resources"].([]any) {
+				entry := raw.(map[string]any)
+				if entry["uri"] != "test://entry-secret?token=[REDACTED]" && entry["uri"] != "test://entry-clean" {
+					continue
+				}
+				found++
+				for _, field := range []string{"name", "title", "description", "mime_type"} {
+					if entry[field] != "[REDACTED]" {
+						t.Fatalf("resource %q leaked URI-derived secret in %s: %#v", entry["uri"], field, entry)
+					}
+				}
+			}
+			if found != 2 {
+				t.Fatalf("resource listing did not include both scoped entries: %#v", decoded["resources"])
+			}
+		} else {
+			foundExpression, foundScheme, foundUserinfo, foundSplit, foundValueless, foundExpandedValueless, foundOrdinary := false, false, false, false, false, false, false
+			for _, raw := range decoded["resource_templates"].([]any) {
+				entry := raw.(map[string]any)
+				if entry["uri_template"] == "test://a/{id}" {
+					foundOrdinary = true
+					continue
+				}
+				if entry["uri_template"] != "test://template-clean/{entry_uri_secret}" && entry["uri_template"] != "{scheme}://template-scheme?token=[REDACTED]" && entry["uri_template"] != "https://{user}:{password}@template-userinfo?token=[REDACTED]" && entry["uri_template"] != "https://[REDACTED]{var}[REDACTED]:[REDACTED]{var}[REDACTED]@template-split?token=[REDACTED]{var}[REDACTED]#[REDACTED]{var}[REDACTED]" && entry["uri_template"] != "test://template-valueless?[REDACTED]" && entry["uri_template"] != "test://template-expanded{?id}&[REDACTED]" {
+					continue
+				}
+				if entry["uri_template"] == "test://template-clean/{entry_uri_secret}" {
+					foundExpression = true
+				} else if entry["uri_template"] == "{scheme}://template-scheme?token=[REDACTED]" {
+					foundScheme = true
+				} else if entry["uri_template"] == "https://{user}:{password}@template-userinfo?token=[REDACTED]" {
+					foundUserinfo = true
+				} else if entry["uri_template"] == "test://template-valueless?[REDACTED]" {
+					foundValueless = true
+				} else if entry["uri_template"] == "test://template-expanded{?id}&[REDACTED]" {
+					foundExpandedValueless = true
+				} else {
+					foundSplit = true
+				}
+				for _, field := range []string{"name", "title", "description", "mime_type"} {
+					want := "[REDACTED]"
+					if foundSplit && entry["uri_template"] == "https://[REDACTED]{var}[REDACTED]:[REDACTED]{var}[REDACTED]@template-split?token=[REDACTED]{var}[REDACTED]#[REDACTED]{var}[REDACTED]" {
+						want = "[REDACTED]{var}[REDACTED]"
+					}
+					if entry[field] != want {
+						t.Fatalf("template entry leaked URI-derived secret in %s: %#v", field, entry)
+					}
+				}
+			}
+			if !foundExpression || !foundScheme || !foundUserinfo || !foundSplit || !foundValueless || !foundExpandedValueless || !foundOrdinary {
+				t.Fatalf("template listing lost an expression, userinfo, split literal, valueless parameter, scheme, or ordinary entry: %#v", decoded["resource_templates"])
+			}
+		}
+	}
+	code, output, stderr := invokeRaw(t, []string{"--config", configPath, "--json", `{"message":"entry_uri_secret remains ordinary tool data"}`, "mcp", "helper", "tool", "a_tool"})
+	if code != exitOK || stderr != "" || !strings.Contains(output, "entry_uri_secret remains ordinary tool data") {
+		t.Fatalf("listing redactor altered later payload: code=%d stderr=%q output=%s", code, stderr, output)
+	}
 }
 
 func TestClientDaemonHelloUsesBuildVersion(t *testing.T) {

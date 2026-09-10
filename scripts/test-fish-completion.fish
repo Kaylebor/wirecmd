@@ -61,9 +61,15 @@ candidates "$prefix mcp -- "
 require '--help'
 require '-h'
 require tool
+require resources
+require resource-templates
+require resource
 reject alpha
 candidates "$prefix mcp -- --help "
 require tool
+require resources
+require resource-templates
+require resource
 candidates "$prefix mcp -- tool "
 empty
 candidates "$prefix mcp --help "
@@ -75,6 +81,9 @@ require alpha
 require beta
 candidates "$prefix mcp alpha "
 require tool
+require resources
+require resource-templates
+require resource
 candidates "$prefix mcp alpha tool "
 empty
 candidates "$prefix mcp alpha tool tool -- "

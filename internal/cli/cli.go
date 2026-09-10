@@ -4,6 +4,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -27,6 +28,7 @@ import (
 	"github.com/Kaylebor/wirecmd/internal/oauthstore"
 	mcpauth "github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	uritemplate "github.com/yosida95/uritemplate/v3"
 )
 
 const (
@@ -70,7 +72,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	return exitOK
 }
 
-const usage = "wirecmd [--config PATH] [--direct] [--format auto|json|pretty] [--color auto|always|never] [--json OBJECT|--stdin] mcp [<server> [tool <tool>|<exact-call-object>]]"
+const usage = "wirecmd [--config PATH] [--direct] [--format auto|json|pretty] [--color auto|always|never] [--json OBJECT|--stdin] mcp [<server> [tool <tool>|resources|resource-templates|resource URI|<exact-call-object>]]"
 
 var isInteractiveTerminal = terminalIO
 var openAuthorizationURL = openBrowserURL
@@ -107,6 +109,7 @@ type request struct {
 	operation operation
 	server    string
 	tool      string
+	uri       string
 	arguments map[string]any
 	projected []projectedArgument
 	overlay   map[string]any
@@ -120,6 +123,9 @@ const (
 	listTools
 	callTool
 	inspectTool
+	listResources
+	listResourceTemplates
+	readResource
 	navigateLSP
 	inspectLSP
 	statusLSP
@@ -164,6 +170,9 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	if opts.help {
 		if len(positionals) == 1 && positionals[0] == "mcp" {
 			return helpText(mcpHelpText()), nil
+		}
+		if text, ok := mcpPrimitiveHelp(positionals); ok {
+			return helpText(text), nil
 		}
 		if result, err, handled := lspHelp(positionals, opts); handled {
 			return result, err
@@ -350,6 +359,27 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 			return nil, runErr.redacted(redactor)
 		}
 		return helpText(renderToolHelp(server.Name, description)), nil
+	}
+	if req.operation == listResources {
+		resources, runErr := directResources(ctx, target, redactor)
+		if runErr != nil {
+			return nil, runErr.redacted(redactor)
+		}
+		return resourcesEnvelope{OK: true, Server: server.Name, Resources: resources}, nil
+	}
+	if req.operation == listResourceTemplates {
+		templates, runErr := directResourceTemplates(ctx, target, redactor)
+		if runErr != nil {
+			return nil, runErr.redacted(redactor)
+		}
+		return resourceTemplatesEnvelope{OK: true, Server: server.Name, ResourceTemplates: templates}, nil
+	}
+	if req.operation == readResource {
+		contents, runErr := directResource(ctx, target, req.uri, redactor)
+		if runErr != nil {
+			return nil, runErr.redacted(redactor)
+		}
+		return resourceEnvelope{OK: true, Server: server.Name, URI: redactedResourceIdentifier(req.uri, redactor, false), Contents: contents}, nil
 	}
 	arguments := req.arguments
 	if len(req.projected) != 0 || req.overlay != nil {
@@ -553,19 +583,149 @@ func parseMCPRequest(positionals []string, opts options, in io.Reader) (request,
 			}
 			return request{operation: callTool, server: positionals[1], tool: tool, arguments: arguments}, nil
 		}
-		if positionals[2] != "tool" {
-			return request{}, invocationError("mcp_operation_required", "MCP server operations must name tool, resources, or another MCP primitive", "use wirecmd mcp "+shellQuote(positionals[1])+" tool <tool>")
+		switch positionals[2] {
+		case "resources":
+			if opts.jsonSet || opts.stdin {
+				return request{}, invocationError("input_without_call", "JSON input is only valid when calling a tool", "supply tool <tool> after the MCP server")
+			}
+			return request{operation: listResources, server: positionals[1]}, nil
+		case "resource-templates":
+			if opts.jsonSet || opts.stdin {
+				return request{}, invocationError("input_without_call", "JSON input is only valid when calling a tool", "supply tool <tool> after the MCP server")
+			}
+			return request{operation: listResourceTemplates, server: positionals[1]}, nil
+		case "resource":
+			return request{}, invocationError("resource_uri_required", "reading a resource requires one non-empty URI", "use wirecmd mcp "+mcpServerSpelling(positionals[1])+" resource URI")
+		case "tool":
+			return request{}, invocationError("tool_required", "MCP tool calls require a non-empty tool name", "use wirecmd mcp "+mcpServerSpelling(positionals[1])+" tool <tool>")
+		default:
+			return request{}, invocationError("mcp_operation_required", "MCP server operations must name tool, resources, or another MCP primitive", "use wirecmd mcp "+mcpServerSpelling(positionals[1])+" tool <tool>")
 		}
-		return request{}, invocationError("tool_required", "MCP tool calls require a non-empty tool name", "use wirecmd mcp "+shellQuote(positionals[1])+" tool <tool>")
 	default:
-		if positionals[2] != "tool" {
-			return request{}, invocationError("mcp_operation_required", "MCP server operations must name tool, resources, or another MCP primitive", "use wirecmd mcp "+shellQuote(positionals[1])+" tool <tool>")
+		switch positionals[2] {
+		case "resources":
+			return request{}, invocationError("resource_list_arity", "resource listing does not accept additional arguments", "use wirecmd mcp "+mcpServerSpelling(positionals[1])+" resources")
+		case "resource-templates":
+			return request{}, invocationError("resource_template_list_arity", "resource template listing does not accept additional arguments", "use wirecmd mcp "+mcpServerSpelling(positionals[1])+" resource-templates")
+		case "resource":
+			if len(positionals) != 4 || positionals[3] == "" {
+				return request{}, invocationError("resource_uri_required", "reading a resource requires one non-empty URI", "use wirecmd mcp "+mcpServerSpelling(positionals[1])+" resource URI")
+			}
+			if opts.jsonSet || opts.stdin {
+				return request{}, invocationError("input_without_call", "JSON input is only valid when calling a tool", "supply tool <tool> after the MCP server")
+			}
+			if !validResourceURI(positionals[3]) {
+				return request{}, invocationError("resource_uri_invalid", "resource reads require a valid absolute URI", "supply a URI with a non-empty scheme")
+			}
+			return request{operation: readResource, server: positionals[1], uri: positionals[3]}, nil
+		case "tool":
+		default:
+			return request{}, invocationError("mcp_operation_required", "MCP server operations must name tool, resources, or another MCP primitive", "use wirecmd mcp "+mcpServerSpelling(positionals[1])+" tool <tool>")
 		}
 		if positionals[3] == "" {
 			return request{}, invocationError("tool_required", "tool name must not be empty", "supply a non-empty tool name")
 		}
 		return parseMCPToolCall(positionals[1], positionals[3], positionals[4:], opts, in)
 	}
+}
+
+func validResourceURI(raw string) bool {
+	parsed, err := url.Parse(resourceURLParseSentinel(raw))
+	return err == nil && parsed.Scheme != "" && validResourceURICharacters(raw) && validResourceBracketPlacement(raw)
+}
+
+func validResourceURICharacters(raw string) bool {
+	for index := 0; index < len(raw); index++ {
+		character := raw[index]
+		switch {
+		case character >= 'a' && character <= 'z', character >= 'A' && character <= 'Z', character >= '0' && character <= '9':
+		case strings.ContainsRune("-._~:/?#@!$&'()*+,;=", rune(character)):
+		case character == '[' || character == ']':
+		case character == '%' && index+2 < len(raw) && isHex(raw[index+1]) && isHex(raw[index+2]):
+			index += 2
+		default:
+			return false
+		}
+	}
+	return strings.Count(raw, "#") <= 1
+}
+
+func validResourceBracketPlacement(raw string) bool {
+	if !strings.ContainsAny(raw, "[]") {
+		return true
+	}
+	scheme := strings.IndexByte(raw, ':')
+	if scheme < 0 || !strings.HasPrefix(raw[scheme+1:], "//") {
+		return false
+	}
+	authorityStart := scheme + 3
+	authorityEnd := len(raw)
+	if end := strings.IndexAny(raw[authorityStart:], "/?#"); end >= 0 {
+		authorityEnd = authorityStart + end
+	}
+	if strings.ContainsAny(raw[:authorityStart], "[]") || strings.ContainsAny(raw[authorityEnd:], "[]") {
+		return false
+	}
+	authority := raw[authorityStart:authorityEnd]
+	if at := strings.LastIndexByte(authority, '@'); at >= 0 {
+		if strings.ContainsAny(authority[:at], "[]") {
+			return false
+		}
+		authority = authority[at+1:]
+	}
+	open, close := strings.IndexByte(authority, '['), strings.IndexByte(authority, ']')
+	if open != 0 || close <= open || strings.Count(authority, "[") != 1 || strings.Count(authority, "]") != 1 {
+		return false
+	}
+	if close != len(authority)-1 && authority[close+1] != ':' {
+		return false
+	}
+	return validResourceIPLiteral(authority[open+1 : close])
+}
+
+func validResourceIPLiteral(value string) bool {
+	if strings.Contains(value, ":") && net.ParseIP(value) != nil {
+		return true
+	}
+	if len(value) < 4 || value[0] != 'v' && value[0] != 'V' {
+		return false
+	}
+	index := 1
+	for index < len(value) && isHex(value[index]) {
+		index++
+	}
+	if index == 1 || index+1 >= len(value) || value[index] != '.' {
+		return false
+	}
+	for index++; index < len(value); index++ {
+		character := value[index]
+		if !(resourceASCIILetter(character) || character >= '0' && character <= '9' || strings.ContainsRune("-._~!$&'()*+,;=:", rune(character))) {
+			return false
+		}
+	}
+	return true
+}
+
+func resourceURLParseSentinel(raw string) string {
+	var value strings.Builder
+	for len(raw) != 0 {
+		open := strings.IndexByte(raw, '[')
+		if open < 0 {
+			return value.String() + raw
+		}
+		value.WriteString(raw[:open])
+		raw = raw[open:]
+		close := strings.IndexByte(raw, ']')
+		if close < 0 || !validResourceIPLiteral(raw[1:close]) || raw[1] != 'v' && raw[1] != 'V' {
+			value.WriteString(raw)
+			return value.String()
+		}
+		// net/url does not accept RFC 3986 IPvFuture literals. Replacing an
+		// already-validated literal lets it perform its remaining URI checks.
+		value.WriteString("[::1]")
+		raw = raw[close+1:]
+	}
+	return value.String()
 }
 
 func parseMCPToolCall(server, tool string, suffix []string, opts options, in io.Reader) (request, *appError) {
@@ -620,6 +780,27 @@ func parseHelpRequest(positionals []string, opts options) (request, *appError) {
 	}
 }
 
+func mcpPrimitiveHelp(positionals []string) (string, bool) {
+	if len(positionals) < 3 || positionals[0] != "mcp" || positionals[1] == "" {
+		return "", false
+	}
+	switch positionals[2] {
+	case "resources":
+		if len(positionals) == 3 {
+			return "Usage:\n  wirecmd [client flags] mcp " + mcpServerSpelling(positionals[1]) + " resources\n\nLists resources advertised by the selected MCP server. The SDK follows pagination; Wirecmd sorts the resulting list by URI then name.\n", true
+		}
+	case "resource-templates":
+		if len(positionals) == 3 {
+			return "Usage:\n  wirecmd [client flags] mcp " + mcpServerSpelling(positionals[1]) + " resource-templates\n\nLists resource templates advertised by the selected MCP server. The SDK follows pagination; Wirecmd sorts the resulting list by URI template then name.\n", true
+		}
+	case "resource":
+		if len(positionals) == 3 || len(positionals) == 4 {
+			return "Usage:\n  wirecmd [client flags] mcp " + mcpServerSpelling(positionals[1]) + " resource URI\n\nReads one MCP resource. Text content is returned directly; binary content is returned as base64 in upstream order.\n", true
+		}
+	}
+	return "", false
+}
+
 func namespaceHelpRequired(positionals []string) *appError {
 	server := mcpServerSpelling(positionals[0])
 	if len(positionals) == 1 || startsJSONObject(positionals[1]) {
@@ -662,7 +843,7 @@ func namespaceRequired(positionals []string, opts options) *appError {
 }
 
 func mcpServerSpelling(server string) string {
-	quoted := shellQuote(server)
+	quoted := shellQuote(singleLine(server))
 	if server == "--help" || server == "-h" {
 		return "-- " + quoted
 	}
@@ -971,6 +1152,768 @@ func sessionToolCatalog(ctx context.Context, session *mcp.ClientSession, redacto
 	return catalog, nil
 }
 
+func resourcesAvailable(session *mcp.ClientSession) bool {
+	result := session.InitializeResult()
+	return result != nil && result.Capabilities != nil && result.Capabilities.Resources != nil
+}
+
+func resourceCapabilityError() *appError {
+	return protocolError("resource_capability_unavailable", "the upstream MCP server did not advertise resource support", "select a server that supports MCP resources")
+}
+
+func resourceOperationError(err error, code string) *appError {
+	var corrupt base64.CorruptInputError
+	if errors.As(err, &corrupt) {
+		return protocolError("resource_blob_invalid", err.Error(), "the upstream MCP server returned malformed base64 resource content")
+	}
+	return mcpOperationError(err, code)
+}
+
+func normalizedResourceURI(raw string, redactor *redactor) (string, *appError) {
+	if !validResourceURI(raw) {
+		return "", protocolError("resource_uri_unsupported", "the upstream MCP server returned an unsupported resource URI", "check the upstream MCP server diagnostics")
+	}
+	return redactedResourceIdentifier(raw, redactor, false), nil
+}
+
+func normalizedResourceTemplate(raw string, redactor *redactor) (string, *appError) {
+	if !validResourceTemplate(raw) {
+		return "", protocolError("resource_uri_unsupported", "the upstream MCP server returned an unsupported resource URI template", "check the upstream MCP server diagnostics")
+	}
+	return redactedResourceIdentifier(raw, redactor, true), nil
+}
+
+func validResourceTemplate(raw string) bool {
+	if _, err := uritemplate.New(raw); err != nil {
+		return false
+	}
+	plain := replaceResourceTemplateExpressions(raw)
+	parsed, err := url.Parse(resourceURLParseSentinel(plain))
+	return err == nil && parsed.Scheme != "" && validResourceScheme(parsed.Scheme) && validResourceTemplateURICharacters(plain) && validResourceBracketPlacement(plain)
+}
+
+func validResourceScheme(value string) bool {
+	for index := 0; index < len(value); index++ {
+		character := value[index]
+		if index == 0 {
+			if !resourceASCIILetter(character) {
+				return false
+			}
+			continue
+		}
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '+' || character == '-' || character == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+func resourceASCIILetter(character byte) bool {
+	return character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z'
+}
+
+func validResourceTemplateURICharacters(raw string) bool {
+	for index := 0; index < len(raw); index++ {
+		character := raw[index]
+		if character >= utf8.RuneSelf {
+			_, size := utf8.DecodeRuneInString(raw[index:])
+			if size == 1 {
+				return false
+			}
+			index += size - 1
+			continue
+		}
+		switch {
+		case character >= 'a' && character <= 'z', character >= 'A' && character <= 'Z', character >= '0' && character <= '9':
+		case strings.ContainsRune("-._~:/?#@!$&'()*+,;=", rune(character)):
+		case character == '[' || character == ']':
+		case character == '%' && index+2 < len(raw) && isHex(raw[index+1]) && isHex(raw[index+2]):
+			index += 2
+		default:
+			return false
+		}
+	}
+	return strings.Count(raw, "#") <= 1
+}
+
+func replaceResourceTemplateExpressions(raw string) string {
+	var value strings.Builder
+	schemeEnd := resourceTemplateSchemeEnd(raw)
+	consumed := 0
+	for len(raw) != 0 {
+		open := strings.IndexByte(raw, '{')
+		if open < 0 {
+			return value.String() + raw
+		}
+		value.WriteString(raw[:open])
+		close := strings.IndexByte(raw[open:], '}')
+		// uritemplate.New validated expression boundaries before this
+		// absolute-capability substitution runs.
+		close += open
+		// A numeric replacement is valid in authority port positions as well as
+		// ordinary path, query, and fragment positions. Any expression before
+		// the URI scheme delimiter needs a letter to leave an absolute URI for
+		// net/url to inspect.
+		if schemeEnd >= 0 && consumed+open < schemeEnd {
+			value.WriteByte('x')
+		} else {
+			value.WriteByte('1')
+		}
+		consumed += close + 1
+		raw = raw[close+1:]
+	}
+	return value.String()
+}
+
+func resourceTemplateSchemeEnd(raw string) int {
+	inExpression := false
+	for index := 0; index < len(raw); index++ {
+		switch raw[index] {
+		case '{':
+			inExpression = true
+		case '}':
+			inExpression = false
+		case ':':
+			if !inExpression {
+				return index
+			}
+		}
+	}
+	return -1
+}
+
+func redactedResourceIdentifier(raw string, redactor *redactor, preserveTemplates bool) string {
+	value := raw
+	fragment := ""
+	if index := resourceFragmentStart(value, preserveTemplates); index >= 0 {
+		if value[index] == '{' {
+			value = value[:index] + redactedResourceTemplateFragment(value[index:])
+		} else if preserveTemplates {
+			fragment = "#" + redactedResourceTemplateFragment(value[index+1:])
+			value = value[:index]
+		} else {
+			value = value[:index]
+			fragment = "#[REDACTED]"
+		}
+	}
+	if query := resourceQueryStart(value, preserveTemplates); query >= 0 {
+		if value[query] == '{' {
+			value = value[:query] + redactedResourceQuery(value[query:], preserveTemplates)
+		} else {
+			value = value[:query+1] + redactedResourceQuery(value[query+1:], preserveTemplates)
+		}
+	}
+	if scheme := resourceSchemeDelimiter(value, preserveTemplates); scheme >= 0 && strings.HasPrefix(value[scheme+1:], "//") {
+		authorityStart := scheme + 3
+		authorityEnd := len(value)
+		for index, character := range value[authorityStart:] {
+			if character == '/' || character == '?' || character == '#' {
+				authorityEnd = authorityStart + index
+				break
+			}
+		}
+		if at := strings.LastIndexByte(value[authorityStart:authorityEnd], '@'); at >= 0 {
+			userinfo := "[REDACTED]"
+			if preserveTemplates {
+				userinfo = redactedResourceTemplateUserinfo(value[authorityStart : authorityStart+at])
+			}
+			value = value[:authorityStart] + userinfo + "@" + value[authorityStart+at+1:]
+		}
+	}
+	if preserveTemplates {
+		return redactResourceTemplateLiterals(value+fragment, redactor)
+	}
+	return redactor.Redact(value + fragment)
+}
+
+func resourceSchemeDelimiter(value string, preserveTemplates bool) int {
+	if !preserveTemplates {
+		return strings.IndexByte(value, ':')
+	}
+	return templateDelimiterIndex(value, ':')
+}
+
+func redactResourceTemplateLiterals(value string, redactor *redactor) string {
+	var result strings.Builder
+	for len(value) != 0 {
+		open := strings.IndexByte(value, '{')
+		if open < 0 {
+			result.WriteString(redactor.Redact(value))
+			break
+		}
+		result.WriteString(redactor.Redact(value[:open]))
+		close := strings.IndexByte(value[open:], '}')
+		if close < 0 {
+			result.WriteString(redactor.Redact(value[open:]))
+			break
+		}
+		close += open
+		expression := value[open : close+1]
+		if validResourceTemplateExpression(expression) {
+			result.WriteString(expression)
+		} else {
+			result.WriteString(redactor.Redact(expression))
+		}
+		value = value[close+1:]
+	}
+	return result.String()
+}
+
+func resourceFragmentStart(value string, preserveTemplates bool) int {
+	if !preserveTemplates {
+		return strings.IndexByte(value, '#')
+	}
+	for index := 0; index < len(value); index++ {
+		if value[index] == '#' {
+			return index
+		}
+		if value[index] != '{' {
+			continue
+		}
+		close := strings.IndexByte(value[index:], '}')
+		if close < 0 {
+			continue
+		}
+		close += index
+		expression := value[index : close+1]
+		if validResourceTemplateExpression(expression) && expression[1] == '#' {
+			return index
+		}
+		index = close
+	}
+	return -1
+}
+
+func resourceQueryStart(value string, preserveTemplates bool) int {
+	if !preserveTemplates {
+		return strings.IndexByte(value, '?')
+	}
+	for index := 0; index < len(value); index++ {
+		if value[index] == '?' {
+			return index
+		}
+		if value[index] != '{' {
+			continue
+		}
+		close := strings.IndexByte(value[index:], '}')
+		if close < 0 {
+			continue
+		}
+		close += index
+		expression := value[index : close+1]
+		if validResourceTemplateExpression(expression) && expression[1] == '?' {
+			return index
+		}
+		index = close
+	}
+	return -1
+}
+
+func protectResourceIdentifier(raw string, redactor *redactor) {
+	protectResourceIdentifierParts(raw, redactor, true)
+}
+
+func protectResourceIdentifierParts(raw string, redactor *redactor, protectUserinfo bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return
+	}
+	protected := []string{parsed.RawQuery, parsed.Fragment, parsed.EscapedFragment()}
+	protected = append(protected, rawResourceQueryValues(parsed.RawQuery)...)
+	if fragment := strings.IndexByte(raw, '#'); fragment >= 0 {
+		protected = append(protected, raw[fragment+1:])
+	}
+	if protectUserinfo && parsed.User != nil {
+		protected = append(protected, parsed.User.String(), parsed.User.Username())
+		if password, ok := parsed.User.Password(); ok {
+			protected = append(protected, password)
+		}
+	}
+	if protectUserinfo {
+		protected = append(protected, rawResourceUserinfo(raw)...)
+	}
+	if query, err := url.ParseQuery(parsed.RawQuery); err == nil {
+		for _, values := range query {
+			protected = append(protected, values...)
+		}
+	}
+	redactor.ProtectSecrets(protected...)
+}
+
+func rawResourceQueryValues(query string) []string {
+	var values []string
+	for len(query) != 0 {
+		end := resourceQuerySeparator(query)
+		part := query[:end]
+		if equals := strings.IndexByte(part, '='); equals >= 0 {
+			values = append(values, part[equals+1:])
+		} else {
+			values = append(values, part)
+		}
+		if end == len(query) {
+			break
+		}
+		query = query[end+1:]
+	}
+	return values
+}
+
+func rawResourceUserinfo(raw string) []string {
+	scheme := strings.IndexByte(raw, ':')
+	if scheme < 0 || !strings.HasPrefix(raw[scheme+1:], "//") {
+		return nil
+	}
+	authority := raw[scheme+3:]
+	if end := strings.IndexAny(authority, "/?#"); end >= 0 {
+		authority = authority[:end]
+	}
+	at := strings.LastIndexByte(authority, '@')
+	if at < 0 {
+		return nil
+	}
+	userinfo := authority[:at]
+	values := []string{userinfo}
+	if colon := strings.IndexByte(userinfo, ':'); colon >= 0 {
+		values = append(values, userinfo[:colon], userinfo[colon+1:])
+	} else {
+		values = append(values, userinfo)
+	}
+	return values
+}
+
+func resourceDiagnosticRedactor(base *redactor, raw string) *redactor {
+	copy := clonedResourceRedactor(base)
+	protectResourceIdentifier(raw, copy)
+	return copy
+}
+
+func protectResourceTemplateIdentifier(raw string, redactor *redactor) {
+	for _, userinfo := range templateLiteralUserinfo(raw) {
+		protectTemplateLiteralRuns(userinfo, redactor)
+	}
+	if query := resourceQueryStart(raw, true); query >= 0 {
+		end := len(raw)
+		if fragment := resourceFragmentStart(raw, true); fragment > query {
+			end = fragment
+		}
+		protectTemplateQueryValues(raw[query:end], redactor)
+	}
+	if fragment := resourceFragmentStart(raw, true); fragment >= 0 {
+		if raw[fragment] == '#' {
+			fragment++
+		}
+		protectTemplateLiteralRuns(raw[fragment:], redactor)
+	}
+}
+
+func templateLiteralUserinfo(raw string) []string {
+	scheme := templateDelimiterIndex(raw, ':')
+	if scheme < 0 || !strings.HasPrefix(raw[scheme+1:], "//") {
+		return nil
+	}
+	authority := raw[scheme+3:]
+	if end := templateAuthorityEnd(authority); end >= 0 {
+		authority = authority[:end]
+	}
+	at := templateDelimiterIndex(authority, '@')
+	if at < 0 {
+		return nil
+	}
+	userinfo := authority[:at]
+	if colon := templateDelimiterIndex(userinfo, ':'); colon >= 0 {
+		return []string{userinfo[:colon], userinfo[colon+1:]}
+	}
+	return []string{userinfo}
+}
+
+func templateAuthorityEnd(authority string) int {
+	for index := 0; index < len(authority); index++ {
+		switch authority[index] {
+		case '/', '?', '#':
+			return index
+		case '{':
+			close := strings.IndexByte(authority[index:], '}')
+			if close < 0 {
+				continue
+			}
+			close += index
+			expression := authority[index : close+1]
+			if validResourceTemplateExpression(expression) {
+				if expression[1] == '?' || expression[1] == '#' {
+					return index
+				}
+				index = close
+			}
+		}
+	}
+	return -1
+}
+
+func clonedResourceRedactor(base *redactor) *redactor {
+	return &redactor{
+		secrets:       append([]string(nil), base.secrets...),
+		endpoint:      base.endpoint,
+		endpointQuery: base.endpointQuery,
+		safeEndpoint:  base.safeEndpoint,
+	}
+}
+
+func protectTemplateQueryValues(query string, redactor *redactor) {
+	if strings.HasPrefix(query, "?") {
+		query = query[1:]
+	} else if strings.HasPrefix(query, "{") {
+		if close := strings.IndexByte(query, '}'); close >= 0 {
+			expression := query[:close+1]
+			if validResourceTemplateExpression(expression) && expression[1] == '?' {
+				query = query[close+1:]
+				if strings.HasPrefix(query, "&") || strings.HasPrefix(query, ";") {
+					query = query[1:]
+				}
+			}
+		}
+	}
+	for len(query) != 0 {
+		end := resourceQuerySeparator(query)
+		part := query[:end]
+		if equals := templateDelimiterIndex(part, '='); equals >= 0 {
+			protectTemplateLiteralRuns(part[equals+1:], redactor)
+		} else {
+			protectTemplateLiteralRuns(part, redactor)
+		}
+		if end == len(query) {
+			return
+		}
+		query = query[end+1:]
+	}
+}
+
+func protectTemplateLiteralRuns(value string, redactor *redactor) {
+	for len(value) != 0 {
+		open := strings.IndexByte(value, '{')
+		if open < 0 {
+			protectTemplateLiteral(value, redactor)
+			return
+		}
+		protectTemplateLiteral(value[:open], redactor)
+		close := strings.IndexByte(value[open:], '}')
+		if close < 0 {
+			protectTemplateLiteral(value[open:], redactor)
+			return
+		}
+		close += open
+		if !validResourceTemplateExpression(value[open : close+1]) {
+			protectTemplateLiteral(value[open:close+1], redactor)
+		}
+		value = value[close+1:]
+	}
+}
+
+func protectTemplateLiteral(value string, redactor *redactor) {
+	if value == "" {
+		return
+	}
+	redactor.ProtectSecrets(value)
+	if decoded, err := url.QueryUnescape(value); err == nil && decoded != value {
+		redactor.ProtectSecrets(decoded)
+	}
+	if decoded, err := url.PathUnescape(value); err == nil && decoded != value {
+		redactor.ProtectSecrets(decoded)
+	}
+}
+
+func templateDelimiterIndex(value string, delimiter byte) int {
+	for index := 0; index < len(value); index++ {
+		if value[index] == delimiter {
+			return index
+		}
+		if value[index] != '{' {
+			continue
+		}
+		close := strings.IndexByte(value[index:], '}')
+		if close < 0 {
+			continue
+		}
+		close += index
+		if validResourceTemplateExpression(value[index : close+1]) {
+			index = close
+		}
+	}
+	return -1
+}
+
+func redactedResourceTemplateUserinfo(value string) string {
+	if colon := templateDelimiterIndex(value, ':'); colon >= 0 {
+		return redactedResourceQueryValue(value[:colon], true) + ":" + redactedResourceQueryValue(value[colon+1:], true)
+	}
+	return redactedResourceQueryValue(value, true)
+}
+
+func redactedResourceQuery(query string, preserveTemplates bool) string {
+	var value strings.Builder
+	for len(query) != 0 {
+		end := resourceQuerySeparator(query)
+		part := query[:end]
+		if equals := strings.IndexByte(part, '='); equals >= 0 {
+			value.WriteString(part[:equals+1])
+			value.WriteString(redactedResourceQueryValue(part[equals+1:], preserveTemplates))
+		} else {
+			value.WriteString(redactedResourceQueryValue(part, preserveTemplates))
+		}
+		if end == len(query) {
+			break
+		}
+		value.WriteByte(query[end])
+		query = query[end+1:]
+	}
+	return value.String()
+}
+
+func resourceQuerySeparator(query string) int {
+	depth := 0
+	for index := 0; index < len(query); index++ {
+		switch query[index] {
+		case '{':
+			depth++
+		case '}':
+			if depth > 0 {
+				depth--
+			}
+		case '&', ';':
+			if depth == 0 {
+				return index
+			}
+		}
+	}
+	return len(query)
+}
+
+func redactedResourceQueryValue(value string, preserveTemplates bool) string {
+	if !preserveTemplates && value != "" {
+		return "[REDACTED]"
+	}
+	var result strings.Builder
+	for len(value) != 0 {
+		open := strings.IndexByte(value, '{')
+		if open < 0 {
+			result.WriteString("[REDACTED]")
+			break
+		}
+		if open > 0 {
+			result.WriteString("[REDACTED]")
+		}
+		close := strings.IndexByte(value[open:], '}')
+		if close < 0 {
+			result.WriteString("[REDACTED]")
+			break
+		}
+		close += open
+		expression := value[open : close+1]
+		if validResourceTemplateExpression(expression) {
+			result.WriteString(expression)
+		} else {
+			result.WriteString("[REDACTED]")
+		}
+		value = value[close+1:]
+	}
+	return result.String()
+}
+
+func redactedResourceTemplateFragment(value string) string {
+	var result strings.Builder
+	for len(value) != 0 {
+		open := strings.IndexByte(value, '{')
+		if open < 0 {
+			result.WriteString("[REDACTED]")
+			break
+		}
+		if open > 0 {
+			result.WriteString("[REDACTED]")
+		}
+		close := strings.IndexByte(value[open:], '}')
+		if close < 0 {
+			result.WriteString("[REDACTED]")
+			break
+		}
+		close += open
+		expression := value[open : close+1]
+		if validResourceTemplateExpression(expression) {
+			result.WriteString(expression)
+		} else {
+			result.WriteString("[REDACTED]")
+		}
+		value = value[close+1:]
+	}
+	return result.String()
+}
+
+func validResourceTemplateExpression(expression string) bool {
+	_, err := uritemplate.New(expression)
+	return err == nil
+}
+
+func isHex(value byte) bool {
+	return value >= '0' && value <= '9' || value >= 'a' && value <= 'f' || value >= 'A' && value <= 'F'
+}
+
+func directResources(ctx context.Context, target connectionTarget, redactor *redactor) ([]resourceSummary, *appError) {
+	session, appErr := connectTarget(ctx, target, redactor)
+	if appErr != nil {
+		return nil, appErr
+	}
+	defer session.Close()
+	return sessionResources(ctx, session, redactor)
+}
+
+func sessionResources(ctx context.Context, session *mcp.ClientSession, redactor *redactor) ([]resourceSummary, *appError) {
+	if !resourcesAvailable(session) {
+		return nil, resourceCapabilityError()
+	}
+	type resourceEntry struct {
+		rawURI   string
+		rawName  string
+		resource *mcp.Resource
+		summary  resourceSummary
+	}
+	entries := make([]resourceEntry, 0)
+	listingRedactor := clonedResourceRedactor(redactor)
+	for resource, err := range session.Resources(ctx, nil) {
+		if err != nil {
+			return nil, resourceOperationError(err, "resource_list_failed").redacted(listingRedactor)
+		}
+		if resource == nil {
+			return nil, protocolError("resource_list_invalid", "the upstream MCP server returned an invalid resource entry", "check the upstream MCP server diagnostics")
+		}
+		protectResourceIdentifier(resource.URI, listingRedactor)
+		entries = append(entries, resourceEntry{rawURI: resource.URI, rawName: resource.Name, resource: resource})
+	}
+	for index := range entries {
+		resource := entries[index].resource
+		uri, uriErr := normalizedResourceURI(resource.URI, listingRedactor)
+		if uriErr != nil {
+			return nil, uriErr
+		}
+		entries[index].summary = resourceSummary{URI: uri, Name: listingRedactor.Redact(resource.Name), Title: listingRedactor.Redact(resource.Title), Description: listingRedactor.Redact(resource.Description), MIMEType: listingRedactor.Redact(resource.MIMEType), Size: resource.Size}
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].rawURI != entries[j].rawURI {
+			return entries[i].rawURI < entries[j].rawURI
+		}
+		return entries[i].rawName < entries[j].rawName
+	})
+	resources := make([]resourceSummary, len(entries))
+	for index, entry := range entries {
+		resources[index] = entry.summary
+	}
+	return resources, nil
+}
+
+func directResourceTemplates(ctx context.Context, target connectionTarget, redactor *redactor) ([]resourceTemplateSummary, *appError) {
+	session, appErr := connectTarget(ctx, target, redactor)
+	if appErr != nil {
+		return nil, appErr
+	}
+	defer session.Close()
+	return sessionResourceTemplates(ctx, session, redactor)
+}
+
+func sessionResourceTemplates(ctx context.Context, session *mcp.ClientSession, redactor *redactor) ([]resourceTemplateSummary, *appError) {
+	if !resourcesAvailable(session) {
+		return nil, resourceCapabilityError()
+	}
+	type resourceTemplateEntry struct {
+		rawTemplate string
+		rawName     string
+		template    *mcp.ResourceTemplate
+		summary     resourceTemplateSummary
+	}
+	entries := make([]resourceTemplateEntry, 0)
+	listingRedactor := clonedResourceRedactor(redactor)
+	for template, err := range session.ResourceTemplates(ctx, nil) {
+		if err != nil {
+			return nil, resourceOperationError(err, "resource_template_list_failed").redacted(listingRedactor)
+		}
+		if template == nil {
+			return nil, protocolError("resource_template_list_invalid", "the upstream MCP server returned an invalid resource template", "check the upstream MCP server diagnostics")
+		}
+		protectResourceTemplateIdentifier(template.URITemplate, listingRedactor)
+		entries = append(entries, resourceTemplateEntry{rawTemplate: template.URITemplate, rawName: template.Name, template: template})
+	}
+	for index := range entries {
+		template := entries[index].template
+		uriTemplate, uriErr := normalizedResourceTemplate(template.URITemplate, listingRedactor)
+		if uriErr != nil {
+			return nil, uriErr
+		}
+		entries[index].summary = resourceTemplateSummary{URITemplate: uriTemplate, Name: listingRedactor.Redact(template.Name), Title: listingRedactor.Redact(template.Title), Description: listingRedactor.Redact(template.Description), MIMEType: listingRedactor.Redact(template.MIMEType)}
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		if entries[i].rawTemplate != entries[j].rawTemplate {
+			return entries[i].rawTemplate < entries[j].rawTemplate
+		}
+		return entries[i].rawName < entries[j].rawName
+	})
+	templates := make([]resourceTemplateSummary, len(entries))
+	for index, entry := range entries {
+		templates[index] = entry.summary
+	}
+	return templates, nil
+}
+
+func directResource(ctx context.Context, target connectionTarget, uri string, redactor *redactor) ([]resourceContent, *appError) {
+	session, appErr := connectTarget(ctx, target, redactor)
+	if appErr != nil {
+		return nil, appErr
+	}
+	defer session.Close()
+	return sessionResource(ctx, session, uri, redactor)
+}
+
+func sessionResource(ctx context.Context, session *mcp.ClientSession, uri string, redactor *redactor) ([]resourceContent, *appError) {
+	if !resourcesAvailable(session) {
+		return nil, resourceCapabilityError()
+	}
+	diagnosticRedactor := resourceDiagnosticRedactor(redactor, uri)
+	response, err := session.ReadResource(ctx, &mcp.ReadResourceParams{URI: uri})
+	if err != nil {
+		return nil, resourceOperationError(err, "resource_read_failed").redacted(diagnosticRedactor)
+	}
+	if response == nil {
+		return nil, protocolError("resource_read_invalid", "the upstream MCP server returned no resource result", "check the upstream MCP server diagnostics")
+	}
+	if response.NeedsInput() {
+		return nil, userActionError("input_required", "the upstream resource requires additional user input", "use an explicit interactive flow when one is available")
+	}
+	responseRedactor := clonedResourceRedactor(diagnosticRedactor)
+	for _, content := range response.Contents {
+		if content == nil {
+			return nil, protocolError("resource_content_invalid", "the upstream MCP server returned an invalid resource content entry", "check the upstream MCP server diagnostics")
+		}
+		protectResourceIdentifier(content.URI, responseRedactor)
+	}
+	contents := make([]resourceContent, 0, len(response.Contents))
+	for _, content := range response.Contents {
+		contentURI, uriErr := normalizedResourceURI(content.URI, responseRedactor)
+		if uriErr != nil {
+			return nil, uriErr
+		}
+		entry := resourceContent{URI: contentURI, MIMEType: responseRedactor.Redact(content.MIMEType)}
+		switch {
+		case content.Text != "" && content.Blob != nil:
+			return nil, protocolError("resource_content_unsupported", "the upstream MCP server returned both text and blob content", "check the upstream MCP server diagnostics")
+		case content.Blob != nil:
+			// The SDK decoded the upstream base64 into Blob. Re-encode only after
+			// redacting known resolved secrets from those decoded bytes.
+			blob := base64.StdEncoding.EncodeToString([]byte(responseRedactor.Redact(string(content.Blob))))
+			entry.Blob = &blob
+		default:
+			text := responseRedactor.Redact(content.Text)
+			entry.Text = &text
+		}
+		contents = append(contents, entry)
+	}
+	return contents, nil
+}
+
 func directCall(ctx context.Context, target connectionTarget, tool string, arguments map[string]any, redactor *redactor) (toolResult, *appError) {
 	session, err := connectTarget(ctx, target, redactor)
 	if err != nil {
@@ -1268,6 +2211,49 @@ type toolsEnvelope struct {
 	OK     bool          `json:"ok"`
 	Server string        `json:"server"`
 	Tools  []toolSummary `json:"tools"`
+}
+
+type resourceSummary struct {
+	URI         string `json:"uri"`
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	MIMEType    string `json:"mime_type,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+}
+
+type resourcesEnvelope struct {
+	OK        bool              `json:"ok"`
+	Server    string            `json:"server"`
+	Resources []resourceSummary `json:"resources"`
+}
+
+type resourceTemplateSummary struct {
+	URITemplate string `json:"uri_template"`
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	MIMEType    string `json:"mime_type,omitempty"`
+}
+
+type resourceTemplatesEnvelope struct {
+	OK                bool                      `json:"ok"`
+	Server            string                    `json:"server"`
+	ResourceTemplates []resourceTemplateSummary `json:"resource_templates"`
+}
+
+type resourceContent struct {
+	URI      string  `json:"uri"`
+	MIMEType string  `json:"mime_type,omitempty"`
+	Text     *string `json:"text,omitempty"`
+	Blob     *string `json:"blob,omitempty"`
+}
+
+type resourceEnvelope struct {
+	OK       bool              `json:"ok"`
+	Server   string            `json:"server"`
+	URI      string            `json:"uri"`
+	Contents []resourceContent `json:"contents"`
 }
 
 type toolResult struct {

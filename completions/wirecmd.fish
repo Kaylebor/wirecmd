@@ -186,13 +186,13 @@ function __wirecmd_candidates
                         end
                     end
                     if test $double_dash_alias -eq 1
-                        printf '%s\n' tool
+                        printf '%s\n' tool resources resource-templates resource
                     end
                 else if not contains -- "$positionals[2]" --help -h
-                    printf '%s\n' tool
+                    printf '%s\n' tool resources resource-templates resource
                 end
             else if test (count $positionals) -eq 3; and test "$positionals[2]" = --; and contains -- "$positionals[3]" --help -h
-                printf '%s\n' tool
+                printf '%s\n' tool resources resource-templates resource
             end
     end
 end

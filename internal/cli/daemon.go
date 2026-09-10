@@ -31,7 +31,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 9
+const daemonProtocol = 10
 
 type daemonAdmin struct {
 	command string
@@ -100,6 +100,7 @@ type daemonRequest struct {
 	Operation             operation              `json:"operation"`
 	Server                string                 `json:"server,omitempty"`
 	Tool                  string                 `json:"tool,omitempty"`
+	URI                   string                 `json:"uri,omitempty"`
 	Arguments             map[string]any         `json:"arguments,omitempty"`
 	Projected             []projectedArgument    `json:"projected,omitempty"`
 	Overlay               map[string]any         `json:"overlay,omitempty"`
@@ -153,7 +154,7 @@ func absoluteConfigPaths(cwd string, paths []string) ([]string, error) {
 }
 
 func daemonRequestFromConfig(req request, cfg *config.Config, cwd string, paths []string, discovered bool, secrets map[string]secretInput) daemonRequest {
-	request := daemonRequest{Operation: req.operation, Server: req.server, Tool: req.tool, Arguments: req.arguments, Projected: req.projected, Overlay: req.overlay, Help: req.help, CWD: cwd, Configs: paths, Discovered: discovered, Fingerprint: configFingerprint(cfg, cwd), Secrets: secrets}
+	request := daemonRequest{Operation: req.operation, Server: req.server, Tool: req.tool, URI: req.uri, Arguments: req.arguments, Projected: req.projected, Overlay: req.overlay, Help: req.help, CWD: cwd, Configs: paths, Discovered: discovered, Fingerprint: configFingerprint(cfg, cwd), Secrets: secrets}
 	if req.operation != listServers {
 		if server, ok := findServer(cfg, req.server); ok {
 			request.Execution = executionFingerprint(server, cfg.Root, cwd)
@@ -774,8 +775,11 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	if request.Admin != "" {
 		return d.executeAdmin(request.Admin)
 	}
-	if request.Operation != listServers && request.Operation != listTools && request.Operation != callTool && request.Operation != inspectTool && request.Operation != navigateLSP && request.Operation != inspectLSP && request.Operation != statusLSP {
+	if request.Operation != listServers && request.Operation != listTools && request.Operation != callTool && request.Operation != inspectTool && request.Operation != listResources && request.Operation != listResourceTemplates && request.Operation != readResource && request.Operation != navigateLSP && request.Operation != inspectLSP && request.Operation != statusLSP {
 		return errorReply(invocationError("daemon_operation_invalid", "invalid daemon operation", "use a compatible Wirecmd client"))
+	}
+	if request.Operation == readResource && !validResourceURI(request.URI) {
+		return errorReply(invocationError("resource_uri_invalid", "resource reads require a valid absolute URI", "supply a URI with a non-empty scheme"))
 	}
 	if !filepath.IsAbs(request.CWD) || len(request.Configs) == 0 {
 		return errorReply(configurationError("daemon_context_invalid", "daemon requests require absolute caller context and configuration paths", "use the Wirecmd CLI"))
@@ -888,6 +892,27 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 			return errorReplyWithWarnings(transportError("daemon_request_canceled", "daemon request was canceled by its client", "retry the request"), warnings)
 		}
 		result = helpResponse{Kind: toolHelp, Server: server.Name, Tool: description}
+	} else if request.Operation == listResources {
+		resources, appErr := sessionResources(ctx, instance.session, instance.redactor)
+		if appErr != nil {
+			d.noteSDKOperation(instance, appErr)
+			return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
+		}
+		result = resourcesEnvelope{OK: true, Server: server.Name, Resources: resources}
+	} else if request.Operation == listResourceTemplates {
+		templates, appErr := sessionResourceTemplates(ctx, instance.session, instance.redactor)
+		if appErr != nil {
+			d.noteSDKOperation(instance, appErr)
+			return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
+		}
+		result = resourceTemplatesEnvelope{OK: true, Server: server.Name, ResourceTemplates: templates}
+	} else if request.Operation == readResource {
+		contents, appErr := sessionResource(ctx, instance.session, request.URI, instance.redactor)
+		if appErr != nil {
+			d.noteSDKOperation(instance, appErr)
+			return errorReplyWithWarnings(appErr.redacted(instance.redactor), warnings)
+		}
+		result = resourceEnvelope{OK: true, Server: server.Name, URI: redactedResourceIdentifier(request.URI, instance.redactor, false), Contents: contents}
 	} else {
 		arguments := request.Arguments
 		if len(request.Projected) != 0 || request.Overlay != nil {

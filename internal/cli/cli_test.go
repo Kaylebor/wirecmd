@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,6 +69,141 @@ func TestHelperProcess(t *testing.T) {
 	}
 
 	server := mcp.NewServer(&mcp.Implementation{Name: "wirecmd-test-server", Version: "dev"}, &mcp.ServerOptions{PageSize: 2})
+	if os.Getenv("WIRECMD_RESOURCE_LIST_PAGE_FAILURE") == "1" {
+		server.AddResource(&mcp.Resource{URI: "test://0-prior-page?token=prior-page-resource-secret", Name: "prior page"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "test://0-prior-page", Text: "prior"}}}, nil
+		})
+		server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "test://0-prior-template?token=prior-page-template-secret", Name: "prior template"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "test://0-prior-template", Text: "prior template"}}}, nil
+		})
+	}
+	server.AddResource(&mcp.Resource{URI: "test://z", Name: "zeta", Description: "last resource", MIMEType: "text/plain"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "test://z", MIMEType: "text/plain", Text: "z text"}}}, nil
+	})
+	server.AddResource(&mcp.Resource{URI: "test://a", Name: "alpha", Description: "first resource", MIMEType: "application/octet-stream"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "test://a", MIMEType: "text/plain", Text: "a text"}, {URI: "test://a", MIMEType: "application/octet-stream", Blob: []byte("blob payload")}}}, nil
+	})
+	server.AddResource(&mcp.Resource{URI: "test://empty", Name: "empty", MIMEType: "application/octet-stream"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "test://empty", MIMEType: "application/octet-stream", Blob: []byte{}}}}, nil
+	})
+	server.AddResource(&mcp.Resource{URI: "test://input", Name: "input"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{InputRequests: mcp.InputRequestMap{"question": &mcp.ElicitParams{Message: "continue"}}}, nil
+	})
+	server.AddResource(&mcp.Resource{URI: "test://secret", Name: "secret", MIMEType: "application/octet-stream"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "test://secret", MIMEType: "application/octet-stream", Blob: []byte("blob " + secret)}}}, nil
+	})
+	server.AddResource(&mcp.Resource{URI: "test://presigned?signature=resource-presigned-query", Name: "presigned"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "test://content?signature=content-presigned-query", Text: "presigned content"}}}, nil
+	})
+	server.AddResource(&mcp.Resource{URI: "test://page?page=1", Name: "page"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: "test://page?page=1", Text: "page"}}}, nil
+	})
+	server.AddResource(&mcp.Resource{URI: "test://failure?token=issued-secret", Name: "failure"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return nil, errors.New("upstream resource failure for test://failure?token=issued-secret")
+	})
+	server.AddResource(&mcp.Resource{URI: "test://encoded-failure?token=issued%2Dsecret", Name: "encoded failure"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return nil, errors.New("upstream resource failure issued%2Dsecret")
+	})
+	server.AddResource(&mcp.Resource{URI: "test://content-echo?token=request-secret", Name: "content echo"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{
+			{URI: "test://content-uri?token=response-secret", MIMEType: "text/plain; token=response-secret", Text: "text response-secret"},
+			{URI: "test://content-blob?token=response-secret", MIMEType: "application/octet-stream; token=response-secret", Blob: []byte("blob response-secret")},
+		}}, nil
+	})
+	if os.Getenv("WIRECMD_RESOURCE_CROSS_CONTENT") == "1" {
+		server.AddResource(&mcp.Resource{URI: "test://content-cross?token=request-cross-secret", Name: "content cross"}, func(context.Context, *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{
+				{URI: "test://content-one?token=cross-one-secret", MIMEType: "text/plain; token=cross-two-secret", Text: "text cross-two-secret"},
+				{URI: "test://content-two?token=cross-two-secret", MIMEType: "application/octet-stream; token=cross-one-secret", Blob: []byte("blob cross-one-secret")},
+			}}, nil
+		})
+	}
+	if entrySecret := os.Getenv("WIRECMD_RESOURCE_ENTRY_SECRET"); entrySecret != "" {
+		server.AddResource(&mcp.Resource{URI: "test://entry-secret?token=" + entrySecret, Name: entrySecret, Title: entrySecret, Description: entrySecret, MIMEType: entrySecret}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "entry"}}}, nil
+		})
+		server.AddResource(&mcp.Resource{URI: "test://entry-clean", Name: entrySecret, Title: entrySecret, Description: entrySecret, MIMEType: entrySecret}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "clean"}}}, nil
+		})
+		server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "test://template-entry?token=" + entrySecret + "{&cursor}", Name: entrySecret, Title: entrySecret, Description: entrySecret, MIMEType: entrySecret}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "template entry"}}}, nil
+		})
+		server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "test://template-clean/{" + entrySecret + "}", Name: entrySecret, Title: entrySecret, Description: entrySecret, MIMEType: entrySecret}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "template clean"}}}, nil
+		})
+		server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "{scheme}://template-scheme?token=" + entrySecret, Name: entrySecret, Title: entrySecret, Description: entrySecret, MIMEType: entrySecret}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "template scheme"}}}, nil
+		})
+		server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "https://{user}:{password}@template-userinfo?token=" + entrySecret, Name: entrySecret, Title: entrySecret, Description: entrySecret, MIMEType: entrySecret}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "template userinfo"}}}, nil
+		})
+		server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "https://pre{var}post:pass{var}word@template-split?token=querypre{var}post#fragmentpre{var}post", Name: "pre{var}post", Title: "pass{var}word", Description: "querypre{var}post", MIMEType: "fragmentpre{var}post"}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "template split"}}}, nil
+		})
+		server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "test://template-valueless?queryliteral", Name: "queryliteral", Title: "queryliteral", Description: "queryliteral", MIMEType: "queryliteral"}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "template valueless"}}}, nil
+		})
+		server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "test://template-expanded{?id}&queryexpanded", Name: "queryexpanded", Title: "queryexpanded", Description: "queryexpanded", MIMEType: "queryexpanded"}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+			return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "template expanded valueless"}}}, nil
+		})
+	}
+	if first, second := os.Getenv("WIRECMD_RESOURCE_SORT_FIRST"), os.Getenv("WIRECMD_RESOURCE_SORT_SECOND"); first != "" && second != "" {
+		for _, entry := range []struct {
+			value       string
+			description string
+		}{
+			{value: first, description: "raw-z"},
+			{value: second, description: "raw-a"},
+		} {
+			uri := "test://sort?token=" + entry.value
+			server.AddResource(&mcp.Resource{URI: uri, Name: entry.value, Description: entry.description}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+				return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "sorted"}}}, nil
+			})
+		}
+	}
+	server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "test://z/{id}", Name: "zeta template", Description: "last template"}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "template"}}}, nil
+	})
+	server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "test://a/{id}", Name: "alpha template", Description: "first template"}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "template"}}}, nil
+	})
+	server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "test://m/{id}", Name: "middle template", Description: "pagination template"}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "template"}}}, nil
+	})
+	server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: "test://presigned-template?signature=template-presigned-query", Name: "presigned template"}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "template"}}}, nil
+	})
+	if first, second := os.Getenv("WIRECMD_RESOURCE_SORT_FIRST"), os.Getenv("WIRECMD_RESOURCE_SORT_SECOND"); first != "" && second != "" {
+		for _, entry := range []struct {
+			value       string
+			description string
+		}{
+			{value: first, description: "raw-template-z"},
+			{value: second, description: "raw-template-a"},
+		} {
+			uriTemplate := "test://sort-template?token=" + entry.value
+			server.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: uriTemplate, Name: entry.value, Description: entry.description}, func(_ context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
+				return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{URI: request.Params.URI, Text: "sorted template"}}}, nil
+			})
+		}
+	}
+	if os.Getenv("WIRECMD_RESOURCE_LIST_PAGE_FAILURE") == "1" {
+		server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+			return func(ctx context.Context, method string, request mcp.Request) (mcp.Result, error) {
+				switch method {
+				case "resources/list":
+					if params, ok := request.GetParams().(*mcp.ListResourcesParams); ok && params.Cursor != "" {
+						return nil, errors.New("resource list second page failed after prior-page-resource-secret")
+					}
+				case "resources/templates/list":
+					if params, ok := request.GetParams().(*mcp.ListResourceTemplatesParams); ok && params.Cursor != "" {
+						return nil, errors.New("resource template list second page failed after prior-page-template-secret")
+					}
+				}
+				return next(ctx, method, request)
+			}
+		})
+	}
 	mcp.AddTool(server, &mcp.Tool{Name: "z_tool", Title: "Zed", Description: "last tool"}, echoTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "a_tool", Title: "Aye", Description: "first tool"}, echoTool)
 	mcp.AddTool(server, &mcp.Tool{
@@ -128,6 +264,149 @@ func TestMCPOperationErrorClassifiesCancellation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestResourceNormalizationErrors(t *testing.T) {
+	redactor := newRedactor(nil, io.Discard)
+	for _, raw := range []string{"relative/path", "test://host/a b", `test://host/a\b`, "test://host/%ZZ", "test://authority/{?id}", "test://authority/{#fragment}", "test://authority?token={value}"} {
+		if _, appErr := normalizedResourceURI(raw, redactor); appErr == nil || appErr.code != "resource_uri_unsupported" {
+			t.Fatalf("invalid resource URI %q error = %#v", raw, appErr)
+		}
+	}
+	for _, test := range []struct {
+		raw      string
+		template bool
+		want     string
+	}{
+		{raw: "file://#section", want: "file://#[REDACTED]"},
+		{raw: "test://user:password@authority?token=presigned-query#fragment", want: "test://[REDACTED]@authority?token=[REDACTED]#[REDACTED]"},
+		{raw: "test://authority?presigned-query", want: "test://authority?[REDACTED]"},
+		{raw: "test://authority/{?id}", template: true, want: "test://authority/{?id}"},
+		{raw: "test://authority/{?token}&signature=actual-secret", template: true, want: "test://authority/{?token}&signature=[REDACTED]"},
+		{raw: "test://authority?item={id}&signature=presigned-query", template: true, want: "test://authority?item={id}&signature=[REDACTED]"},
+		{raw: "test://authority?fixed=1{&cursor}", template: true, want: "test://authority?fixed=[REDACTED]{&cursor}"},
+		{raw: "test://host/path{?id}&token=issued-secret", template: true, want: "test://host/path{?id}&token=[REDACTED]"},
+		{raw: "test://host/path{&cursor}&token=issued-secret", template: true, want: "test://host/path{&cursor}&token=issued-secret"},
+		{raw: "test://host/path?fixed=1{&cursor}&token=issued-secret", template: true, want: "test://host/path?fixed=[REDACTED]{&cursor}&token=[REDACTED]"},
+		{raw: "test://host/path{#id}", template: true, want: "test://host/path{#id}"},
+		{raw: "test://host/path{#id}issued-secret", template: true, want: "test://host/path{#id}[REDACTED]"},
+		{raw: "test://authority?q=prefix{id}suffix", template: true, want: "test://authority?q=[REDACTED]{id}[REDACTED]"},
+		{raw: "test://authority?token={token}", template: true, want: "test://authority?token={token}"},
+		{raw: "https://{tenant}.example.com/items/{id}", template: true, want: "https://{tenant}.example.com/items/{id}"},
+		{raw: "{scheme}://example.test/items/{id}", template: true, want: "{scheme}://example.test/items/{id}"},
+		{raw: "{prefix:1}ttp://example.test/items/{id}", template: true, want: "{prefix:1}ttp://example.test/items/{id}"},
+		{raw: "ht{suffix:2}://example.test/items/{id}", template: true, want: "ht{suffix:2}://example.test/items/{id}"},
+		{raw: "https://example.test:{port}/items/{id}", template: true, want: "https://example.test:{port}/items/{id}"},
+		{raw: "https://{user}@example.test/items/{id}", template: true, want: "https://{user}@example.test/items/{id}"},
+		{raw: "https://{user}@example.test/items/{id}{?query}{#fragment}", template: true, want: "https://{user}@example.test/items/{id}{?query}{#fragment}"},
+		{raw: "https://literal:{password}@example.test/items/{id}", template: true, want: "https://[REDACTED]:{password}@example.test/items/{id}"},
+		{raw: "{scheme:3}://literal:password@example.test/items/{id}", template: true, want: "{scheme:3}://[REDACTED]:[REDACTED]@example.test/items/{id}"},
+		{raw: "test://authority/café/{user.name}", template: true, want: "test://authority/café/{user.name}"},
+	} {
+		var got string
+		var appErr *appError
+		if test.template {
+			got, appErr = normalizedResourceTemplate(test.raw, redactor)
+		} else {
+			got, appErr = normalizedResourceURI(test.raw, redactor)
+		}
+		if appErr != nil || got != test.want {
+			t.Fatalf("normalizedResourceURI(%q) = %q, %#v; want %q", test.raw, got, appErr, test.want)
+		}
+	}
+	for _, raw := range []string{"test://authority/{?token=actual-secret}", "test://authority/{broken"} {
+		if _, appErr := normalizedResourceTemplate(raw, redactor); appErr == nil || appErr.code != "resource_uri_unsupported" {
+			t.Fatalf("invalid resource template %q error = %#v", raw, appErr)
+		}
+	}
+	secretNamedTemplate := newRedactor([]string{"token"}, io.Discard)
+	if got, appErr := normalizedResourceTemplate("test://authority/{token}?value={token}&literal=token", secretNamedTemplate); appErr != nil || got != "test://authority/{token}?value={token}&literal=[REDACTED]" {
+		t.Fatalf("template secret redaction = %q, %#v", got, appErr)
+	}
+	for _, raw := range []string{"test://authority/a[b]", "test://authority/a#b#c", "test://authority/a b", "test://authority/a\\b", "test://authority/a%ZZ", "test://[foo]/path", "test://[]/path", "test://[::zz]/path", "test://[v1.]/path"} {
+		if validResourceURI(raw) {
+			t.Fatalf("invalid concrete resource URI accepted: %q", raw)
+		}
+		if validResourceTemplate(raw) {
+			t.Fatalf("invalid resource template accepted: %q", raw)
+		}
+	}
+	for _, raw := range []string{"urn:example:opaque", "test://authority/path?query=value#fragment", "test://[::1]:8443/path", "test://[v1.fe80::a]/path", "test://[Vf.name]/path"} {
+		if !validResourceURI(raw) {
+			t.Fatalf("valid concrete resource URI rejected: %q", raw)
+		}
+		if !validResourceTemplate(raw) {
+			t.Fatalf("valid resource template rejected: %q", raw)
+		}
+	}
+	protected := newRedactor(nil, io.Discard)
+	protectResourceIdentifier("test://user%2Dname:pass%2Dword@authority?token=issued%2Dsecret#fragment%2Dvalue", protected)
+	if got := protected.Redact("request failed for user%2Dname pass%2Dword issued%2Dsecret fragment%2Dvalue"); strings.Contains(got, "user%2Dname") || strings.Contains(got, "pass%2Dword") || strings.Contains(got, "issued%2Dsecret") || strings.Contains(got, "fragment%2Dvalue") {
+		t.Fatalf("resource identifier diagnostics were not redacted: %q", got)
+	}
+	shared := newRedactor([]string{"configured-secret"}, io.Discard)
+	scoped := resourceDiagnosticRedactor(shared, "test://authority?page=1&token=issued-secret")
+	if got := scoped.Redact("configured-secret issued-secret page=1"); strings.Contains(got, "configured-secret") || strings.Contains(got, "issued-secret") || strings.Contains(got, "page=1") {
+		t.Fatalf("scoped resource diagnostics were not redacted: %q", got)
+	}
+	if got := shared.Redact("Report 1 has 100 rows"); got != "Report 1 has 100 rows" {
+		t.Fatalf("shared redactor retained request-only values: %q", got)
+	}
+	templateScoped := newRedactor(nil, io.Discard)
+	protectResourceTemplateIdentifier("{scheme}://authority?token=fresh", templateScoped)
+	if got := templateScoped.Redact("x fresh scheme"); got != "x [REDACTED] scheme" {
+		t.Fatalf("scheme-expression literal protection = %q", got)
+	}
+	splitScoped := newRedactor(nil, io.Discard)
+	protectResourceTemplateIdentifier("https://pre{var}post:pass{var}word@authority?token=querypre{var}post#fragmentpre{var}post", splitScoped)
+	if got := splitScoped.Redact("pre post pass word querypre post fragmentpre post var"); got != "[REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] [REDACTED] var" {
+		t.Fatalf("split template literal protection = %q", got)
+	}
+	schemeScoped := newRedactor(nil, io.Discard)
+	protectResourceTemplateIdentifier("{scheme:3}://user:password@authority", schemeScoped)
+	if got := schemeScoped.Redact("user password scheme"); got != "[REDACTED] [REDACTED] scheme" {
+		t.Fatalf("scheme-expression userinfo protection = %q", got)
+	}
+	if appErr := resourceOperationError(fmt.Errorf("decode resource: %w", base64.CorruptInputError(3)), "resource_read_failed"); appErr.code != "resource_blob_invalid" || appErr.exitCode != exitProtocol {
+		t.Fatalf("malformed base64 error = %#v", appErr)
+	}
+	if appErr := resourceOperationError(errors.New("resource test://base64 not found"), "resource_read_failed"); appErr.code != "resource_read_failed" || appErr.exitCode != exitProtocol {
+		t.Fatalf("ordinary upstream base64-text error = %#v", appErr)
+	}
+}
+
+func TestResourceReadRejectsMalformedURIWithoutConfiguration(t *testing.T) {
+	for _, uri := range []string{"test://host/malformed-resource-secret%ZZ?token=malformed-resource-secret", "test://host/a b", `test://host/a\b`} {
+		code, output, stderr := invokeRaw(t, []string{"--direct", "mcp", "unused", "resource", uri})
+		if code != exitInvocation || stderr != "" || strings.Contains(output, "malformed-resource-secret") {
+			t.Fatalf("uri=%q code=%d stderr=%q output=%s", uri, code, stderr, output)
+		}
+		if error := decodeOutput(t, output)["error"].(map[string]any); error["code"] != "resource_uri_invalid" {
+			t.Fatalf("uri=%q error=%s", uri, output)
+		}
+	}
+}
+
+func TestResourceDiagnosticRedactorConcurrentStderr(t *testing.T) {
+	var stderr bytes.Buffer
+	shared := newRedactor([]string{"configured-secret"}, &stderr)
+	shared.ProtectEndpoint("https://example.test/mcp?token=configured-secret")
+
+	var writes sync.WaitGroup
+	writes.Add(1)
+	go func() {
+		defer writes.Done()
+		for range 1_000 {
+			_, _ = shared.Write([]byte("upstream diagnostic\n"))
+		}
+	}()
+	for range 1_000 {
+		scoped := resourceDiagnosticRedactor(shared, "test://authority?page=1")
+		if got := scoped.Redact("page=1 configured-secret"); strings.Contains(got, "page=1") || strings.Contains(got, "configured-secret") {
+			t.Fatalf("scoped resource diagnostic was not redacted: %q", got)
+		}
+	}
+	writes.Wait()
 }
 
 func TestVersionCommandIsStandaloneAndDoesNotReserveServerName(t *testing.T) {
@@ -613,6 +892,190 @@ func TestMCPNamespaceGrammarAndLegacyRejection(t *testing.T) {
 		if code != exitInvocation || decodeOutput(t, output)["error"].(map[string]any)["code"] != "mcp_namespace_required" {
 			t.Fatalf("legacy form %v: code=%d output=%s", args, code, output)
 		}
+	}
+}
+
+func TestMCPResourcesDirectContract(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	config := helperConfig(t, "", "")
+	prefix := []string{"--direct", "--config", config, "mcp", "helper"}
+	for _, args := range [][]string{
+		{"--help", "mcp", "helper", "resources"},
+		{"mcp", "helper", "resource-templates", "--help"},
+		{"mcp", "helper", "resource", "test://a", "--help"},
+	} {
+		code, output, stderr := invokeRaw(t, args)
+		if code != exitOK || stderr != "" || !strings.HasPrefix(output, "Usage:\n") {
+			t.Fatalf("resource help %v: code=%d stderr=%q output=%s", args, code, stderr, output)
+		}
+	}
+	for _, test := range []struct {
+		args string
+		want string
+	}{
+		{args: "--help mcp -- --help resources", want: "mcp -- '--help' resources"},
+		{args: "--help mcp -- resources", want: "mcp '--' resources"},
+	} {
+		code, output, stderr := invokeRaw(t, strings.Fields(test.args))
+		if code != exitOK || stderr != "" || !strings.Contains(output, test.want) {
+			t.Fatalf("resource alias help %q: code=%d stderr=%q output=%s", test.args, code, stderr, output)
+		}
+	}
+	code, output, stderr := invokeRaw(t, []string{"mcp", "--", "--help", "resource"})
+	if code != exitInvocation || stderr != "" || !strings.Contains(decodeOutput(t, output)["error"].(map[string]any)["action"].(string), "mcp -- '--help' resource URI") {
+		t.Fatalf("resource alias action: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, stderr = invokeRaw(t, []string{"mcp", "helper\x1b[31m", "resources", "--help"})
+	if code != exitOK || stderr != "" || !strings.Contains(output, "mcp 'helper\\x1B[31m' resources") || strings.Contains(output, "\x1b[31m") {
+		t.Fatalf("resource help must escape server controls: code=%d stderr=%q output=%q", code, stderr, output)
+	}
+
+	code, output, stderr = invokeRaw(t, append(prefix, "resources"))
+	if code != exitOK || stderr != "" {
+		t.Fatalf("resources: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	resources := decodeOutput(t, output)["resources"].([]any)
+	if len(resources) != 10 || resources[0].(map[string]any)["uri"] != "test://a" || resources[1].(map[string]any)["uri"] != "test://content-echo?token=[REDACTED]" || resources[2].(map[string]any)["uri"] != "test://empty" || resources[3].(map[string]any)["uri"] != "test://encoded-failure?token=[REDACTED]" || resources[4].(map[string]any)["uri"] != "test://failure?token=[REDACTED]" || resources[5].(map[string]any)["uri"] != "test://input" || resources[6].(map[string]any)["uri"] != "test://page?page=[REDACTED]" || resources[7].(map[string]any)["uri"] != "test://presigned?signature=[REDACTED]" || resources[8].(map[string]any)["uri"] != "test://secret" || resources[9].(map[string]any)["uri"] != "test://z" {
+		t.Fatalf("sorted resources: %#v", resources)
+	}
+	code, pretty, stderr := invokeRaw(t, []string{"--direct", "--format", "pretty", "--config", config, "mcp", "helper", "resources"})
+	if code != exitOK || stderr != "" || !strings.Contains(pretty, "Resources for helper:") || !strings.Contains(pretty, "URI") || strings.Contains(pretty, "\n  \"resources\": [") {
+		t.Fatalf("pretty resources: code=%d stderr=%q output=%s", code, stderr, pretty)
+	}
+
+	code, output, _ = invokeRaw(t, append(prefix, "resource-templates"))
+	if code != exitOK {
+		t.Fatalf("resource templates: code=%d output=%s", code, output)
+	}
+	templates := decodeOutput(t, output)["resource_templates"].([]any)
+	if len(templates) != 4 || templates[0].(map[string]any)["uri_template"] != "test://a/{id}" || templates[1].(map[string]any)["uri_template"] != "test://m/{id}" || templates[2].(map[string]any)["uri_template"] != "test://presigned-template?signature=[REDACTED]" || templates[3].(map[string]any)["uri_template"] != "test://z/{id}" {
+		t.Fatalf("sorted resource templates: %#v", templates)
+	}
+	if strings.Contains(output, "template-presigned-query") {
+		t.Fatalf("resource template output exposed a query value: %s", output)
+	}
+
+	code, output, _ = invokeRaw(t, append(prefix, "resource", "test://a"))
+	if code != exitOK {
+		t.Fatalf("resource read: code=%d output=%s", code, output)
+	}
+	contents := decodeOutput(t, output)["contents"].([]any)
+	if len(contents) != 2 || contents[0].(map[string]any)["text"] != "a text" || contents[1].(map[string]any)["blob"] != base64.StdEncoding.EncodeToString([]byte("blob payload")) {
+		t.Fatalf("resource contents: %#v", contents)
+	}
+	code, output, _ = invokeRaw(t, append(prefix, "resource", "test://presigned?signature=resource-presigned-query"))
+	if code != exitOK {
+		t.Fatalf("presigned resource read: code=%d output=%s", code, output)
+	}
+	presigned := decodeOutput(t, output)
+	if presigned["uri"] != "test://presigned?signature=[REDACTED]" || presigned["contents"].([]any)[0].(map[string]any)["uri"] != "test://content?signature=[REDACTED]" || strings.Contains(output, "resource-presigned-query") || strings.Contains(output, "content-presigned-query") {
+		t.Fatalf("presigned resource output=%s", output)
+	}
+	code, output, _ = invokeRaw(t, append(prefix, "resource", "test://encoded-failure?token=issued%2Dsecret"))
+	if code != exitProtocol || strings.Contains(output, "issued%2Dsecret") || decodeOutput(t, output)["error"].(map[string]any)["code"] != "resource_read_failed" {
+		t.Fatalf("encoded resource error: code=%d output=%s", code, output)
+	}
+	code, output, _ = invokeRaw(t, append(prefix, "resource", "test://content-echo?token=request-secret"))
+	if code != exitOK || strings.Contains(output, "request-secret") || strings.Contains(output, "response-secret") {
+		t.Fatalf("resource content echo: code=%d output=%s", code, output)
+	}
+	echoContents := decodeOutput(t, output)["contents"].([]any)
+	if len(echoContents) != 2 || echoContents[0].(map[string]any)["text"] != "text [REDACTED]" || strings.Contains(echoContents[0].(map[string]any)["mime_type"].(string), "response-secret") {
+		t.Fatalf("resource content text/mime redaction: %#v", echoContents)
+	}
+	echoBlob, err := base64.StdEncoding.DecodeString(echoContents[1].(map[string]any)["blob"].(string))
+	if err != nil || string(echoBlob) != "blob [REDACTED]" || strings.Contains(echoContents[1].(map[string]any)["mime_type"].(string), "response-secret") {
+		t.Fatalf("resource content blob/mime redaction: %#v, %v", echoContents, err)
+	}
+	code, output, _ = invokeRaw(t, append(prefix, "resource", "test://empty"))
+	if code != exitOK {
+		t.Fatalf("empty resource blob: code=%d output=%s", code, output)
+	}
+	empty := decodeOutput(t, output)["contents"].([]any)[0].(map[string]any)
+	if blob, exists := empty["blob"]; !exists || blob != "" {
+		t.Fatalf("empty resource blob = %#v", empty)
+	}
+	code, output, _ = invokeRaw(t, append(prefix, "resource", "test://input"))
+	if code != exitUserAction || decodeOutput(t, output)["error"].(map[string]any)["code"] != "input_required" {
+		t.Fatalf("input-required resource: code=%d output=%s", code, output)
+	}
+
+	for _, args := range [][]string{
+		append(prefix, "resources", "extra"),
+		append(prefix, "resource-templates", "extra"),
+		append(prefix, "resource"),
+		append(prefix, "resource", ""),
+		{"--direct", "--config", config, "--json", `{}`, "mcp", "helper", "resources"},
+	} {
+		code, output, _ = invokeRaw(t, args)
+		if code != exitInvocation || decodeOutput(t, output)["error"] == nil {
+			t.Fatalf("invalid resource syntax %v: code=%d output=%s", args, code, output)
+		}
+	}
+}
+
+func TestMCPResourceOrderingUsesRawUpstreamFields(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	t.Setenv("WIRECMD_RESOURCE_SORT_FIRST", "z-secret")
+	t.Setenv("WIRECMD_RESOURCE_SORT_SECOND", "a-secret")
+	config := helperConfig(t, "", "env SORT_FIRST=(secret)\"env://WIRECMD_RESOURCE_SORT_FIRST\"\nenv SORT_SECOND=(secret)\"env://WIRECMD_RESOURCE_SORT_SECOND\"")
+	prefix := []string{"--direct", "--config", config, "mcp", "helper"}
+
+	code, output, stderr := invokeRaw(t, append(prefix, "resources"))
+	if code != exitOK || stderr != "" {
+		t.Fatalf("resources: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	resources := decodeOutput(t, output)["resources"].([]any)
+	var sorted []map[string]any
+	for _, raw := range resources {
+		resource := raw.(map[string]any)
+		if description, _ := resource["description"].(string); description == "raw-a" || description == "raw-z" {
+			sorted = append(sorted, resource)
+		}
+	}
+	if len(sorted) != 2 || sorted[0]["description"] != "raw-a" || sorted[1]["description"] != "raw-z" || sorted[0]["uri"] != "test://sort?token=[REDACTED]" || sorted[1]["uri"] != "test://sort?token=[REDACTED]" || sorted[0]["name"] != "[REDACTED]" || sorted[1]["name"] != "[REDACTED]" {
+		t.Fatalf("resources must sort by raw identifiers before redaction: %#v", sorted)
+	}
+
+	code, output, stderr = invokeRaw(t, append(prefix, "resource-templates"))
+	if code != exitOK || stderr != "" {
+		t.Fatalf("resource templates: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	templates := decodeOutput(t, output)["resource_templates"].([]any)
+	sorted = nil
+	for _, raw := range templates {
+		template := raw.(map[string]any)
+		if description, _ := template["description"].(string); description == "raw-template-a" || description == "raw-template-z" {
+			sorted = append(sorted, template)
+		}
+	}
+	if len(sorted) != 2 || sorted[0]["description"] != "raw-template-a" || sorted[1]["description"] != "raw-template-z" || sorted[0]["uri_template"] != "test://sort-template?token=[REDACTED]" || sorted[1]["uri_template"] != "test://sort-template?token=[REDACTED]" || sorted[0]["name"] != "[REDACTED]" || sorted[1]["name"] != "[REDACTED]" {
+		t.Fatalf("resource templates must sort by raw identifiers before redaction: %#v", sorted)
+	}
+}
+
+func TestMCPResourcesRequireAdvertisedCapability(t *testing.T) {
+	fixture := newHTTPFixture(t)
+	config := httpConfig(t, fixture.URL)
+	code, output, _ := invokeRaw(t, []string{"--direct", "--config", config, "mcp", "remote", "resources"})
+	if code != exitProtocol || decodeOutput(t, output)["error"].(map[string]any)["code"] != "resource_capability_unavailable" {
+		t.Fatalf("resource capability: code=%d output=%s", code, output)
+	}
+}
+
+func TestMCPResourceBlobRedactsResolvedSecrets(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	const secret = "wirecmd-resource-secret"
+	t.Setenv("WIRECMD_RESOURCE_SECRET", secret)
+	config := helperConfig(t, "", `env SECRET=(secret)"env://WIRECMD_RESOURCE_SECRET"`)
+	code, output, stderr := invokeRaw(t, []string{"--direct", "--config", config, "mcp", "helper", "resource", "test://secret"})
+	if code != exitOK || stderr != "" || strings.Contains(output, secret) {
+		t.Fatalf("resource blob redaction: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	blob := decodeOutput(t, output)["contents"].([]any)[0].(map[string]any)["blob"].(string)
+	decoded, err := base64.StdEncoding.DecodeString(blob)
+	if err != nil || string(decoded) != "blob [REDACTED]" {
+		t.Fatalf("redacted blob = %q decode=%v", decoded, err)
 	}
 }
 
@@ -1378,12 +1841,14 @@ func (f *httpFixture) methodCount(want string) int {
 
 func httpConfig(t *testing.T, endpoint string) string {
 	t.Helper()
-	return writeConfig(t, "wirecmd { mcp \"remote\" { scope \"workspace\"; http "+strconv.Quote(endpoint)+" } }")
+	// These fixtures exercise HTTP transport rather than OAuth. A static
+	// Authorization header keeps them independent of the host keyring.
+	return writeConfig(t, "wirecmd { mcp \"remote\" { scope \"workspace\"; http "+strconv.Quote(endpoint)+" { header Authorization=\"Bearer fixture\" } } }")
 }
 
 func httpValuesConfig(t *testing.T, endpoint string) string {
 	t.Helper()
-	return writeConfig(t, "wirecmd { mcp \"remote\" { scope \"workspace\"; http "+strconv.Quote(endpoint)+" { query tenant=\"acme\"; query token=(secret)\"env://WIRECMD_HTTP_TOKEN\"; header X-API-Key=(secret)\"env://WIRECMD_HTTP_KEY\" } } }")
+	return writeConfig(t, "wirecmd { mcp \"remote\" { scope \"workspace\"; http "+strconv.Quote(endpoint)+" { query tenant=\"acme\"; query token=(secret)\"env://WIRECMD_HTTP_TOKEN\"; header Authorization=\"Bearer fixture\"; header X-API-Key=(secret)\"env://WIRECMD_HTTP_KEY\" } } }")
 }
 
 func helperConfigAt(t *testing.T, path, root, env string) string {
