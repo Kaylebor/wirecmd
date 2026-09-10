@@ -15,7 +15,7 @@ set -gx XDG_STATE_HOME "$temporary/state"
 set -gx XDG_RUNTIME_DIR "$temporary/runtime-not-created"
 set -l config "$temporary/base config.kdl"
 set -l stronger "$temporary/override.kdl"
-printf '%s\n' 'wirecmd {' 'mcp "alpha" { scope "workspace"; stdio "never-started" }' 'mcp "space name" { scope "workspace"; stdio "never-started" }' 'mcp "$(touch SHOULD_NOT_EXIST)" { scope "workspace"; stdio "never-started" }' 'mcp "quote\"name" { scope "workspace"; stdio "never-started" }' '}' >"$config"
+printf '%s\n' 'wirecmd {' 'mcp "alpha" { scope "workspace"; stdio "never-started" }' 'mcp "space name" { scope "workspace"; stdio "never-started" }' 'mcp "$(touch SHOULD_NOT_EXIST)" { scope "workspace"; stdio "never-started" }' 'mcp "quote\"name" { scope "workspace"; stdio "never-started" }' 'mcp "--help" { scope "workspace"; stdio "never-started" }' 'mcp "-h" { scope "workspace"; stdio "never-started" }' 'mcp "--" { scope "workspace"; stdio "never-started" }' '}' >"$config"
 printf '%s\n' 'wirecmd { mcp "beta" { scope "workspace"; stdio "never-started" } }' >"$stronger"
 source "$root/completions/wirecmd.fish"
 or exit 1
@@ -44,30 +44,44 @@ end
 
 set -l prefix "wirecmd --config "(string escape -- "$config")
 candidates "$prefix "
+require --format
+require auth
+require mcp
+reject daemon # --config is forbidden for daemon administration
+
+candidates "$prefix mcp "
 require alpha
 require 'space name'
 require '$(touch SHOULD_NOT_EXIST)'
 require 'quote"name'
-require --format
-require auth
-reject daemon # --config is forbidden for daemon administration
-
-candidates "$prefix --config=$stronger "
+require '--'
+reject '--help'
+reject '-h'
+candidates "$prefix mcp -- "
+require '--help'
+require '-h'
+require tool
+reject alpha
+candidates "$prefix mcp -- --help "
+require tool
+candidates "$prefix mcp -- tool "
+empty
+candidates "$prefix mcp --help "
+empty
+candidates "$prefix mcp -h "
+empty
+candidates "$prefix --config=$stronger mcp "
 require alpha
 require beta
-candidates "$prefix --help -- "
-require alpha
-reject --format
-reject auth
-candidates "$prefix --help -- daemon "
+candidates "$prefix mcp alpha "
+require tool
+candidates "$prefix mcp alpha tool "
 empty
-candidates "$prefix alpha "
+candidates "$prefix mcp alpha tool tool -- "
 empty
-candidates "$prefix alpha tool -- "
+candidates "$prefix mcp alpha tool tool --format "
 empty
-candidates "$prefix alpha tool --format "
-empty
-candidates "$prefix --json '{}' auth "
+candidates "$prefix --json '{}' mcp "
 empty
 candidates "$prefix auth "
 require login
@@ -81,6 +95,8 @@ reject pretty
 candidates 'wirecmd --help config '
 require trust
 require untrust
+candidates 'wirecmd --help -- '
+empty
 candidates 'wirecmd config trust '
 require status
 require list

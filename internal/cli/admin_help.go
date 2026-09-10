@@ -8,7 +8,7 @@ import (
 // Administrative help is resolved without loading configuration or executing
 // administration. A prefix -- leaves these names available as server names.
 func administrativeHelp(args []string, opts options) (helpText, *appError, bool) {
-	if opts.helpServer || len(args) == 0 {
+	if len(args) == 0 {
 		return "", nil, false
 	}
 	group := args[0]
@@ -19,14 +19,14 @@ func administrativeHelp(args []string, opts options) (helpText, *appError, bool)
 		return "", invocationError("input_with_help", "--json and --stdin cannot be used with --help", "request help without a tool input mode"), true
 	}
 	if group != "auth" && (opts.direct || len(opts.configs) != 0) {
-		return "", invocationError("admin_help_flags", group+" help does not accept --direct or --config", "run wirecmd --help "+group+"; use --help -- for a configured server"), true
+		return "", invocationError("admin_help_flags", group+" help does not accept --direct or --config", "run wirecmd --help "+group+"; use wirecmd mcp <server> for configured MCP help"), true
 	}
 	if flag, command, found := misplacedAdministrativeFlag(args); found {
 		return "", misplacedAdministrativeFlagError(group, command, flag), true
 	}
 	topic, valid := administrativeHelpTopicFor(args)
 	if !valid {
-		return "", invocationError("admin_help_usage", "unrecognized administrative help form", "run wirecmd --help "+group+"; use --help -- SERVER [TOOL] for server help"), true
+		return "", invocationError("admin_help_usage", "unrecognized administrative help form", "run wirecmd --help "+group+"; use wirecmd --help mcp <server> [tool <tool>] for MCP help"), true
 	}
 	if topic.command != "" {
 		return helpText(adminLeafHelpText(topic.group, topic.command)), nil, true

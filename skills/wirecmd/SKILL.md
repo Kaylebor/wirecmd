@@ -47,7 +47,7 @@ wirecmd config trust list
 The optional path defaults to the current directory. A missing approval is the
 recoverable `workspace_untrusted` error (exit 8); no discovered source is
 `config_not_found` (exit 3). These commands remain non-interactive. A server
-named `config` can still be called through `--json` or an exact-call envelope.
+named `config` can still be called through `wirecmd mcp config`.
 
 ## Use native LSP navigation and inspection
 
@@ -105,8 +105,7 @@ means no matching server supports the operation; `lsp_encoding_unsupported`
 requires UTF-16 support.
 
 The bare `lsp` form is native help. A configured MCP server named `lsp` remains
-callable through `--json`, `--stdin`, an exact-call object, or
-`wirecmd --help -- lsp [TOOL]`. Do not assume any language/server catalog,
+callable through `wirecmd mcp lsp`. Do not assume any language/server catalog,
 initialization options, unsaved-buffer support, mutating operations, or dynamic
 completion.
 
@@ -188,23 +187,27 @@ Start by listing configured servers, then list the selected server's tools.
 Request focused help for a tool before guessing its input shape:
 
 ```sh
-wirecmd
-wirecmd SERVER
-wirecmd --help SERVER TOOL
-wirecmd SERVER TOOL --help
+wirecmd mcp
+wirecmd mcp SERVER
+wirecmd --help mcp SERVER tool TOOL
+wirecmd mcp SERVER tool TOOL --help
 ```
 
 Use `--config PATH` in these forms when an explicit source list is required.
-For servers named daemon/config/auth, use `wirecmd --help -- SERVER [TOOL]`
-to bypass administrative help. Only the prefix separator selects help scope;
-the later tool-side separator remains the raw argument overlay.
+Servers named daemon/config/auth/lsp remain reachable through `wirecmd mcp
+SERVER`. The tool-side separator remains the raw argument overlay.
 
-`wirecmd SERVER --help` is equivalent to server help. MCP server and tool help
+`wirecmd mcp SERVER --help` is equivalent to server help. For a configured
+server literally named `--help` or `-h`, use `wirecmd mcp -- --help` or
+`wirecmd mcp -- -h`; focused help uses the corresponding prefix form. MCP server and tool help
 requires live metadata, so start the daemon or use `--direct` for a deliberate
 one-shot request; it cannot fall back while the daemon is offline. Native and
-administrative commands accept a final `--help` or `-h`. After `SERVER TOOL`, a
+administrative commands accept a final `--help` or `-h`. After `mcp SERVER tool TOOL`, a
 final help flag uses the live schema: an explicit projected `help` property
 receives it; otherwise Wirecmd renders tool help.
+
+The distinct prefix form `wirecmd --help mcp --` inspects a configured server
+literally named `--`; it is not shorthand for the `--help` alias escape.
 
 Focused help is readable text. It identifies simple projected flags, the
 original JSON names and types, and properties that need JSON input or a
@@ -215,13 +218,13 @@ fallback path.
 Use projected flags for straightforward top-level values:
 
 ```sh
-wirecmd --config PATH SERVER TOOL --query 'text' --limit 10 --enabled
+wirecmd --config PATH mcp SERVER tool TOOL --query 'text' --limit 10 --enabled
 ```
 
 For a named complex value, pass one JSON value to its documented flag:
 
 ```sh
-wirecmd --config PATH SERVER TOOL --filters '{"status":["open"]}'
+wirecmd --config PATH mcp SERVER tool TOOL --filters '{"status":["open"]}'
 ```
 
 Use `--` followed by exactly one JSON object to add properties that cannot be
@@ -229,15 +232,15 @@ projected uniquely, such as name-normalization collisions. Do not repeat a key
 already supplied by a projected flag:
 
 ```sh
-wirecmd --config PATH SERVER TOOL --query 'text' -- '{"toolName":"value"}'
+wirecmd --config PATH mcp SERVER tool TOOL --query 'text' -- '{"toolName":"value"}'
 ```
 
 When the full object is clearer, use a lossless JSON path instead:
 
 ```sh
-wirecmd --config PATH --json '{"query":"text"}' SERVER TOOL
-printf '%s\n' '{"query":"text"}' | wirecmd --config PATH --stdin SERVER TOOL
-wirecmd --config PATH SERVER '{"tool":"TOOL","arguments":{"query":"text"}}'
+wirecmd --config PATH --json '{"query":"text"}' mcp SERVER tool TOOL
+printf '%s\n' '{"query":"text"}' | wirecmd --config PATH --stdin mcp SERVER tool TOOL
+wirecmd --config PATH mcp SERVER '{"tool":"TOOL","arguments":{"query":"text"}}'
 ```
 
 ## Compose and recover

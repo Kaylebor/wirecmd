@@ -36,8 +36,7 @@ The bare `wirecmd lsp` form and its help forms are static and start no process.
 Normal navigation uses retained daemon sessions; `--direct` uses one-shot
 sessions. Normal `lsp status` requires the daemon but never starts an LSP, while
 `--direct lsp status` is configuration-only. An MCP server named `lsp` remains
-reachable through `--json`, `--stdin`, an exact-call envelope, and
-`wirecmd --help -- lsp [TOOL]`.
+reachable through `wirecmd mcp lsp` and the usual tool input forms.
 
 Results contain a flat ordered location list. Every location is attributed to
 its configured provider and uses a normalized absolute file path and one-based

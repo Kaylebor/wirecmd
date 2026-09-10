@@ -12,8 +12,11 @@ func TestNormalizeTrailingHelp(t *testing.T) {
 		handled     bool
 		code        string
 	}{
-		{name: "server", positionals: []string{"memory", "--help"}, want: []string{"memory"}, wantHelp: true, handled: true},
-		{name: "short server", positionals: []string{"memory", "-h"}, want: []string{"memory"}, wantHelp: true, handled: true},
+		{name: "mcp group", positionals: []string{"mcp", "--help"}, want: []string{"mcp"}, wantHelp: true, handled: true},
+		{name: "escaped help alias is a server", positionals: []string{"mcp", "--help"}, opts: options{mcpServerEscaped: true}, want: []string{"mcp", "--help"}, handled: false},
+		{name: "escaped help alias can use trailing help", positionals: []string{"mcp", "--help", "--help"}, opts: options{mcpServerEscaped: true}, want: []string{"mcp", "--help"}, wantHelp: true, handled: true},
+		{name: "server", positionals: []string{"mcp", "memory", "--help"}, want: []string{"mcp", "memory"}, wantHelp: true, handled: true},
+		{name: "short server", positionals: []string{"mcp", "memory", "-h"}, want: []string{"mcp", "memory"}, wantHelp: true, handled: true},
 		{name: "daemon group", positionals: []string{"daemon", "--help"}, want: []string{"daemon"}, wantHelp: true, handled: true},
 		{name: "daemon leaf", positionals: []string{"daemon", "status", "--help"}, want: []string{"daemon", "status"}, wantHelp: true, handled: true},
 		{name: "config path", positionals: []string{"config", "trust", "/workspace", "--help"}, want: []string{"config", "trust", "/workspace"}, wantHelp: true, handled: true},
@@ -21,13 +24,14 @@ func TestNormalizeTrailingHelp(t *testing.T) {
 		{name: "auth server", positionals: []string{"auth", "login", "figma", "--help"}, want: []string{"auth", "login", "figma"}, wantHelp: true, handled: true},
 		{name: "lsp flags removed", positionals: []string{"lsp", "definition", "--file", "main.go", "--line", "1", "--column", "2", "--help"}, want: []string{"lsp", "definition"}, wantHelp: true, handled: true},
 		{name: "lsp status file removed", positionals: []string{"lsp", "status", "--file", "main.go", "--help"}, want: []string{"lsp", "status"}, wantHelp: true, handled: true},
-		{name: "tool suffix preserved", positionals: []string{"memory", "search", "--help"}, want: []string{"memory", "search", "--help"}, handled: false},
-		{name: "non-final help preserved", positionals: []string{"memory", "--help", "search"}, want: []string{"memory", "--help", "search"}, handled: false},
-		{name: "exact flag only", positionals: []string{"memory", "--help=now"}, want: []string{"memory", "--help=now"}, handled: false},
-		{name: "prefix help preserved", positionals: []string{"memory", "--help"}, opts: options{help: true}, want: []string{"memory", "--help"}, wantHelp: true, handled: false},
-		{name: "separator escape preserved", positionals: []string{"daemon", "status", "--help"}, opts: options{helpServer: true}, want: []string{"daemon", "status", "--help"}, handled: false},
-		{name: "json escape preserved", positionals: []string{"memory", "--help"}, opts: options{jsonSet: true}, want: []string{"memory", "--help"}, handled: false},
-		{name: "stdin escape preserved", positionals: []string{"memory", "--help"}, opts: options{stdin: true}, want: []string{"memory", "--help"}, handled: false},
+		{name: "tool suffix preserved", positionals: []string{"mcp", "memory", "tool", "search", "--help"}, want: []string{"mcp", "memory", "tool", "search", "--help"}, handled: false},
+		{name: "non-final help preserved", positionals: []string{"mcp", "memory", "--help", "tool"}, want: []string{"mcp", "memory", "--help", "tool"}, handled: false},
+		{name: "exact flag only", positionals: []string{"mcp", "memory", "--help=now"}, want: []string{"mcp", "memory", "--help=now"}, handled: false},
+		{name: "prefix help preserved", positionals: []string{"mcp", "memory", "--help"}, opts: options{help: true}, want: []string{"mcp", "memory", "--help"}, wantHelp: true, handled: false},
+		{name: "json server suffix becomes help", positionals: []string{"mcp", "memory", "--help"}, opts: options{jsonSet: true}, want: []string{"mcp", "memory"}, wantHelp: true, handled: true},
+		{name: "stdin server suffix becomes help", positionals: []string{"mcp", "memory", "--help"}, opts: options{stdin: true}, want: []string{"mcp", "memory"}, wantHelp: true, handled: true},
+		{name: "json tool name stays literal", positionals: []string{"mcp", "memory", "tool", "--help"}, opts: options{jsonSet: true}, want: []string{"mcp", "memory", "tool", "--help"}, handled: false},
+		{name: "stdin tool suffix stays literal", positionals: []string{"mcp", "memory", "tool", "search", "--help"}, opts: options{stdin: true}, want: []string{"mcp", "memory", "tool", "search", "--help"}, handled: false},
 		{name: "invalid daemon leaf", positionals: []string{"daemon", "wat", "--help"}, want: []string{"daemon", "wat"}, wantHelp: true, handled: true},
 		{name: "invalid lsp leaf", positionals: []string{"lsp", "wat", "--help"}, want: []string{"lsp", "wat"}, handled: true, code: "lsp_help_usage"},
 	}
@@ -95,7 +99,7 @@ func TestTrailingNativeHelpIsOfflineAndSideEffectFree(t *testing.T) {
 }
 
 func TestTrailingToolHelpRemainsLiveSchemaInput(t *testing.T) {
-	positionals, opts, appErr, handled := normalizeTrailingHelp([]string{"memory", "search", "--help"}, options{})
+	positionals, opts, appErr, handled := normalizeTrailingHelp([]string{"mcp", "memory", "tool", "search", "--help"}, options{})
 	if handled || appErr != nil || opts.help {
 		t.Fatalf("tool suffix normalized unexpectedly: %v, %#v, %#v, handled=%v", positionals, opts, appErr, handled)
 	}
@@ -106,7 +110,7 @@ func TestTrailingToolHelpRemainsLiveSchemaInput(t *testing.T) {
 }
 
 func TestShortTrailingToolHelpUsesHelpProjection(t *testing.T) {
-	request, requestErr := parseRequest([]string{"memory", "search", "--query", "value", "-h"}, options{}, nil)
+	request, requestErr := parseRequest([]string{"mcp", "memory", "tool", "search", "--query", "value", "-h"}, options{}, nil)
 	if requestErr != nil || request.operation != callTool || len(request.projected) != 2 || request.projected[1].Name != "help" {
 		t.Fatalf("parseRequest = %#v, %#v; want projected help argument", request, requestErr)
 	}

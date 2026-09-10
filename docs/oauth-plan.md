@@ -38,7 +38,7 @@ These commands use automatic configuration discovery or the supplied ordered
 `--config` paths, like ordinary operations. They are daemon-backed by default;
 `--direct` deliberately performs the one-shot operation without the daemon.
 The administrative forms do not accept call-only argument modes. A server
-named `auth` remains callable through `--json` or an exact-call envelope.
+named `auth` remains callable through `wirecmd mcp auth`.
 
 `status` reports only local state (`authenticated` or `unauthenticated`),
 registration kind, and token expiry when known. It does not contact the

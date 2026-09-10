@@ -92,11 +92,11 @@ Do not pass `--config` to `daemon run`: callers select configuration.
 In another terminal, discover and invoke the configured fixture:
 
 ```sh
-wirecmd --config ./wirecmd.kdl
-wirecmd --config ./wirecmd.kdl local
-wirecmd --config ./wirecmd.kdl --help local set_value
-wirecmd --config ./wirecmd.kdl local set_value --value hello
-wirecmd --config ./wirecmd.kdl local read_value
+wirecmd --config ./wirecmd.kdl mcp
+wirecmd --config ./wirecmd.kdl mcp local
+wirecmd --config ./wirecmd.kdl --help mcp local tool set_value
+wirecmd --config ./wirecmd.kdl mcp local tool set_value --value hello
+wirecmd --config ./wirecmd.kdl mcp local tool read_value
 ```
 
 For other servers, use their discovered tool names and focused-help arguments.
@@ -138,18 +138,16 @@ are non-interactive and reject ordinary execution flags. If a workspace
 configuration is present without a trusted root, Wirecmd returns the
 `workspace_untrusted` structured error (exit 8) with the exact trust action. If
 no configuration source exists, it returns `config_not_found` (exit 3). A
-server named `config` remains callable through `--json` or an exact-call
-envelope.
+server named `config` remains callable through `wirecmd mcp config`.
 
 Use `wirecmd --help daemon|config|auth` for an offline overview, or name an
 administrative command for focused help, such as `wirecmd --help daemon reload`,
 `wirecmd --help config trust status`, or `wirecmd --help auth login`.
 Administrative help never executes the command. Known Wirecmd flags placed in
 an administrative path position are rejected with ownership guidance rather
-than being interpreted as paths. To inspect a server whose name collides with
-administration, use `wirecmd --help -- daemon [TOOL]` (likewise `config` or
-`auth`). This prefix separator is distinct from the tool-side `--` raw JSON
-overlay.
+than being interpreted as paths. MCP servers whose names collide with
+administration are naturally addressed through `wirecmd mcp NAME`; the
+tool-side `--` remains the raw JSON overlay.
 
 ## Native LSP navigation and inspection
 
@@ -206,8 +204,8 @@ passes its explicit query, including an empty query, to every configured
 provider without local ranking or truncation. These inspection results have
 provider outcomes and partial-failure semantics matching navigation, while
 using their own result collections and counts. The bare `lsp` form is native
-help, but an MCP server named `lsp` remains available via `--json`, `--stdin`,
-an exact-call object, or `wirecmd --help -- lsp [TOOL]`. See the
+help, but an MCP server named `lsp` remains available through
+`wirecmd mcp lsp`. See the
 [LSP plan](docs/lsp-plan.md) for the complete contract and qualification
 boundary.
 
@@ -220,12 +218,17 @@ compact newline-terminated JSON. Override presentation with prefix flags:
 
 ```sh
 wirecmd --format pretty --color never daemon status
-wirecmd --format json --color never SERVER TOOL
+wirecmd --format json --color never mcp SERVER tool TOOL
 ```
 
-Configured servers also accept `wirecmd SERVER --help`. MCP server and focused
+Configured servers also accept `wirecmd mcp SERVER --help`. MCP server and focused
 tool help obtains live metadata, so it requires a running daemon or explicit
 `--direct` execution; it does not fall back while the daemon is offline.
+For aliases literally named `--help` or `-h`, use `wirecmd mcp -- --help` or
+`wirecmd mcp -- -h`; focused help uses the corresponding `--help mcp -- ...`
+form. The namespace-local escape does not affect the raw overlay after a tool
+name. Separately, `wirecmd --help mcp --` inspects a configured alias literally
+named `--`; it is not shorthand for the `--help` escape.
 Everything after an MCP tool name normally belongs to that tool. A final
 `--help` or `-h` uses the live schema: an explicitly projected `help` property
 remains tool input; otherwise Wirecmd renders focused tool help.
@@ -238,20 +241,20 @@ using a PTY should select `--format json --color never` for machine output.
 Output detection does not change OAuth's separate stdin/stderr TTY checks.
 Successful help stays plain text and `--version` remains standalone.
 
-Client presentation flags must precede server/tool names; flags after the tool
+Client presentation flags must precede `mcp`/server/tool names; flags after the tool
 name belong to the tool. `--json` still supplies tool input, not output format.
 See the [output contract](docs/output-plan.md) for details.
 
 ```sh
 # Discover a server's tools, then inspect the one needed.
-wirecmd --config ./wirecmd.kdl --help memory
-wirecmd --config ./wirecmd.kdl --help memory create_entities
+wirecmd --config ./wirecmd.kdl --help mcp memory
+wirecmd --config ./wirecmd.kdl --help mcp memory tool create_entities
 
 # Use generated top-level flags where the schema is unambiguous.
-wirecmd --config ./wirecmd.kdl memory create_entities --entities '[...]'
+wirecmd --config ./wirecmd.kdl mcp memory tool create_entities --entities '[...]'
 
 # Merge collision-prone or otherwise raw properties structurally.
-wirecmd --config ./wirecmd.kdl server tool --simple value -- '{"tool_name":"one","toolName":"two"}'
+wirecmd --config ./wirecmd.kdl mcp MCP_SERVER tool TOOL --simple value -- '{"tool_name":"one","toolName":"two"}'
 ```
 
 `--json`, `--stdin`, and the exact-call object remain the lossless fallback for
@@ -365,7 +368,7 @@ non-interactive caller to perform login from a local interactive terminal.
   operation.
 - `lsp_selector_ambiguous`: make matching selectors choose one language ID per
   provider; `lsp_encoding_unsupported` requires UTF-16 support.
-- Argument errors: read `wirecmd --help SERVER TOOL`; pass complex flag values
+- Argument errors: read `wirecmd --help mcp SERVER tool TOOL`; pass complex flag values
   as the value itself, not an object wrapping its property name.
 
 Errors preserve category, code, message, action, and a nonzero exit status.
@@ -384,8 +387,8 @@ For a custom Fish configuration directory, use its `completions` directory
 instead. Start a new Fish session after installation. `go install` installs
 the binary only; it does not install shell completion.
 
-Completion covers client flags, administration, paths, and locally configured
-server names. It respects ordered `--config` flags and workspace trust, but
+Completion covers client flags, administration, paths, the `mcp` namespace,
+and locally configured server names. It respects ordered `--config` flags and workspace trust, but
 never contacts the daemon, resolves secrets, starts an MCP, or opens OAuth.
 Invalid/untrusted configuration yields no server suggestions; use an ordinary
 command to obtain diagnostics. Completion reads disk configuration, which may
@@ -395,7 +398,7 @@ flags, and JSON contents are not completed. Bash/Zsh support is deferred.
 ## Project documents
 
 - [Onboarding and completion](docs/onboarding-plan.md) defines administrative
-  help, the reserved-name escape, and local-only Fish completion.
+  help, the MCP namespace, and local-only Fish completion.
 - [Product thesis](docs/product-thesis.md) defines the authoritative product
   direction and boundaries.
 - [Validation plan](docs/validation-plan.md) records the completed first

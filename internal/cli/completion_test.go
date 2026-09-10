@@ -51,6 +51,7 @@ func TestServerCompletionIsQuietForRejectedOrUnavailableInput(t *testing.T) {
 		{"--completion-servers", "--config", config, "available"},
 		{"--completion-servers", "--config"},
 		{"--completion-servers", "--unknown"},
+		{"--completion-servers", "--"},
 	} {
 		code, stdout, stderr := invoke(t, args)
 		if code != exitOK || stdout != "" || stderr != "" {

@@ -93,25 +93,25 @@ wirecmd() {
     --config "$work_dir/wirecmd.kdl" "$@"
 }
 
-wirecmd legacy-stdio | jq -e '.ok and any(.tools[]; .name == "set_value")' >/dev/null
-wirecmd --help legacy-stdio set_value | grep -F -- '--value' >/dev/null
-wirecmd legacy-stdio set_value --value stdio-retained \
+wirecmd mcp legacy-stdio | jq -e '.ok and any(.tools[]; .name == "set_value")' >/dev/null
+wirecmd --help mcp legacy-stdio tool set_value | grep -F -- '--value' >/dev/null
+wirecmd mcp legacy-stdio tool set_value --value stdio-retained \
   | jq -e '.ok and .result.data.value == "stdio-retained"' >/dev/null
-wirecmd legacy-stdio read_value \
+wirecmd mcp legacy-stdio tool read_value \
   | jq -e '.ok and .result.data.exists and .result.data.value == "stdio-retained"' >/dev/null
 
-wirecmd legacy-http '{"tool":"set_value","arguments":{"value":"http-retained"}}' \
+wirecmd mcp legacy-http '{"tool":"set_value","arguments":{"value":"http-retained"}}' \
   | jq -e '.ok and .result.data.value == "http-retained"' >/dev/null
-wirecmd legacy-http read_value \
+wirecmd mcp legacy-http tool read_value \
   | jq -e '.ok and .result.data.exists and .result.data.value == "http-retained"' >/dev/null
 
-"$work_dir/wirecmd" --direct --config "$work_dir/wirecmd.kdl" legacy-stdio read_value \
+"$work_dir/wirecmd" --direct --config "$work_dir/wirecmd.kdl" mcp legacy-stdio tool read_value \
   | jq -e '.ok and (.result.data.exists | not)' >/dev/null
-"$work_dir/wirecmd" --direct --config "$work_dir/wirecmd.kdl" legacy-http read_value \
+"$work_dir/wirecmd" --direct --config "$work_dir/wirecmd.kdl" mcp legacy-http tool read_value \
   | jq -e '.ok and (.result.data.exists | not)' >/dev/null
 
 set +e
-failure="$(wirecmd legacy-http fail)"
+failure="$(wirecmd mcp legacy-http tool fail)"
 failure_exit=$?
 set -e
 [[ "$failure_exit" -eq 5 ]]
@@ -120,9 +120,9 @@ jq -e '.ok == false and .error.category == "upstream_tool" and .error.code == "t
 
 XDG_RUNTIME_DIR="$runtime_dir" "$work_dir/wirecmd" daemon reload \
   | jq -e '.ok and .reload.instances_retired == 2' >/dev/null
-wirecmd legacy-stdio read_value \
+wirecmd mcp legacy-stdio tool read_value \
   | jq -e '.ok and (.result.data.exists | not)' >/dev/null
-wirecmd legacy-http read_value \
+wirecmd mcp legacy-http tool read_value \
   | jq -e '.ok and (.result.data.exists | not)' >/dev/null
 
 [[ -s "$stdio_protocol" && -s "$http_protocol" ]]

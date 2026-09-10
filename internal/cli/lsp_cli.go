@@ -308,7 +308,7 @@ func parsePositiveLSPPosition(name, value string) (int, error) {
 }
 
 func lspHelp(positionals []string, opts options) (helpText, *appError, bool) {
-	if opts.helpServer || len(positionals) == 0 || positionals[0] != "lsp" {
+	if len(positionals) == 0 || positionals[0] != "lsp" {
 		return "", nil, false
 	}
 	if opts.jsonSet || opts.stdin {
@@ -338,8 +338,8 @@ func lspHelpText() string {
 Wirecmd routes file operations to every configured LSP selector matching the
 file; workspace-symbols queries every configured provider.
 Normal calls retain sessions through the daemon; --direct uses one-shot
-processes. The bare lsp command is native help. Use --help --, --json, --stdin,
-or an exact call object to reach a configured MCP server named lsp.
+processes. The bare lsp command is native help. Use wirecmd mcp lsp to reach a
+configured MCP server named lsp.
 `
 }
 

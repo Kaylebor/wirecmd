@@ -20,7 +20,7 @@ func TestWirecmdSignalProcess(t *testing.T) {
 	if os.Getenv("GO_WIRECMD_SIGNAL_PROCESS") != "1" {
 		return
 	}
-	os.Args = []string{"wirecmd", "--direct", "--config", os.Getenv("GO_WIRECMD_SIGNAL_CONFIG"), "blocking", "block"}
+	os.Args = []string{"wirecmd", "--direct", "--config", os.Getenv("GO_WIRECMD_SIGNAL_CONFIG"), "mcp", "blocking", "tool", "block"}
 	main()
 }
 

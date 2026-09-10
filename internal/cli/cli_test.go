@@ -444,14 +444,8 @@ func TestDirectStreamableHTTPConnectionFailures(t *testing.T) {
 }
 
 func TestHTTPQueryIsRedactedFromConnectionDiagnostics(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	endpoint := "http://" + listener.Addr().String() + "/mcp?access_token=http-query-secret"
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
+	nonMCP := newAbruptCloseHTTPServer(t)
+	endpoint := nonMCP.URL + "/mcp?access_token=http-query-secret"
 	config := httpConfig(t, endpoint)
 	code, output, stderr := invoke(t, []string{"--direct", "--config", config, "remote"})
 	if code != exitTransport || strings.Contains(output, "access_token") || strings.Contains(output, "http-query-secret") || strings.Contains(stderr, "access_token") || strings.Contains(stderr, "http-query-secret") {
@@ -460,6 +454,20 @@ func TestHTTPQueryIsRedactedFromConnectionDiagnostics(t *testing.T) {
 	if !strings.Contains(output, "?[REDACTED]") {
 		t.Fatalf("direct HTTP endpoint was not usefully sanitized: %s", output)
 	}
+}
+
+func newAbruptCloseHTTPServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		connection, _, err := writer.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("hijack HTTP connection: %v", err)
+			return
+		}
+		_ = connection.Close()
+	}))
+	t.Cleanup(server.Close)
+	return server
 }
 
 func TestInvocationValidationAndDaemonFailure(t *testing.T) {
@@ -497,6 +505,337 @@ func TestHelpDoesNotRequireConfiguration(t *testing.T) {
 	if code != exitOK || stderr != "" || !strings.Contains(output, "--config PATH") || !strings.HasSuffix(output, "\n") {
 		t.Fatalf("help: code=%d stderr=%q output=%s", code, stderr, output)
 	}
+}
+
+func TestHelpRejectsToolInputBeforeStaticMCPHelp(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		args  []string
+		input string
+	}{
+		{name: "json", args: []string{"--json", `{}`, "--help", "mcp"}},
+		{name: "stdin", args: []string{"--stdin", "--help", "mcp"}, input: `{}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			code, output, stderr := invokeRawWithInput(t, test.args, test.input)
+			if code != exitInvocation || stderr != "" || decodeOutput(t, output)["error"].(map[string]any)["code"] != "input_with_help" {
+				t.Fatalf("help with tool input: code=%d stderr=%q output=%s", code, stderr, output)
+			}
+		})
+	}
+}
+
+func TestMCPServerSuffixHelpRejectsToolInput(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		args  []string
+		input string
+	}{
+		{name: "json", args: []string{"--json", `{}`, "mcp", "server", "--help"}},
+		{name: "stdin", args: []string{"--stdin", "mcp", "server", "--help"}, input: `{}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			code, output, stderr := invokeRawWithInput(t, test.args, test.input)
+			if code != exitInvocation || stderr != "" || decodeOutput(t, output)["error"].(map[string]any)["code"] != "input_with_help" {
+				t.Fatalf("MCP server suffix help with tool input: code=%d stderr=%q output=%s", code, stderr, output)
+			}
+		})
+	}
+}
+
+func TestMCPToolHelpTokensKeepToolOwnershipWithToolInput(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	config := helperConfig(t, "", "")
+	for _, test := range []struct {
+		name  string
+		args  []string
+		input string
+	}{
+		{name: "json literal tool", args: []string{"--direct", "--config", config, "--json", `{}`, "mcp", "helper", "tool", "--help"}},
+		{name: "stdin literal tool", args: []string{"--direct", "--config", config, "--stdin", "mcp", "helper", "tool", "--help"}, input: `{}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			code, output, stderr := invokeRawWithInput(t, test.args, test.input)
+			if code != exitProtocol || stderr != "" || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_call_failed" {
+				t.Fatalf("literal tool help token: code=%d stderr=%q output=%s", code, stderr, output)
+			}
+		})
+	}
+
+	code, output, stderr := invokeRaw(t, []string{"--direct", "--config", config, "--json", `{}`, "mcp", "helper", "tool", "projected", "--help"})
+	if code != exitInvocation || stderr != "" || decodeOutput(t, output)["error"].(map[string]any)["code"] != "input_with_projected_arguments" {
+		t.Fatalf("projected tool help ownership: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+}
+
+func TestMCPNamespaceGrammarAndLegacyRejection(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	config := helperConfig(t, "", "")
+	state := filepath.Join(t.TempDir(), "state-not-created")
+	t.Setenv("XDG_STATE_HOME", state)
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(t.TempDir(), "runtime-not-created"))
+
+	code, output, stderr := invokeRaw(t, nil)
+	if code != exitOK || stderr != "" || !strings.Contains(output, "wirecmd mcp") {
+		t.Fatalf("bare global help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Fatalf("bare global help touched local state: %v", err)
+	}
+
+	code, output, _ = invokeRaw(t, []string{"--direct", "--config", config, "mcp"})
+	if code != exitOK || decodeOutput(t, output)["servers"] == nil {
+		t.Fatalf("mcp server list: code=%d output=%s", code, output)
+	}
+	code, output, _ = invokeRaw(t, []string{"--direct", "--config", config, "mcp", "helper"})
+	if code != exitOK || decodeOutput(t, output)["tools"] == nil {
+		t.Fatalf("mcp tool list: code=%d output=%s", code, output)
+	}
+	code, output, _ = invokeRaw(t, []string{"--direct", "--config", config, "mcp", "helper", "tool", "a_tool"})
+	if code != exitOK || decodeOutput(t, output)["tool"] != "a_tool" {
+		t.Fatalf("mcp default call: code=%d output=%s", code, output)
+	}
+	code, output, _ = invokeRaw(t, []string{"--direct", "--config", config, "mcp", "helper", `{"tool":"a_tool","arguments":{"name":"Ada"}}`})
+	if code != exitOK || decodeOutput(t, output)["tool"] != "a_tool" {
+		t.Fatalf("mcp exact call: code=%d output=%s", code, output)
+	}
+	code, output, _ = invokeRaw(t, []string{"--direct", "--config", config, "--json", `{"name":"Ada"}`, "mcp", "helper", "tool", "a_tool"})
+	if code != exitOK || decodeOutput(t, output)["tool"] != "a_tool" {
+		t.Fatalf("mcp JSON call: code=%d output=%s", code, output)
+	}
+
+	for _, args := range [][]string{
+		{"--direct", "--config", config, "helper"},
+		{"--direct", "--config", config, "helper", "a_tool"},
+		{"--direct", "--config", config, "helper", `{"tool":"a_tool","arguments":{}}`},
+	} {
+		code, output, _ = invokeRaw(t, args)
+		if code != exitInvocation || decodeOutput(t, output)["error"].(map[string]any)["code"] != "mcp_namespace_required" {
+			t.Fatalf("legacy form %v: code=%d output=%s", args, code, output)
+		}
+	}
+}
+
+func TestMCPNamespaceFocusedHelpAndToolOwnedHelp(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	config := helperConfig(t, "", "")
+	code, output, _ := invokeRaw(t, []string{"--direct", "--config", config, "--help", "mcp", "helper", "tool", "projected"})
+	if code != exitOK || !strings.Contains(output, "--query") || !strings.Contains(output, "mcp helper tool projected") {
+		t.Fatalf("prefix focused help: code=%d output=%s", code, output)
+	}
+	code, suffix, _ := invokeRaw(t, []string{"--direct", "--config", config, "mcp", "helper", "tool", "projected", "--help"})
+	if code != exitOK || suffix != output {
+		t.Fatalf("suffix focused help: code=%d output=%s", code, suffix)
+	}
+	code, output, _ = invokeRaw(t, []string{"--direct", "--config", config, "mcp", "helper", "tool", "projected_help", "--help"})
+	if code != exitOK || decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)["help"] != true {
+		t.Fatalf("tool-owned help: code=%d output=%s", code, output)
+	}
+}
+
+func TestMCPEscapedHelpShapedServerAliases(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	config := writeConfig(t, "wirecmd {\n"+
+		"mcp \"--help\" { scope \"workspace\"; stdio "+strconv.Quote(os.Args[0])+" { arg \"-test.run=TestHelperProcess\"; arg \"--\" } }\n"+
+		"mcp \"-h\" { scope \"workspace\"; stdio "+strconv.Quote(os.Args[0])+" { arg \"-test.run=TestHelperProcess\"; arg \"--\" } }\n"+
+		"mcp \"--\" { scope \"workspace\"; stdio "+strconv.Quote(os.Args[0])+" { arg \"-test.run=TestHelperProcess\"; arg \"--\" } }\n}")
+
+	for _, alias := range []string{"--help", "-h"} {
+		t.Run(alias, func(t *testing.T) {
+			prefix := []string{"--direct", "--config", config, "mcp", "--", alias}
+			code, output, stderr := invokeRaw(t, prefix)
+			if code != exitOK || stderr != "" || decodeOutput(t, output)["server"] != alias {
+				t.Fatalf("escaped server list: code=%d stderr=%q output=%s", code, stderr, output)
+			}
+
+			code, output, stderr = invokeRaw(t, []string{"--direct", "--config", config, "--help", "mcp", "--", alias})
+			if code != exitOK || stderr != "" || !strings.Contains(output, "projected") {
+				t.Fatalf("escaped prefix server help: code=%d stderr=%q output=%s", code, stderr, output)
+			}
+
+			code, output, stderr = invokeRaw(t, append([]string{"--direct", "--config", config, "--help", "mcp", "--", alias}, "tool", "projected"))
+			if code != exitOK || stderr != "" || !strings.Contains(output, "--query") {
+				t.Fatalf("escaped prefix tool help: code=%d stderr=%q output=%s", code, stderr, output)
+			}
+
+			code, output, stderr = invokeRaw(t, append(prefix, "tool", "a_tool"))
+			if code != exitOK || stderr != "" || decodeOutput(t, output)["tool"] != "a_tool" {
+				t.Fatalf("escaped tool call: code=%d stderr=%q output=%s", code, stderr, output)
+			}
+		})
+	}
+
+	code, output, stderr := invokeRaw(t, []string{"--direct", "--config", config, "mcp", "--"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["server"] != "--" {
+		t.Fatalf("double-dash server list: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	code, output, stderr = invokeRaw(t, []string{"--direct", "--config", config, "--help", "mcp", "--"})
+	if code != exitOK || stderr != "" || !strings.Contains(output, "projected") {
+		t.Fatalf("double-dash prefix server help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	code, output, stderr = invokeRaw(t, []string{"--direct", "--config", config, "mcp", "--", `{"tool":"a_tool","arguments":{}}`})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["tool"] != "a_tool" {
+		t.Fatalf("double-dash exact call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	code, output, stderr = invokeRaw(t, []string{"--direct", "--config", config, "mcp", "--", "tool", "projected", "--query", "Ada", "--", `{"tool_name":"one","toolName":"two"}`})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("double-dash raw overlay: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	data := decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)
+	if data["query"] != "Ada" || data["tool_name"] != "one" || data["toolName"] != "two" {
+		t.Fatalf("double-dash raw overlay data=%#v", data)
+	}
+}
+
+func TestLegacyMCPFormsAndHelpSeparatorAreRejectedRaw(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	config := helperConfig(t, "", "")
+	legacy := []struct {
+		name  string
+		args  []string
+		input string
+	}{
+		{"top-level tool list", []string{"--direct", "--config", config, "helper"}, ""},
+		{"top-level exact envelope", []string{"--direct", "--config", config, "helper", `{"tool":"a_tool","arguments":{}}`}, ""},
+		{"top-level JSON input", []string{"--direct", "--config", config, "--json", `{}`, "helper", "a_tool"}, ""},
+		{"top-level stdin input", []string{"--direct", "--config", config, "--stdin", "helper", "a_tool"}, `{}`},
+		{"top-level projected argument", []string{"--direct", "--config", config, "helper", "projected", "--query", "Ada"}, ""},
+		{"top-level raw overlay", []string{"--direct", "--config", config, "helper", "projected", "--", `{"tool_name":"Ada"}`}, ""},
+		{"top-level trailing help", []string{"--direct", "--config", config, "helper", "projected", "--help"}, ""},
+	}
+	for _, test := range legacy {
+		t.Run(test.name, func(t *testing.T) {
+			code, output, _ := invokeRawWithInput(t, test.args, test.input)
+			if code != exitInvocation || decodeOutput(t, output)["error"].(map[string]any)["code"] != "mcp_namespace_required" {
+				t.Fatalf("code=%d output=%s", code, output)
+			}
+		})
+	}
+
+	t.Run("exact envelope migration does not echo sensitive input", func(t *testing.T) {
+		const secret = "migration-secret-must-not-appear"
+		code, output, stderr := invokeRaw(t, []string{"helper", `{"tool":"a_tool","arguments":{"token":"` + secret + `"}}`})
+		if code != exitInvocation || strings.Contains(output, secret) || strings.Contains(stderr, secret) || !strings.Contains(output, "exact-call-object") {
+			t.Fatalf("code=%d stderr=%q output=%s", code, stderr, output)
+		}
+	})
+
+	t.Run("argument-bearing migrations use secret-free placeholders", func(t *testing.T) {
+		const secret = "migration-argument-secret-must-not-appear"
+		for _, test := range []struct {
+			name       string
+			args       []string
+			input      string
+			wantAction string
+		}{
+			{name: "json", args: []string{"--json", `{"token":"` + secret + `"}`, "helper", "a_tool"}, wantAction: "--json '<JSON_OBJECT>' mcp 'helper' tool 'a_tool'"},
+			{name: "stdin", args: []string{"--stdin", "helper", "a_tool"}, input: `{"token":"` + secret + `"}`, wantAction: "'<JSON_OBJECT>' | wirecmd --stdin mcp 'helper' tool 'a_tool'"},
+			{name: "json help-shaped tool", args: []string{"--json", `{"token":"` + secret + `"}`, "helper", "--help"}, wantAction: "--json '<JSON_OBJECT>' mcp 'helper' tool '--help'"},
+			{name: "stdin help-shaped tool", args: []string{"--stdin", "helper", "--help"}, input: `{"token":"` + secret + `"}`, wantAction: "'<JSON_OBJECT>' | wirecmd --stdin mcp 'helper' tool '--help'"},
+			{name: "json JSON-shaped tool", args: []string{"--json", `{}`, "helper", `{"literal":"` + secret + `"}`}, wantAction: "--json '<JSON_OBJECT>' mcp 'helper' tool '<TOOL_NAME>'"},
+			{name: "stdin JSON-shaped tool", args: []string{"--stdin", "helper", `{"literal":"` + secret + `"}`}, input: `{}`, wantAction: "'<JSON_OBJECT>' | wirecmd --stdin mcp 'helper' tool '<TOOL_NAME>'"},
+			{name: "projected", args: []string{"helper", "projected", "--query", secret}, wantAction: "mcp 'helper' tool 'projected' <original-tool-arguments>"},
+			{name: "raw overlay", args: []string{"helper", "projected", "--", `{"token":"` + secret + `"}`}, wantAction: "mcp 'helper' tool 'projected' <original-tool-arguments>"},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				code, output, stderr := invokeRawWithInput(t, test.args, test.input)
+				if code != exitInvocation || strings.Contains(output, secret) || strings.Contains(stderr, secret) {
+					t.Fatalf("code=%d stderr=%q output=%s", code, stderr, output)
+				}
+				action := decodeOutput(t, output)["error"].(map[string]any)["action"].(string)
+				if !strings.Contains(action, test.wantAction) {
+					t.Fatalf("migration action = %q, want %q", action, test.wantAction)
+				}
+			})
+		}
+	})
+
+	t.Run("trailing help migration remains help", func(t *testing.T) {
+		for _, help := range []string{"--help", "-h"} {
+			code, output, stderr := invokeRaw(t, []string{"helper", help})
+			if code != exitInvocation || stderr != "" {
+				t.Fatalf("server help %q: code=%d stderr=%q output=%s", help, code, stderr, output)
+			}
+			action := decodeOutput(t, output)["error"].(map[string]any)["action"].(string)
+			if !strings.HasPrefix(action, "use wirecmd --help mcp ") || strings.Contains(action, " tool ") || strings.Contains(action, "use wirecmd mcp ") {
+				t.Fatalf("server help %q migration action = %q", help, action)
+			}
+		}
+
+		for _, help := range []string{"--help", "-h"} {
+			code, output, stderr := invokeRaw(t, []string{"helper", "projected", help})
+			if code != exitInvocation || stderr != "" {
+				t.Fatalf("help %q: code=%d stderr=%q output=%s", help, code, stderr, output)
+			}
+			action := decodeOutput(t, output)["error"].(map[string]any)["action"].(string)
+			if !strings.HasPrefix(action, "use wirecmd --help mcp ") || !strings.Contains(action, " tool ") || strings.Contains(action, "use wirecmd mcp ") {
+				t.Fatalf("help %q migration action = %q", help, action)
+			}
+		}
+
+		code, output, stderr := invokeRaw(t, []string{"--help", "helper", "projected"})
+		if code != exitInvocation || stderr != "" {
+			t.Fatalf("prefix tool help: code=%d stderr=%q output=%s", code, stderr, output)
+		}
+		action := decodeOutput(t, output)["error"].(map[string]any)["action"].(string)
+		if !strings.HasPrefix(action, "use wirecmd --help mcp ") || !strings.Contains(action, " tool ") || strings.Contains(action, "use wirecmd mcp ") {
+			t.Fatalf("prefix tool help migration action = %q", action)
+		}
+
+		const secret = "help-migration-secret-must-not-appear"
+		code, output, stderr = invokeRaw(t, []string{"--help", "helper", `{"tool":"a_tool","arguments":{"token":"` + secret + `"}}`})
+		if code != exitInvocation || strings.Contains(output, secret) || strings.Contains(stderr, secret) {
+			t.Fatalf("prefix exact help: code=%d stderr=%q output=%s", code, stderr, output)
+		}
+		action = decodeOutput(t, output)["error"].(map[string]any)["action"].(string)
+		if !strings.HasPrefix(action, "use wirecmd --help mcp ") || strings.Contains(action, "exact-call-object") || strings.Contains(action, " tool ") {
+			t.Fatalf("prefix exact help migration action = %q", action)
+		}
+	})
+	for _, name := range []string{"daemon", "config", "auth", "lsp"} {
+		t.Run("obsolete help separator "+name, func(t *testing.T) {
+			code, output, _ := invokeRaw(t, []string{"--help", "--", name})
+			if code != exitInvocation {
+				t.Fatalf("code=%d output=%s", code, output)
+			}
+			error := decodeOutput(t, output)["error"].(map[string]any)
+			if error["code"] != "mcp_namespace_required" || !strings.Contains(error["action"].(string), "wirecmd --help mcp") || !strings.Contains(error["action"].(string), name) {
+				t.Fatalf("error=%s", output)
+			}
+		})
+	}
+
+	for _, alias := range []string{"--help", "-h"} {
+		t.Run("help-shaped alias migration "+alias, func(t *testing.T) {
+			code, output, stderr := invokeRaw(t, []string{"--", alias})
+			if code != exitInvocation || stderr != "" {
+				t.Fatalf("code=%d stderr=%q output=%s", code, stderr, output)
+			}
+			action := decodeOutput(t, output)["error"].(map[string]any)["action"].(string)
+			if !strings.Contains(action, "wirecmd mcp -- ") || !strings.Contains(action, alias) {
+				t.Fatalf("migration action = %q", action)
+			}
+
+			code, output, stderr = invokeRaw(t, []string{"--help", "--", alias})
+			if code != exitInvocation || stderr != "" {
+				t.Fatalf("help: code=%d stderr=%q output=%s", code, stderr, output)
+			}
+			action = decodeOutput(t, output)["error"].(map[string]any)["action"].(string)
+			if !strings.Contains(action, "wirecmd --help mcp -- ") || !strings.Contains(action, alias) {
+				t.Fatalf("help migration action = %q", action)
+			}
+		})
+	}
+
+	t.Run("separator-shaped config value is not an obsolete escape", func(t *testing.T) {
+		code, output, stderr := invokeRaw(t, []string{"--help", "--config", "--", "mcp"})
+		if code != exitOK || stderr != "" || !strings.Contains(output, "MCP capabilities:") {
+			t.Fatalf("code=%d stderr=%q output=%s", code, stderr, output)
+		}
+	})
 }
 
 func TestFocusedHelpAndProjectedArguments(t *testing.T) {
@@ -1079,9 +1418,101 @@ func invoke(t *testing.T, args []string) (int, string, string) {
 
 func invokeWithInput(t *testing.T, args []string, input string) (int, string, string) {
 	t.Helper()
+	return invokeRawWithInput(t, namespacedTestArgs(args), input)
+}
+
+func invokeRaw(t *testing.T, args []string) (int, string, string) {
+	t.Helper()
+	return invokeRawWithInput(t, args, "")
+}
+
+func invokeRawWithInput(t *testing.T, args []string, input string) (int, string, string) {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
 	code := Run(context.Background(), args, strings.NewReader(input), &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
+}
+
+// namespacedTestArgs keeps pre-v0.2 semantic fixture tests focused on the
+// exercised MCP operation. Dedicated namespace tests below exercise the public
+// grammar and prove that the old spellings are rejected.
+func namespacedTestArgs(args []string) []string {
+	for _, argument := range args {
+		if argument == "--completion-servers" {
+			return args
+		}
+	}
+	index := firstTestPositional(args)
+	if index < 0 {
+		for _, argument := range args {
+			if argument == "--config" || strings.HasPrefix(argument, "--config=") {
+				return append(append([]string(nil), args...), "mcp")
+			}
+		}
+		return args
+	}
+	if args[index] == "mcp" || isTestNativeCommand(args, index) {
+		return args
+	}
+	updated := append([]string(nil), args[:index]...)
+	updated = append(updated, "mcp", args[index])
+	if index+1 < len(args) && args[index+1] != "--help" && args[index+1] != "-h" && (hasTestInputMode(args[:index]) || !startsJSONObject(args[index+1])) {
+		updated = append(updated, "tool")
+	}
+	return append(updated, args[index+1:]...)
+}
+
+func isTestNativeCommand(args []string, index int) bool {
+	for _, argument := range args[:index] {
+		if argument == "--help" || argument == "-h" {
+			return isNativeHelpGroup(args[index])
+		}
+	}
+	if index+1 >= len(args) {
+		return args[index] == "lsp"
+	}
+	switch args[index] {
+	case "daemon":
+		return isDaemonAdminCommand(args[index+1])
+	case "config":
+		return args[index+1] == "trust" || args[index+1] == "untrust"
+	case "auth":
+		return isAuthAdminCommand(args[index+1])
+	case "lsp":
+		return isLSPNavigation(args[index+1]) || isLSPInspection(args[index+1]) || args[index+1] == lspStatus
+	default:
+		return false
+	}
+}
+
+func hasTestInputMode(args []string) bool {
+	for _, argument := range args {
+		if argument == "--stdin" || argument == "--json" || strings.HasPrefix(argument, "--json=") {
+			return true
+		}
+	}
+	return false
+}
+
+func firstTestPositional(args []string) int {
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		if argument == "--" {
+			return index + 1
+		}
+		if !strings.HasPrefix(argument, "-") || argument == "-" {
+			return index
+		}
+		name, _, assigned := strings.Cut(strings.TrimLeft(argument, "-"), "=")
+		if assigned || name == "direct" || name == "stdin" || name == "help" || name == "h" || name == "version" {
+			continue
+		}
+		switch name {
+		case "config", "json", "format", "color", "colour":
+			index++
+		}
+	}
+	return -1
 }
 
 func decodeOutput(t *testing.T, output string) map[string]any {

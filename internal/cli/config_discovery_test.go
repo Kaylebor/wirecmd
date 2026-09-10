@@ -46,7 +46,7 @@ func TestConfigTrustAdminAndAutomaticDiscovery(t *testing.T) {
 	copyConfig(t, explicit, filepath.Join(workspace, "wirecmd.kdl"))
 	t.Chdir(child)
 
-	code, output, _ := invoke(t, nil)
+	code, output, _ := invoke(t, []string{"mcp"})
 	if code != exitUserAction || decodeOutput(t, output)["error"].(map[string]any)["code"] != "workspace_untrusted" || !strings.Contains(output, "wirecmd config trust") {
 		t.Fatalf("untrusted discovery: code=%d output=%s", code, output)
 	}
@@ -85,7 +85,7 @@ func TestGlobalDiscoveryAndNoConfig(t *testing.T) {
 	configHome, _ := discoveryEnvironment(t)
 	workspace := t.TempDir()
 	t.Chdir(workspace)
-	code, output, _ := invoke(t, nil)
+	code, output, _ := invoke(t, []string{"mcp"})
 	if code != exitConfiguration || decodeOutput(t, output)["error"].(map[string]any)["code"] != "config_not_found" {
 		t.Fatalf("no config: code=%d output=%s", code, output)
 	}

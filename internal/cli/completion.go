@@ -15,7 +15,7 @@ import (
 // secrets, or initialize any state. Completion failure is intentionally quiet:
 // an empty candidate list is safer and more useful than an error in a shell UI.
 func runServerCompletion(opts options, positionals []string, parseErr error, out io.Writer) int {
-	if parseErr != nil || len(positionals) != 0 || opts.direct || opts.jsonSet || opts.stdin || opts.help || opts.helpServer || opts.version || opts.formatSet || opts.colorSet {
+	if parseErr != nil || len(positionals) != 0 || opts.direct || opts.jsonSet || opts.stdin || opts.help || opts.version || opts.formatSet || opts.colorSet || opts.legacyHelpSeparator {
 		return exitOK
 	}
 

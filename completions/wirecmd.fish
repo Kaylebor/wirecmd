@@ -11,10 +11,10 @@ function __wirecmd_candidates
     set -l positionals
     set -l pending
     set -l prefix 1
-    set -l separator 0
     set -l help 0
     set -l input 0
     set -l restricted 0
+    set -l help_separator 0
 
     for word in $words
         if test -n "$pending"
@@ -30,8 +30,10 @@ function __wirecmd_candidates
         end
         switch "$word"
             case --
+                if test $help -eq 1
+                    set help_separator 1
+                end
                 set prefix 0
-                set separator 1
             case --config -config
                 set pending config
                 set restricted 1
@@ -87,25 +89,28 @@ function __wirecmd_candidates
         return
     end
 
+    # The removed `--help -- SERVER` escape must not look like a static-help
+    # path to completion. Once that prefix separator follows help, offer
+    # nothing rather than suggesting native groups.
+    if test $help_separator -eq 1
+        return
+    end
+
     if test (count $positionals) -eq 0
         if test $prefix -eq 1
             printf '%b\n' '--config\tKDL file (repeatable)' '--direct\tOne-shot execution' '--json\tTool argument object' '--stdin\tRead tool arguments' '--help\tShow help' '-h\tShow help' '--version\tStandalone version' '--format\tOutput format' '--color\tColor mode' '--colour\tColor mode'
         end
-        if test $separator -eq 0; and test $input -eq 0
+        if test $input -eq 0
             printf '%b\n' 'auth\tOAuth credentials'
             if test $restricted -eq 0
                 printf '%b\n' 'daemon\tDaemon administration' 'config\tWorkspace trust'
             end
             printf '%b\n' 'lsp\tNative LSP navigation and inspection'
+            printf '%b\n' 'mcp\tConfigured MCP capabilities'
         end
-        command "$executable" --completion-servers $configs 2>/dev/null
         return
     end
 
-    # With help's explicit separator, names always belong to servers/tools.
-    if test $help -eq 1; and test $separator -eq 1
-        return
-    end
     if test $input -eq 1
         return
     end
@@ -150,6 +155,44 @@ function __wirecmd_candidates
                     case status
                         printf '%s\n' --file --help
                 end
+            end
+        case mcp
+            if test (count $positionals) -eq 1
+                set -l escaped_alias 0
+                set -l double_dash_alias 0
+                for server in (command "$executable" --completion-servers $configs 2>/dev/null)
+                    switch "$server"
+                        case --help -h
+                            set escaped_alias 1
+                            # `mcp -- --help` and `mcp -- -h` are escapes.
+                        case --
+                            set double_dash_alias 1
+                            printf '%s\n' "$server"
+                        case '*'
+                            printf '%s\n' "$server"
+                    end
+                end
+                if test $escaped_alias -eq 1; and test $double_dash_alias -eq 0
+                    printf '%b\n' '--\tEscape a server alias named --help or -h'
+                end
+            else if test (count $positionals) -eq 2
+                if test "$positionals[2]" = --
+                    set -l double_dash_alias 0
+                    for server in (command "$executable" --completion-servers $configs 2>/dev/null)
+                        if test "$server" = --help; or test "$server" = -h
+                            printf '%s\n' "$server"
+                        else if test "$server" = --
+                            set double_dash_alias 1
+                        end
+                    end
+                    if test $double_dash_alias -eq 1
+                        printf '%s\n' tool
+                    end
+                else if not contains -- "$positionals[2]" --help -h
+                    printf '%s\n' tool
+                end
+            else if test (count $positionals) -eq 3; and test "$positionals[2]" = --; and contains -- "$positionals[3]" --help -h
+                printf '%s\n' tool
             end
     end
 end

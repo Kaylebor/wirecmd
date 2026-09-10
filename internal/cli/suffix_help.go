@@ -8,14 +8,39 @@ package cli
 // A trailing help token is only special when it is the final, exact token.
 // Tool-side suffixes are resolved later against the live tool schema: an
 // explicitly projected help property wins, otherwise the token becomes
-// focused tool help. Explicit prefix help and the -- separator keep their
+// focused tool help. Explicit prefix help and JSON input modes keep their
 // existing ownership.
 func normalizeTrailingHelp(positionals []string, opts options) ([]string, options, *appError, bool) {
-	if len(positionals) == 0 || opts.help || opts.helpServer || opts.jsonSet || opts.stdin {
+	if len(positionals) == 0 || opts.help {
 		return positionals, opts, nil, false
 	}
 	last := positionals[len(positionals)-1]
 	if last != "--help" && last != "-h" {
+		return positionals, opts, nil, false
+	}
+
+	if positionals[0] == "mcp" {
+		// In `mcp -- --help`, the final token is the explicitly escaped
+		// server alias, not trailing help. A second final help token still
+		// works: `mcp -- --help --help`.
+		if opts.mcpServerEscaped && len(positionals) == 2 {
+			return positionals, opts, nil, false
+		}
+		// `mcp SERVER tool TOOL --help` remains owned by the live input schema.
+		// The shorter forms are namespace/server static or focused help.
+		switch len(positionals) {
+		case 2, 3:
+			canonical := append([]string(nil), positionals[:len(positionals)-1]...)
+			updated := opts
+			updated.help = true
+			return canonical, updated, nil, true
+		}
+	}
+
+	// JSON and stdin retain ownership of tool calls. The namespace/server
+	// suffix forms above are help requests, so they normalize first and then
+	// receive the normal input-with-help diagnostic from run.
+	if opts.jsonSet || opts.stdin {
 		return positionals, opts, nil, false
 	}
 

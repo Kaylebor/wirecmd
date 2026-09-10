@@ -395,15 +395,17 @@ func globalHelpText() string {
 	return "Usage:\n  " + usage + `
 
 Start here:
-  wirecmd daemon run                 keep running in a separate terminal
-  wirecmd                            list configured servers
-  wirecmd SERVER                     list that server's tools
-  wirecmd SERVER --help              inspect a server (trailing help also works)
-  wirecmd --help SERVER TOOL          inspect arguments before calling
+  wirecmd daemon run                  keep running in a separate terminal
+  wirecmd                             show this static overview
+  wirecmd mcp                         list configured MCP servers
+  wirecmd mcp SERVER                  list that server's tools
+  wirecmd mcp SERVER --help           inspect a server (trailing help also works)
+  wirecmd mcp -- --help               reach a server literally named --help
+  wirecmd --help mcp SERVER tool TOOL inspect arguments before calling
   wirecmd lsp definition --file PATH --line N --column N
   wirecmd lsp status [--file PATH]
 
-Prefix flags (before server/tool names):
+Prefix flags (before mcp/server/tool names):
   --config PATH                      repeatable; later files override earlier
   --direct                           one-shot operation without the daemon
   --json OBJECT                      supply the complete tool argument object
@@ -431,24 +433,27 @@ Static help (offline: wirecmd --help daemon|config|auth|lsp):
   wirecmd [client flags] lsp status [--file PATH]
 
 Focused help:
-  wirecmd [client flags] --help SERVER [TOOL]
-  wirecmd [client flags] SERVER --help
-  wirecmd [client flags] SERVER TOOL --help
-  wirecmd [client flags] --help -- SERVER [TOOL]
-The third form forces server help for names such as daemon, config, or auth.
-It also reaches a configured MCP server named lsp; bare lsp is native help.
+  wirecmd [client flags] --help mcp SERVER [tool TOOL]
+  wirecmd [client flags] --help mcp --          inspect a server literally named --
+  wirecmd [client flags] --help mcp -- --help [tool TOOL]
+  wirecmd [client flags] mcp SERVER --help
+  wirecmd [client flags] mcp SERVER tool TOOL --help
+MCP servers named daemon, config, auth, or lsp are naturally reachable under
+the mcp namespace; bare lsp remains native help. For a server literally named
+--help or -h, use mcp -- --help or mcp -- -h; focused help uses the same form.
+The distinct prefix form --help mcp -- inspects a server literally named --.
 
 Conventional trailing help also works for recognized built-in operations, such
-as wirecmd daemon status --help and wirecmd lsp definition --help. After SERVER
-TOOL, an explicit projected help property owns a final --help or -h; otherwise
-Wirecmd renders focused help from the live schema.
+as wirecmd daemon status --help and wirecmd lsp definition --help. After mcp
+SERVER tool TOOL, an explicit projected help property owns a final --help or
+-h; otherwise Wirecmd renders focused help from the live schema.
 
 Tool input examples (use the names and types from focused help):
-  wirecmd SERVER TOOL --query 'text'
-  wirecmd --json '{"query":"text"}' SERVER TOOL
-  printf '%s\n' '{"query":"text"}' | wirecmd --stdin SERVER TOOL
-  wirecmd SERVER '{"tool":"TOOL","arguments":{"query":"text"}}'
-  wirecmd SERVER TOOL --query 'text' -- '{"extra":42}'
+  wirecmd mcp SERVER tool TOOL --query 'text'
+  wirecmd --json '{"query":"text"}' mcp SERVER tool TOOL
+  printf '%s\n' '{"query":"text"}' | wirecmd --stdin mcp SERVER tool TOOL
+  wirecmd mcp SERVER '{"tool":"TOOL","arguments":{"query":"text"}}'
+  wirecmd mcp SERVER tool TOOL --query 'text' -- '{"extra":42}'
 Flags after TOOL belong to the tool. The tool-side -- takes one raw JSON object;
 do not repeat keys already supplied by flags. Without arguments, calls use {}.
 
@@ -463,10 +468,34 @@ structured errors go to stdout. Follow the error's recovery action.
 `
 }
 
+func mcpHelpText() string {
+	return `MCP capabilities:
+  wirecmd mcp                                  list configured MCP servers
+  wirecmd mcp SERVER                           list one server's tools
+  wirecmd mcp SERVER --help                    inspect one server
+  wirecmd mcp -- --help                        list tools for a server named --help
+  wirecmd mcp SERVER tool TOOL [arguments]     invoke one tool
+  wirecmd mcp SERVER '{"tool":"TOOL","arguments":{}}'  exact call envelope
+
+Focused help:
+  wirecmd --help mcp SERVER [tool TOOL]
+  wirecmd --help mcp --                         inspect a server named --
+  wirecmd --help mcp -- --help [tool TOOL]
+  wirecmd mcp SERVER tool TOOL --help
+
+Client flags must precede mcp. Tool arguments follow TOOL. Use --json or
+--stdin for an exact argument object, and -- JSON_OBJECT after projected tool
+arguments for a lossless raw overlay. A configured server may have any name,
+including daemon, config, auth, or lsp. Use mcp -- --help or mcp -- -h for
+those two literal aliases. The distinct prefix form --help mcp -- targets a
+literal -- alias.
+`
+}
+
 func renderServerHelp(server string, tools []toolSummary) string {
 	var text strings.Builder
 	server = singleLine(server)
-	fmt.Fprintf(&text, "Usage:\n  wirecmd [client flags] %s <tool> [tool arguments]\n\nTools for %s:\n", server, server)
+	fmt.Fprintf(&text, "Usage:\n  wirecmd [client flags] mcp %s tool <tool> [tool arguments]\n\nTools for %s:\n", server, server)
 	for _, tool := range tools {
 		name, description := singleLine(tool.Name), readableText(tool.Description)
 		if description == "" {
@@ -475,7 +504,7 @@ func renderServerHelp(server string, tools []toolSummary) string {
 			fmt.Fprintf(&text, "  %-24s %s\n", name, description)
 		}
 	}
-	fmt.Fprintf(&text, "\nInspect one tool:\n  wirecmd [client flags] --help %s <tool>\n", server)
+	fmt.Fprintf(&text, "\nInspect one tool:\n  wirecmd [client flags] --help mcp %s tool <tool>\n", server)
 	return text.String()
 }
 
@@ -483,7 +512,7 @@ func renderToolHelp(server string, tool toolDescription) string {
 	var text strings.Builder
 	displayServer, displayTool := singleLine(server), singleLine(tool.Name)
 	tool.Title, tool.Description = singleLine(tool.Title), readableText(tool.Description)
-	fmt.Fprintf(&text, "Usage:\n  wirecmd [client flags] %s %s [tool arguments]\n", displayServer, displayTool)
+	fmt.Fprintf(&text, "Usage:\n  wirecmd [client flags] mcp %s tool %s [tool arguments]\n", displayServer, displayTool)
 	if tool.Title != "" || tool.Description != "" {
 		fmt.Fprint(&text, "\nTool:\n")
 		if tool.Title != "" {
@@ -531,9 +560,9 @@ func renderToolHelp(server string, tool toolDescription) string {
 	} else {
 		fmt.Fprint(&text, "\nArguments:\n  The input schema cannot be safely projected; use exact JSON.\n")
 	}
-	fmt.Fprintf(&text, "\nRaw overlay:\n  wirecmd [client flags] %s %s [projected arguments] -- '{\"property\": \"value\"}'\n", displayServer, displayTool)
+	fmt.Fprintf(&text, "\nRaw overlay:\n  wirecmd [client flags] mcp %s tool %s [projected arguments] -- '{\"property\": \"value\"}'\n", displayServer, displayTool)
 	envelope := `{"tool":` + compactJSON(tool.Name) + `,"arguments":` + exactArgumentsTemplate(tool) + `}`
-	fmt.Fprintf(&text, "\nExact JSON fallback:\n  wirecmd [client flags] %s %s\n", displayServer, shellQuote(envelope))
+	fmt.Fprintf(&text, "\nExact JSON fallback:\n  wirecmd [client flags] mcp %s %s\n", displayServer, shellQuote(envelope))
 	fmt.Fprint(&text, "\nInput schema:\n")
 	text.WriteString(prettyJSON(tool.InputSchema))
 	if len(tool.OutputSchema) != 0 {

@@ -122,39 +122,7 @@ func TestMisplacedAdministrativeFlagsAreContextualAndDoNotTouchState(t *testing.
 	}
 }
 
-func TestHelpPrefixSeparatorOwnership(t *testing.T) {
-	for _, test := range []struct {
-		args []string
-		want bool
-	}{
-		{[]string{"--help", "--", "daemon", "status"}, true},
-		{[]string{"--help", "--config", "--", "daemon"}, false},
-		{[]string{"--help", "--config=--", "daemon"}, false},
-		{[]string{"--help", "--config", "--", "--", "daemon"}, true},
-		{[]string{"--help", "server", "tool", "--", "{}"}, false},
-	} {
-		opts, _, err := parseOptions(test.args)
-		if err != nil || opts.helpServer != test.want {
-			t.Fatalf("%v: separator=%v err=%v", test.args, opts.helpServer, err)
-		}
-	}
-	// A real fixture proves the escape reaches ordinary tool help, not admin.
-	t.Setenv("GO_WIRECMD_HELPER", "1")
-	path := helperConfig(t, "", "")
-	source, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"daemon", "config", "auth"} {
-		config := writeConfig(t, strings.Replace(string(source), `mcp "helper"`, `mcp "`+name+`"`, 1))
-		code, output, _ := invoke(t, []string{"--direct", "--config", config, "--help", "--", name, "a_tool"})
-		if code != exitOK || !strings.Contains(output, "Input schema:") {
-			t.Fatalf("%s escape: code=%d output=%s", name, code, output)
-		}
-	}
-}
-
-func TestHelpPrefixSeparatorPreservesReservedLeafCollisions(t *testing.T) {
+func TestMCPNamespacePreservesReservedNameCollisions(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
 	path := helperConfig(t, "", "")
 	source, err := os.ReadFile(path)
@@ -171,7 +139,7 @@ func TestHelpPrefixSeparatorPreservesReservedLeafCollisions(t *testing.T) {
 	} {
 		t.Run(test.server+"_"+test.tool, func(t *testing.T) {
 			config := writeConfig(t, strings.Replace(string(source), `mcp "helper"`, `mcp "`+test.server+`"`, 1))
-			code, output, _ := invoke(t, []string{"--direct", "--config", config, "--help", "--", test.server, test.tool})
+			code, output, _ := invoke(t, []string{"--direct", "--config", config, "--help", "mcp", test.server, "tool", test.tool})
 			if code != exitProtocol || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_not_found" {
 				t.Fatalf("reserved leaf escape: code=%d output=%s", code, output)
 			}
@@ -196,7 +164,7 @@ func TestAdministrativeNamesKeepNormalToolSuffixOwnership(t *testing.T) {
 	} {
 		t.Run(test.server+"_"+test.tool, func(t *testing.T) {
 			config := writeConfig(t, strings.Replace(string(source), `mcp "helper"`, `mcp "`+test.server+`"`, 1))
-			args := append([]string{"--direct", "--config", config, test.server, test.tool}, test.args...)
+			args := append([]string{"--direct", "--config", config, "mcp", test.server, "tool", test.tool}, test.args...)
 			code, output, _ := invoke(t, args)
 			if code != exitProtocol || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_not_found" {
 				t.Fatalf("tool suffix was treated as administration: code=%d output=%s", code, output)
@@ -213,14 +181,14 @@ func TestAdministrativeNamesKeepNormalToolSuffixOwnership(t *testing.T) {
 	} {
 		t.Run(test.server+"_json_"+test.tool, func(t *testing.T) {
 			config := writeConfig(t, strings.Replace(string(source), `mcp "helper"`, `mcp "`+test.server+`"`, 1))
-			code, output, _ := invoke(t, []string{"--direct", "--config", config, "--json", `{}`, test.server, test.tool})
+			code, output, _ := invoke(t, []string{"--direct", "--config", config, "--json", `{}`, "mcp", test.server, "tool", test.tool})
 			if code != exitProtocol || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_call_failed" {
 				t.Fatalf("JSON escape was treated as administration: code=%d output=%s", code, output)
 			}
 		})
 		t.Run(test.server+"_stdin_"+test.tool, func(t *testing.T) {
 			config := writeConfig(t, strings.Replace(string(source), `mcp "helper"`, `mcp "`+test.server+`"`, 1))
-			code, output, _ := invokeWithInput(t, []string{"--direct", "--config", config, "--stdin", test.server, test.tool}, `{}`)
+			code, output, _ := invokeWithInput(t, []string{"--direct", "--config", config, "--stdin", "mcp", test.server, "tool", test.tool}, `{}`)
 			if code != exitProtocol || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_call_failed" {
 				t.Fatalf("stdin escape was treated as administration: code=%d output=%s", code, output)
 			}
@@ -228,7 +196,7 @@ func TestAdministrativeNamesKeepNormalToolSuffixOwnership(t *testing.T) {
 		t.Run(test.server+"_exact_"+test.tool, func(t *testing.T) {
 			config := writeConfig(t, strings.Replace(string(source), `mcp "helper"`, `mcp "`+test.server+`"`, 1))
 			call := `{"tool":"` + test.tool + `","arguments":{}}`
-			code, output, _ := invoke(t, []string{"--direct", "--config", config, test.server, call})
+			code, output, _ := invoke(t, []string{"--direct", "--config", config, "mcp", test.server, call})
 			if code != exitProtocol || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_call_failed" {
 				t.Fatalf("exact-call escape was treated as administration: code=%d output=%s", code, output)
 			}
