@@ -73,6 +73,30 @@ type Hover struct {
 	Content []HoverBlock `json:"content"`
 }
 
+// Documentation is the normalized plain-text or Markdown documentation
+// attached to a signature or one of its parameters.
+type Documentation struct {
+	Kind string `json:"kind"`
+	Text string `json:"text"`
+}
+
+// SignatureParameter is one parameter in a normalized signature. Active is
+// meaningful only for the active signature and remains false when the server
+// explicitly selects no active parameter.
+type SignatureParameter struct {
+	Label         string         `json:"label"`
+	Active        bool           `json:"active"`
+	Documentation *Documentation `json:"documentation,omitempty"`
+}
+
+// Signature is Wirecmd's SDK-independent representation of an LSP signature.
+type Signature struct {
+	Label         string               `json:"label"`
+	Active        bool                 `json:"active"`
+	Documentation *Documentation       `json:"documentation,omitempty"`
+	Parameters    []SignatureParameter `json:"parameters"`
+}
+
 // Symbol is a normalized LSP symbol. Children preserve hierarchical document
 // symbol responses; flat SymbolInformation responses remain flat.
 type Symbol struct {
@@ -97,6 +121,7 @@ type Capabilities struct {
 	Implementation   bool   `json:"implementation"`
 	References       bool   `json:"references"`
 	Hover            bool   `json:"hover"`
+	SignatureHelp    bool   `json:"signature_help"`
 	DocumentSymbols  bool   `json:"document_symbols"`
 	WorkspaceSymbols bool   `json:"workspace_symbols"`
 	PositionEncoding string `json:"position_encoding"`
@@ -317,11 +342,20 @@ func Start(ctx context.Context, command Command, workspace, version string) (*Se
 			TextDocument: &protocol.TextDocumentClientCapabilities{
 				Synchronization: &protocol.TextDocumentSyncClientCapabilities{DynamicRegistration: &falseValue, WillSave: &falseValue, WillSaveWaitUntil: &falseValue, DidSave: &falseValue},
 				Hover:           &protocol.HoverClientCapabilities{DynamicRegistration: &falseValue, ContentFormat: []protocol.MarkupKind{protocol.MarkupKindMarkdown, protocol.MarkupKindPlainText}},
-				Declaration:     &protocol.DeclarationClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
-				Definition:      &protocol.DefinitionClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
-				TypeDefinition:  &protocol.TypeDefinitionClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
-				Implementation:  &protocol.ImplementationClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
-				References:      &protocol.ReferenceClientCapabilities{DynamicRegistration: &falseValue},
+				SignatureHelp: &protocol.SignatureHelpClientCapabilities{
+					DynamicRegistration: &falseValue,
+					SignatureInformation: &protocol.ClientSignatureInformationOptions{
+						DocumentationFormat:      []protocol.MarkupKind{protocol.MarkupKindMarkdown, protocol.MarkupKindPlainText},
+						ParameterInformation:     &protocol.ClientSignatureParameterInformationOptions{LabelOffsetSupport: &trueValue},
+						ActiveParameterSupport:   &trueValue,
+						NoActiveParameterSupport: &trueValue,
+					},
+				},
+				Declaration:    &protocol.DeclarationClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
+				Definition:     &protocol.DefinitionClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
+				TypeDefinition: &protocol.TypeDefinitionClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
+				Implementation: &protocol.ImplementationClientCapabilities{DynamicRegistration: &falseValue, LinkSupport: &trueValue},
+				References:     &protocol.ReferenceClientCapabilities{DynamicRegistration: &falseValue},
 				DocumentSymbol: &protocol.DocumentSymbolClientCapabilities{
 					DynamicRegistration:               &falseValue,
 					SymbolKind:                        &protocol.ClientSymbolKindOptions{ValueSet: symbolKinds},
@@ -359,6 +393,7 @@ func Start(ctx context.Context, command Command, workspace, version string) (*Se
 			Implementation:   implementationSupported(initialized.Capabilities.ImplementationProvider),
 			References:       referencesSupported(initialized.Capabilities.ReferencesProvider),
 			Hover:            hoverSupported(initialized.Capabilities.HoverProvider),
+			SignatureHelp:    signatureHelpSupported(initialized.Capabilities.SignatureHelpProvider),
 			DocumentSymbols:  documentSymbolsSupported(initialized.Capabilities.DocumentSymbolProvider),
 			WorkspaceSymbols: workspaceSymbolsSupported(initialized.Capabilities.WorkspaceSymbolProvider),
 			PositionEncoding: string(encoding),
@@ -450,6 +485,10 @@ func hoverSupported(provider protocol.HoverProvider) bool {
 	default:
 		return false
 	}
+}
+
+func signatureHelpSupported(provider *protocol.SignatureHelpOptions) bool {
+	return provider != nil
 }
 
 func documentSymbolsSupported(provider protocol.DocumentSymbolProvider) bool {
@@ -585,6 +624,33 @@ func (s *Session) Hover(ctx context.Context, target *DefinitionTarget) ([]Hover,
 	}
 	s.client.takeUnsupported()
 	return normalizeHover(result)
+}
+
+// SignatureHelp returns normalized callable signatures for a validated disk
+// snapshot. A null protocol result is an empty, non-nil result slice.
+func (s *Session) SignatureHelp(ctx context.Context, target *DefinitionTarget) ([]Signature, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, fmt.Errorf("LSP session is closed")
+	}
+	if !s.status.Capabilities.SignatureHelp {
+		return nil, fmt.Errorf("%w: signature help", ErrCapabilityUnavailable)
+	}
+	if err := s.synchronize(ctx, target.path, target.uri, target.content, target.languageID); err != nil {
+		return nil, err
+	}
+	result, err := s.server.SignatureHelp(ctx, &protocol.SignatureHelpParams{TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: target.uri}, Position: target.position,
+	}})
+	if err != nil {
+		if method := s.client.takeUnsupported(); method != "" {
+			return nil, fmt.Errorf("%w: %s", ErrServerRequestUnsupported, method)
+		}
+		return nil, fmt.Errorf("request LSP signature help: %w", err)
+	}
+	s.client.takeUnsupported()
+	return normalizeSignatureHelp(result)
 }
 
 // DocumentSymbols returns normalized symbols for a previously validated disk
@@ -926,6 +992,112 @@ func normalizeHoverContents(contents protocol.HoverContents) ([]HoverBlock, erro
 		return nil, fmt.Errorf("%w: hover contents %T", ErrResultUnsupported, contents)
 	}
 	return blocks, nil
+}
+
+func normalizeSignatureHelp(result *protocol.SignatureHelp) ([]Signature, error) {
+	signatures := []Signature{}
+	if result == nil || len(result.Signatures) == 0 {
+		return signatures, nil
+	}
+	activeSignature := 0
+	if result.ActiveSignature != nil && int(*result.ActiveSignature) < len(result.Signatures) {
+		activeSignature = int(*result.ActiveSignature)
+	}
+	for signatureIndex, value := range result.Signatures {
+		documentation, err := normalizeSignatureDocumentation(value.Documentation)
+		if err != nil {
+			return nil, err
+		}
+		activeParameter, hasActiveParameter := signatureActiveParameter(value, result.ActiveParameter, signatureIndex == activeSignature)
+		entry := Signature{Label: value.Label, Active: signatureIndex == activeSignature, Documentation: documentation, Parameters: make([]SignatureParameter, len(value.Parameters))}
+		for parameterIndex, parameter := range value.Parameters {
+			label, err := normalizeSignatureParameterLabel(value.Label, parameter.Label)
+			if err != nil {
+				return nil, err
+			}
+			parameterDocumentation, err := normalizeSignatureDocumentation(parameter.Documentation)
+			if err != nil {
+				return nil, err
+			}
+			entry.Parameters[parameterIndex] = SignatureParameter{Label: label, Active: signatureIndex == activeSignature && hasActiveParameter && parameterIndex == activeParameter, Documentation: parameterDocumentation}
+		}
+		signatures = append(signatures, entry)
+	}
+	return signatures, nil
+}
+
+func signatureActiveParameter(signature protocol.SignatureInformation, top protocol.Nullable[uint32], active bool) (int, bool) {
+	if !active || len(signature.Parameters) == 0 {
+		return 0, false
+	}
+	value := top
+	if !signature.ActiveParameter.IsZero() {
+		value = signature.ActiveParameter
+	}
+	if value.IsNull() {
+		return 0, false
+	}
+	if index, ok := value.Get(); ok && int(index) < len(signature.Parameters) {
+		return int(index), true
+	}
+	return 0, true
+}
+
+func normalizeSignatureDocumentation(value protocol.InlayHintTooltip) (*Documentation, error) {
+	switch documentation := value.(type) {
+	case nil:
+		return nil, nil
+	case protocol.String:
+		return &Documentation{Kind: "plaintext", Text: string(documentation)}, nil
+	case *protocol.MarkupContent:
+		if documentation == nil {
+			return nil, fmt.Errorf("%w: nil signature documentation", ErrResultUnsupported)
+		}
+		switch documentation.Kind {
+		case protocol.MarkupKindPlainText:
+			return &Documentation{Kind: "plaintext", Text: documentation.Value}, nil
+		case protocol.MarkupKindMarkdown:
+			return &Documentation{Kind: "markdown", Text: documentation.Value}, nil
+		default:
+			return nil, fmt.Errorf("%w: signature documentation markup kind %q", ErrResultUnsupported, documentation.Kind)
+		}
+	default:
+		return nil, fmt.Errorf("%w: signature documentation %T", ErrResultUnsupported, value)
+	}
+}
+
+func normalizeSignatureParameterLabel(signature string, value protocol.ParameterInformationLabel) (string, error) {
+	switch label := value.(type) {
+	case protocol.String:
+		return string(label), nil
+	case protocol.ParameterInformationLabelTuple:
+		return utf16Substring(signature, label[0], label[1])
+	default:
+		return "", fmt.Errorf("%w: signature parameter label %T", ErrResultUnsupported, value)
+	}
+}
+
+func utf16Substring(value string, start, end uint32) (string, error) {
+	if start > end {
+		return "", fmt.Errorf("%w: signature parameter label offsets %d..%d are reversed", ErrResultUnsupported, start, end)
+	}
+	units := utf16.Encode([]rune(value))
+	if uint64(end) > uint64(len(units)) {
+		return "", fmt.Errorf("%w: signature parameter label offsets %d..%d exceed UTF-16 label length", ErrResultUnsupported, start, end)
+	}
+	// Surrogate halves cannot delimit a valid UTF-8 substring.
+	if splitsSurrogatePair(units, start) || splitsSurrogatePair(units, end) {
+		return "", fmt.Errorf("%w: signature parameter label offsets split a UTF-16 surrogate pair", ErrResultUnsupported)
+	}
+	return string(utf16.Decode(units[start:end])), nil
+}
+
+func splitsSurrogatePair(units []uint16, offset uint32) bool {
+	if offset == 0 || uint64(offset) >= uint64(len(units)) {
+		return false
+	}
+	previous, next := units[offset-1], units[offset]
+	return previous >= 0xD800 && previous <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF
 }
 
 func normalizeDocumentSymbols(result protocol.DocumentSymbolResult) ([]Symbol, error) {

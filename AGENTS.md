@@ -24,7 +24,7 @@
 - `docs/oauth-plan.md` is authoritative for the completed transparent OAuth and
   encrypted credential-persistence milestone and its acceptance criteria.
 - `docs/lsp-plan.md` is authoritative for the completed server-neutral,
-  selector-routed multi-provider LSP navigation milestone.
+  selector-routed multi-provider LSP navigation, signature-help, and inspection milestone.
 - `docs/release-readiness.md` is authoritative for stable v0.1 installation,
   compatibility, qualification, versioning, and the manual publication
   boundary.

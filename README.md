@@ -186,6 +186,7 @@ wirecmd --help lsp definition
 wirecmd lsp definition --file ./main.go --line 21 --column 13
 wirecmd lsp references --file ./main.go --line 21 --column 13
 wirecmd lsp hover --file ./main.go --line 21 --column 13
+wirecmd lsp signature-help --file ./main.go --line 21 --column 13
 wirecmd lsp document-symbols --file ./main.go
 wirecmd lsp workspace-symbols --query 'Wirecmd'
 wirecmd lsp status --file ./main.go
@@ -199,7 +200,9 @@ structured provider outcomes when a matching provider fails. The daemon
 retains each configured LSP session; `--direct` starts one-shot sessions.
 `lsp status` reports configured selectors and already-observed runtime identity
 without starting a process. Hover preserves ordered plaintext, Markdown, and
-code blocks. `document-symbols` preserves nested symbols; `workspace-symbols`
+code blocks. `signature-help` preserves provider-attributed callable labels,
+active states, optional plaintext or Markdown documentation, and parameter
+labels resolved from validated UTF-16 offsets. `document-symbols` preserves nested symbols; `workspace-symbols`
 passes its explicit query, including an empty query, to every configured
 provider without local ranking or truncation. These inspection results have
 provider outcomes and partial-failure semantics matching navigation, while

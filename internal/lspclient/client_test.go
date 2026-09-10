@@ -151,6 +151,17 @@ func TestStartRejectsCapabilitiesAndEncoding(t *testing.T) {
 	})
 }
 
+func TestStartAdvertisesSignatureHelpCapabilities(t *testing.T) {
+	session, err := Start(context.Background(), helperCommand("signature-capabilities"), t.TempDir(), "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if session.Status().ServerName != "signature-capabilities" {
+		t.Fatalf("server identity = %#v", session.Status())
+	}
+}
+
 func TestUnsupportedServerRequestIsReportedWhenDefinitionFails(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "input.go")
@@ -195,6 +206,9 @@ func TestNavigationOperationsAndStatus(t *testing.T) {
 	if !status.Capabilities.Hover || !status.Capabilities.DocumentSymbols || !status.Capabilities.WorkspaceSymbols {
 		t.Fatalf("inspection capabilities = %+v", status.Capabilities)
 	}
+	if !status.Capabilities.SignatureHelp {
+		t.Fatalf("signature help capability = %+v", status.Capabilities)
+	}
 	target, err := PrepareTarget(path, 1, 1, "go")
 	if err != nil {
 		t.Fatal(err)
@@ -220,6 +234,10 @@ func TestNavigationOperationsAndStatus(t *testing.T) {
 	if err != nil || len(hovers) != 1 || len(hovers[0].Content) != 2 {
 		t.Fatalf("hover = %#v, %v", hovers, err)
 	}
+	signatures, err := session.SignatureHelp(context.Background(), target)
+	if err != nil || len(signatures) != 2 || !signatures[1].Active || !signatures[1].Parameters[1].Active {
+		t.Fatalf("signature help = %#v, %v", signatures, err)
+	}
 	documentSymbols, err := session.DocumentSymbols(context.Background(), target)
 	if err != nil || len(documentSymbols) != 1 || documentSymbols[0].Path != path {
 		t.Fatalf("document symbols = %#v, %v", documentSymbols, err)
@@ -227,6 +245,59 @@ func TestNavigationOperationsAndStatus(t *testing.T) {
 	workspaceSymbols, err := session.WorkspaceSymbols(context.Background(), "")
 	if err != nil || len(workspaceSymbols) != 1 || workspaceSymbols[0].Path == "" {
 		t.Fatalf("workspace symbols = %#v, %v", workspaceSymbols, err)
+	}
+}
+
+func TestNormalizeSignatureHelp(t *testing.T) {
+	markdown := &protocol.MarkupContent{Kind: protocol.MarkupKindMarkdown, Value: "**signature**"}
+	activeSignature, activeParameter := uint32(1), uint32(0)
+	result := &protocol.SignatureHelp{
+		ActiveSignature: &activeSignature,
+		ActiveParameter: protocol.NewNullable(activeParameter),
+		Signatures: []protocol.SignatureInformation{
+			{Label: "first(a)", Parameters: []protocol.ParameterInformation{{Label: protocol.String("a")}}},
+			{Label: "second(😀value, other)", Documentation: markdown, ActiveParameter: protocol.NewNullable(uint32(1)), Parameters: []protocol.ParameterInformation{
+				{Label: protocol.ParameterInformationLabelTuple{9, 14}, Documentation: protocol.String("first parameter")},
+				{Label: protocol.String("other"), Documentation: &protocol.MarkupContent{Kind: protocol.MarkupKindPlainText, Value: "second parameter"}},
+			}},
+		},
+	}
+	values, err := normalizeSignatureHelp(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 2 || values[0].Active || !values[1].Active || values[1].Documentation == nil || values[1].Documentation.Kind != "markdown" || values[1].Parameters[0].Label != "value" || values[1].Parameters[0].Active || !values[1].Parameters[1].Active {
+		t.Fatalf("normalized signatures = %#v", values)
+	}
+	if values[1].Parameters[0].Documentation == nil || values[1].Parameters[0].Documentation.Kind != "plaintext" || values[1].Parameters[1].Documentation == nil || values[1].Parameters[1].Documentation.Kind != "plaintext" {
+		t.Fatalf("normalized documentation = %#v", values[1])
+	}
+
+	noActive := &protocol.SignatureHelp{Signatures: []protocol.SignatureInformation{{Label: "one(a)", ActiveParameter: protocol.NullNullable[uint32](), Parameters: []protocol.ParameterInformation{{Label: protocol.String("a")}}}}}
+	values, err = normalizeSignatureHelp(noActive)
+	if err != nil || len(values) != 1 || !values[0].Active || values[0].Parameters[0].Active {
+		t.Fatalf("explicit no active parameter = %#v, %v", values, err)
+	}
+
+	outOfRangeSignature, outOfRangeParameter := uint32(99), uint32(99)
+	values, err = normalizeSignatureHelp(&protocol.SignatureHelp{ActiveSignature: &outOfRangeSignature, ActiveParameter: protocol.NewNullable(outOfRangeParameter), Signatures: []protocol.SignatureInformation{{Label: "one(a)", Parameters: []protocol.ParameterInformation{{Label: protocol.String("a")}}}, {Label: "two(b)", Parameters: []protocol.ParameterInformation{{Label: protocol.String("b")}}}}})
+	if err != nil || len(values) != 2 || !values[0].Active || values[1].Active || !values[0].Parameters[0].Active {
+		t.Fatalf("out-of-range defaults = %#v, %v", values, err)
+	}
+
+	for name, bad := range map[string]*protocol.SignatureHelp{
+		"surrogate split": {Signatures: []protocol.SignatureInformation{{Label: "😀", Parameters: []protocol.ParameterInformation{{Label: protocol.ParameterInformationLabelTuple{1, 2}}}}}},
+		"reversed":        {Signatures: []protocol.SignatureInformation{{Label: "abc", Parameters: []protocol.ParameterInformation{{Label: protocol.ParameterInformationLabelTuple{3, 2}}}}}},
+		"out of bounds":   {Signatures: []protocol.SignatureInformation{{Label: "abc", Parameters: []protocol.ParameterInformation{{Label: protocol.ParameterInformationLabelTuple{0, 4}}}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := normalizeSignatureHelp(bad); !errorsIs(err, ErrResultUnsupported) {
+				t.Fatalf("error = %v, want unsupported result", err)
+			}
+		})
+	}
+	if values, err := normalizeSignatureHelp(nil); err != nil || len(values) != 0 || values == nil {
+		t.Fatalf("nil signature help = %#v, %v", values, err)
 	}
 }
 
@@ -400,7 +471,7 @@ type fakeServer struct {
 	changed   *sync.Cond
 }
 
-func (s *fakeServer) Initialize(context.Context, *protocol.InitializeParams) (*protocol.InitializeResult, error) {
+func (s *fakeServer) Initialize(_ context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
 	all := s.mode == "all"
 	capabilities := protocol.ServerCapabilities{DefinitionProvider: protocol.Boolean(s.mode != "no-definition")}
 	if all {
@@ -409,6 +480,7 @@ func (s *fakeServer) Initialize(context.Context, *protocol.InitializeParams) (*p
 		capabilities.ImplementationProvider = protocol.Boolean(true)
 		capabilities.ReferencesProvider = protocol.Boolean(true)
 		capabilities.HoverProvider = protocol.Boolean(true)
+		capabilities.SignatureHelpProvider = &protocol.SignatureHelpOptions{}
 		capabilities.DocumentSymbolProvider = protocol.Boolean(true)
 		capabilities.WorkspaceSymbolProvider = protocol.Boolean(true)
 		kind := protocol.TextDocumentSyncKindIncremental
@@ -434,7 +506,30 @@ func (s *fakeServer) Initialize(context.Context, *protocol.InitializeParams) (*p
 		capabilities.WorkspaceSymbolProvider = protocol.Boolean(true)
 		capabilities.TextDocumentSync = &protocol.TextDocumentSyncOptions{OpenClose: &open, Change: &kind}
 	}
-	return &protocol.InitializeResult{Capabilities: capabilities, ServerInfo: protocol.ServerInfo{Name: "fake", Version: protocol.NewOptional("1.0")}}, nil
+	serverName := "fake"
+	if s.mode == "signature-capabilities" {
+		if err := assertSignatureHelpCapabilities(params); err != nil {
+			return nil, err
+		}
+		capabilities.SignatureHelpProvider = &protocol.SignatureHelpOptions{}
+		serverName = "signature-capabilities"
+	}
+	return &protocol.InitializeResult{Capabilities: capabilities, ServerInfo: protocol.ServerInfo{Name: serverName, Version: protocol.NewOptional("1.0")}}, nil
+}
+
+func assertSignatureHelpCapabilities(params *protocol.InitializeParams) error {
+	if params == nil || params.Capabilities.TextDocument == nil || params.Capabilities.TextDocument.SignatureHelp == nil {
+		return fmt.Errorf("signature help client capability is missing")
+	}
+	signatureHelp := params.Capabilities.TextDocument.SignatureHelp
+	if signatureHelp.DynamicRegistration == nil || *signatureHelp.DynamicRegistration || signatureHelp.ContextSupport != nil || signatureHelp.SignatureInformation == nil {
+		return fmt.Errorf("signature help client capability has unexpected registration or context support")
+	}
+	information := signatureHelp.SignatureInformation
+	if len(information.DocumentationFormat) != 2 || information.DocumentationFormat[0] != protocol.MarkupKindMarkdown || information.DocumentationFormat[1] != protocol.MarkupKindPlainText || information.ParameterInformation == nil || information.ParameterInformation.LabelOffsetSupport == nil || !*information.ParameterInformation.LabelOffsetSupport || information.ActiveParameterSupport == nil || !*information.ActiveParameterSupport || information.NoActiveParameterSupport == nil || !*information.NoActiveParameterSupport {
+		return fmt.Errorf("signature help client capability omits required documentation, label, or active-parameter support")
+	}
+	return nil
 }
 
 func (*fakeServer) Initialized(context.Context, *protocol.InitializedParams) error { return nil }
@@ -531,6 +626,14 @@ func (s *fakeServer) Hover(_ context.Context, params *protocol.HoverParams) (*pr
 		},
 		Range: &protocol.Range{Start: params.Position, End: params.Position},
 	}, nil
+}
+
+func (*fakeServer) SignatureHelp(_ context.Context, _ *protocol.SignatureHelpParams) (*protocol.SignatureHelp, error) {
+	active := uint32(1)
+	return &protocol.SignatureHelp{ActiveSignature: &active, Signatures: []protocol.SignatureInformation{
+		{Label: "first(value)", Parameters: []protocol.ParameterInformation{{Label: protocol.String("value")}}},
+		{Label: "second(value, option)", Parameters: []protocol.ParameterInformation{{Label: protocol.String("value")}, {Label: protocol.String("option")}}, ActiveParameter: protocol.NewNullable(uint32(1))},
+	}}, nil
 }
 
 func (s *fakeServer) DocumentSymbol(_ context.Context, params *protocol.DocumentSymbolParams) (protocol.DocumentSymbolResult, error) {

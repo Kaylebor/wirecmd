@@ -141,10 +141,10 @@ function __wirecmd_candidates
             end
         case lsp
             if test (count $positionals) -eq 1
-                printf '%s\n' definition declaration type-definition implementation references hover document-symbols workspace-symbols status
+                printf '%s\n' definition declaration type-definition implementation references hover signature-help document-symbols workspace-symbols status
             else if test (count $positionals) -eq 2
                 switch "$positionals[2]"
-                    case definition declaration type-definition implementation hover
+                    case definition declaration type-definition implementation hover signature-help
                         printf '%s\n' --file --line --column --help
                     case references
                         printf '%s\n' --file --line --column --include-declaration --help
