@@ -28,7 +28,13 @@ func TestBlockingMCPProcess(t *testing.T) {
 	if os.Getenv("GO_WIRECMD_BLOCKING_SERVER") != "1" {
 		return
 	}
-	if err := os.WriteFile(os.Getenv("WIRECMD_CHILD_PID_FILE"), []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+	pidPath := os.Getenv("WIRECMD_CHILD_PID_FILE")
+	temporaryPIDPath := pidPath + ".tmp"
+	if err := os.WriteFile(temporaryPIDPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return
+	}
+	if err := os.Rename(temporaryPIDPath, pidPath); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return
 	}
