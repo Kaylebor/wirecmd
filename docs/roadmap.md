@@ -1,6 +1,7 @@
 # Current Roadmap
 
-Status: authoritative current-state handoff after v0.2.0; future items are a
+Status: authoritative current-state handoff for the v0.3.0 release candidate;
+future items are a
 decision queue, not accepted implementation milestones
 
 ## Purpose
@@ -20,23 +21,24 @@ authoritative milestone documents and their precedence.
 
 ## Current baseline
 
-Wirecmd v0.2.0 is a shell-native capability client and local daemon. MCP is its
+Wirecmd v0.3.0 is a shell-native capability client and local daemon. MCP is its
 first upstream adapter rather than the harness-facing abstraction. The shipped
 surface includes:
 
 - explicit `wirecmd mcp` discovery, focused help, projected and exact-JSON tool
   calls, and deterministic structured results;
-- stdio and Streamable HTTP MCP through the official Go SDK, including
-  transparent OAuth and encrypted credential persistence;
+- stdio, Streamable HTTP, and legacy HTTP+SSE MCP through the official Go SDK,
+  including transparent Streamable HTTP OAuth and encrypted credential
+  persistence;
 - composed KDL configuration, trusted workspace discovery, retained sessions,
   terminal-aware output, and Fish completion;
 - MCP resource and resource-template discovery plus resource reads; and
 - selector-routed native LSP navigation, hover, signature help, document
   symbols, and workspace symbols across multiple providers.
 
-Modern and legacy initialized stdio and Streamable HTTP are qualified in
-v0.2.0. This next-release candidate qualifies legacy HTTP+SSE through stable
-SDK v1.8.0; transparent SSE OAuth remains deferred.
+Modern and legacy initialized stdio and Streamable HTTP are qualified. Legacy
+HTTP+SSE is qualified through stable SDK v1.8.0; transparent SSE OAuth remains
+deferred.
 
 Normal operations remain daemon-backed and must fail clearly when the daemon is
 offline. `--direct` is the explicit one-shot path. SDK protocol types and MCP
