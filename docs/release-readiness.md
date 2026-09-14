@@ -1,6 +1,6 @@
 # Stable Release Readiness
 
-Status: authoritative stable release contract; v0.2.0 published 2026-09-10
+Status: authoritative stable release contract; v0.3.0 release candidate
 
 ## Objective
 
@@ -25,26 +25,25 @@ release with:
 go install github.com/Kaylebor/wirecmd@latest
 ```
 
-For reproducible installation of the current release, use:
+After v0.3.0 is published, its reproducible installation is:
 
 ```sh
-go install github.com/Kaylebor/wirecmd@v0.2.0
+go install github.com/Kaylebor/wirecmd@v0.3.0
 ```
+
+Until publication, the current exact stable release remains `v0.2.0`.
 
 Linux and macOS are supported. Apple Silicon has native CI and maintainer M2
 smoke evidence; Intel macOS is CI-qualified without a physical-device claim.
 Windows remains unsupported.
 
-The current v0.2.0 release supports the public CLI, KDL configuration,
+The v0.3.0 release candidate supports the public CLI, KDL configuration,
 structured result and error contracts, daemon/direct split, stdio and
-Streamable HTTP MCP transports, SDK-backed OAuth, MCP resources, and the
-documented native LSP operations. Modern and legacy initialized stdio and
-Streamable HTTP are qualified. Legacy HTTP+SSE is not implemented and remains
-explicitly deferred at the official SDK boundary.
-
-The next-release candidate qualifies legacy HTTP+SSE through stable SDK v1.8.0
-under the [SSE milestone](sse-plan.md). That candidate does not retroactively
-change the published v0.2.0 surface and must pass this document's release gates.
+Streamable HTTP and legacy HTTP+SSE MCP transports, SDK-backed OAuth for
+Streamable HTTP, MCP resources, and the documented native LSP operations.
+Modern and legacy initialized stdio and Streamable HTTP are qualified, as is
+legacy HTTP+SSE through stable SDK v1.8.0. Transparent OAuth for legacy SSE
+remains deferred under the [SSE milestone](sse-plan.md).
 
 Within the pre-1.0 stable line, backward-incompatible changes to the documented
 CLI, configuration, and structured output contracts require the next minor

@@ -37,7 +37,8 @@ go install github.com/Kaylebor/wirecmd@latest
 wirecmd --version
 ```
 
-Use `github.com/Kaylebor/wirecmd@v0.2.0` when an exact version is required.
+After v0.3.0 is published, use `github.com/Kaylebor/wirecmd@v0.3.0` when an
+exact version is required. Until then, the current exact release is `v0.2.0`.
 Tagged module installations report their version through `wirecmd --version`;
 source-checkout builds report `wirecmd dev`.
 
@@ -446,7 +447,7 @@ flags, and JSON contents are not completed. Bash/Zsh support is deferred.
   help, the MCP namespace, and local-only Fish completion.
 - [Product thesis](docs/product-thesis.md) defines the authoritative product
   direction and boundaries.
-- [Current roadmap](docs/roadmap.md) records the post-v0.2.0 state, open
+- [Current roadmap](docs/roadmap.md) records the v0.3.0 baseline, open
   decision queue, and external compatibility trigger.
 - [Validation plan](docs/validation-plan.md) records the completed first
   falsifiable implementation milestone.
