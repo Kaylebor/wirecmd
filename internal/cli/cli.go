@@ -293,8 +293,8 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		return nil, configurationError("server_not_found", fmt.Sprintf("configured server %q was not found", req.server), "list configured servers and choose one by name")
 	}
 	if isAuthAdmin {
-		if server.HTTP == nil || hasAuthorizationHeader(*server.HTTP) {
-			return nil, authServerError(server.Name)
+		if server.HTTP == nil || server.HTTP.Kind == config.HTTPTransportSSE || hasAuthorizationHeader(*server.HTTP) {
+			return nil, authServerError(server)
 		}
 		secrets := selectedSecretInputs(server, os.LookupEnv)
 		if !opts.direct {
@@ -328,7 +328,7 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	}
 	redactor := newRedactor(secrets, errOut)
 	redactor.ProtectEndpoint(target.endpoint)
-	if server.HTTP != nil {
+	if server.HTTP != nil && server.HTTP.Kind != config.HTTPTransportSSE {
 		interactive := isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
 		var oauthSecrets []string
 		target, oauthSecrets, targetErr = attachOAuth(target, server.Name, *server.HTTP, os.LookupEnv, interactive, false, browserEventHandler(errOut, redactor))
@@ -940,6 +940,9 @@ func serverList(cfg *config.Config) serversEnvelope {
 		transport := "stdio"
 		if server.HTTP != nil {
 			transport = "http"
+			if server.HTTP.Kind == config.HTTPTransportSSE {
+				transport = "sse"
+			}
 		}
 		servers = append(servers, serverSummary{Name: server.Name, Scope: string(server.Scope), Transport: transport})
 	}
@@ -953,12 +956,13 @@ type connectionTarget struct {
 	command    *exec.Cmd
 	endpoint   string
 	httpClient *http.Client
+	sse        bool
 	oauth      mcpauth.OAuthHandler
 	oauthRun   *oauthRuntime
 	authServer string
 }
 
-func (t connectionTarget) requiresToolPriming() bool { return t.endpoint != "" }
+func (t connectionTarget) requiresToolPriming() bool { return t.endpoint != "" && !t.sse }
 
 func makeTarget(server config.Server, root *config.Root, callerCWD string, lookup func(string) (string, bool)) (connectionTarget, []string, *appError) {
 	if server.HTTP != nil {
@@ -1011,8 +1015,12 @@ func makeHTTPTarget(transport config.HTTP, lookup func(string) (string, bool)) (
 		}
 		headers.Set(field.Name, value.Text)
 	}
-	client := &http.Client{Transport: &configuredHeaderTransport{base: http.DefaultTransport, headers: headers, scheme: endpoint.Scheme, host: endpoint.Host}}
-	return connectionTarget{endpoint: endpoint.String(), httpClient: client}, secrets, nil
+	var requestQuery url.Values
+	if transport.Kind == config.HTTPTransportSSE {
+		requestQuery = query
+	}
+	client := &http.Client{Transport: &configuredHeaderTransport{base: http.DefaultTransport, headers: headers, query: requestQuery, scheme: endpoint.Scheme, host: endpoint.Host}}
+	return connectionTarget{endpoint: endpoint.String(), httpClient: client, sse: transport.Kind == config.HTTPTransportSSE}, secrets, nil
 }
 
 func attachOAuth(target connectionTarget, serverName string, transport config.HTTP, lookup func(string) (string, bool), interactive, force bool, emitURL func(string)) (connectionTarget, []string, *appError) {
@@ -1041,6 +1049,7 @@ func attachOAuth(target connectionTarget, serverName string, transport config.HT
 type configuredHeaderTransport struct {
 	base    http.RoundTripper
 	headers http.Header
+	query   url.Values
 	scheme  string
 	host    string
 }
@@ -1050,6 +1059,16 @@ func (t *configuredHeaderTransport) RoundTrip(request *http.Request) (*http.Resp
 		return t.base.RoundTrip(request)
 	}
 	clone := request.Clone(request.Context())
+	cloneURL := *request.URL
+	requestQuery := cloneURL.Query()
+	for name, values := range t.query {
+		requestQuery.Del(name)
+		for _, value := range values {
+			requestQuery.Add(name, value)
+		}
+	}
+	cloneURL.RawQuery = requestQuery.Encode()
+	clone.URL = &cloneURL
 	clone.Header = request.Header.Clone()
 	for name, values := range t.headers {
 		clone.Header.Del(name)
@@ -1986,8 +2005,11 @@ func connectTarget(ctx context.Context, target connectionTarget, redactor *redac
 		return connectCommand(ctx, target.command, redactor)
 	}
 	if target.endpoint != "" {
+		if target.sse {
+			return connectSession(ctx, &mcp.SSEClientTransport{Endpoint: target.endpoint, HTTPClient: target.httpClient}, &mcp.ClientSessionOptions{ProtocolVersion: "2024-11-05"})
+		}
 		transport := &mcp.StreamableClientTransport{Endpoint: target.endpoint, HTTPClient: target.httpClient, OAuthHandler: target.oauth, DisableStandaloneSSE: true}
-		session, appErr := connectSession(ctx, transport)
+		session, appErr := connectSession(ctx, transport, nil)
 		if appErr != nil && appErr.code == "authorization_required" && target.authServer != "" {
 			appErr.action = authAction(target.authServer)
 		}
@@ -2007,7 +2029,7 @@ func connectTarget(ctx context.Context, target connectionTarget, redactor *redac
 
 func connectCommand(ctx context.Context, command *exec.Cmd, redactor *redactor) (*mcp.ClientSession, *appError) {
 	command.Stderr = redactor
-	return connectSession(ctx, &mcp.CommandTransport{Command: command})
+	return connectSession(ctx, &mcp.CommandTransport{Command: command}, nil)
 }
 
 // connect remains a narrow compatibility helper for the stdio-specific
@@ -2016,12 +2038,12 @@ func connect(ctx context.Context, command *exec.Cmd, redactor *redactor) (*mcp.C
 	return connectCommand(ctx, command, redactor)
 }
 
-func connectSession(ctx context.Context, transport mcp.Transport) (*mcp.ClientSession, *appError) {
+func connectSession(ctx context.Context, transport mcp.Transport, options *mcp.ClientSessionOptions) (*mcp.ClientSession, *appError) {
 	tracked := &trackedTransport{transport: transport}
 	client := mcp.NewClient(&mcp.Implementation{Name: "wirecmd", Version: buildinfo.Version()}, &mcp.ClientOptions{
 		MultiRoundTrip: &mcp.MultiRoundTripOptions{Disabled: true},
 	})
-	session, err := client.Connect(ctx, tracked, nil)
+	session, err := client.Connect(ctx, tracked, options)
 	if err != nil {
 		if tracked.connection != nil {
 			_ = tracked.connection.Close()

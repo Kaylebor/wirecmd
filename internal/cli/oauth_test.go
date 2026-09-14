@@ -108,6 +108,46 @@ func TestDirectAuthStatusAndLogoutDoNotContactServer(t *testing.T) {
 	}
 }
 
+func TestSSESkipsOAuthAndRejectsAuthAdministration(t *testing.T) {
+	keyring := &testKeyring{err: errors.New("no secret service")}
+	useTestOAuthStore(t, keyring)
+	fixture := newSSEFixture(t)
+	const secret = "sse-static-authorization-secret"
+	t.Setenv("WIRECMD_SSE_AUTH", secret)
+	plainPath := sseConfig(t, fixture.URL)
+	path := writeConfig(t, `wirecmd { mcp "remote" { scope "workspace"; sse "`+fixture.URL+`" { header Authorization=(secret)"env://WIRECMD_SSE_AUTH" } } }`)
+
+	code, output, stderr := invoke(t, []string{"--direct", "--config", plainPath, "remote"})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("unauthenticated SSE call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	if keyring.gets.Load() != 0 || keyring.sets.Load() != 0 || keyring.deletes.Load() != 0 {
+		t.Fatalf("unauthenticated SSE call touched OAuth credential storage: %#v", keyring)
+	}
+
+	code, output, stderr = invoke(t, []string{"--direct", "--config", path, "remote"})
+	if code != exitOK || stderr != "" || strings.Contains(output, secret) || strings.Contains(stderr, secret) {
+		t.Fatalf("static-auth SSE call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	if keyring.gets.Load() != 0 || keyring.sets.Load() != 0 || keyring.deletes.Load() != 0 {
+		t.Fatalf("SSE call touched OAuth credential storage: %#v", keyring)
+	}
+	fixture.mu.Lock()
+	authorization := fixture.lastHeaders.Get("Authorization")
+	fixture.mu.Unlock()
+	if authorization != secret {
+		t.Fatalf("SSE static Authorization header = %q", authorization)
+	}
+
+	code, output, stderr = invoke(t, []string{"--direct", "--config", path, "auth", "status", "remote"})
+	if code != exitConfiguration || stderr != "" || !strings.Contains(output, `"code":"oauth_unsupported"`) || strings.Contains(output, secret) {
+		t.Fatalf("SSE auth administration: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	if keyring.gets.Load() != 0 || keyring.sets.Load() != 0 || keyring.deletes.Load() != 0 {
+		t.Fatalf("SSE auth administration touched OAuth credential storage: %#v", keyring)
+	}
+}
+
 func TestNoninteractiveProtectedHTTPReturnsAuthorizationRequired(t *testing.T) {
 	useTestOAuthStore(t, &testKeyring{})
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

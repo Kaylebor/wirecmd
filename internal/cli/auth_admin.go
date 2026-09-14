@@ -1,6 +1,10 @@
 package cli
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/Kaylebor/wirecmd/internal/config"
+)
 
 type authAdmin struct {
 	command string
@@ -58,6 +62,9 @@ func authenticationError(code, message, action string) *appError {
 	return &appError{category: "authentication", code: code, message: message, action: action, exitCode: exitAuthentication}
 }
 
-func authServerError(server string) *appError {
-	return configurationError("oauth_unsupported", fmt.Sprintf("configured server %q does not use Streamable HTTP OAuth", server), "choose an HTTP server without a static Authorization header")
+func authServerError(server config.Server) *appError {
+	if server.HTTP != nil && server.HTTP.Kind == config.HTTPTransportSSE {
+		return configurationError("oauth_unsupported", fmt.Sprintf("Wirecmd does not yet support OAuth for configured HTTP+SSE server %q", server.Name), "configure a static Authorization header, or choose a Streamable HTTP server for OAuth")
+	}
+	return configurationError("oauth_unsupported", fmt.Sprintf("configured server %q does not use Streamable HTTP OAuth", server.Name), "choose an HTTP server without a static Authorization header")
 }

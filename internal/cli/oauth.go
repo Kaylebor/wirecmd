@@ -584,8 +584,8 @@ func resolveOAuthClientSecret(transport config.HTTP, lookup func(string) (string
 }
 
 func (d *daemon) executeAuth(ctx context.Context, request daemonRequest, server config.Server, root *config.Root, warnings []string, emitURL func(string) error) daemonReply {
-	if server.HTTP == nil || hasAuthorizationHeader(*server.HTTP) {
-		return errorReplyWithWarnings(authServerError(server.Name), warnings)
+	if server.HTTP == nil || server.HTTP.Kind == config.HTTPTransportSSE || hasAuthorizationHeader(*server.HTTP) {
+		return errorReplyWithWarnings(authServerError(server), warnings)
 	}
 	lookup := func(name string) (string, bool) {
 		value, ok := request.Secrets[name]

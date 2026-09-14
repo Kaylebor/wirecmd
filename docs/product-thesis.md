@@ -184,9 +184,11 @@ through a stable official SDK API. The public command and result contract must
 not branch by era; differences remain within the SDK and diagnostics unless
 they change an actual capability available to the caller.
 
-The first validation milestone found the shell interaction model viable, and
-the supported legacy stdio and Streamable HTTP layers are now qualified. Legacy
-HTTP+SSE remains deferred at the official SDK boundary. Trusted global and
+The first validation milestone found the shell interaction model viable. Legacy
+stdio, Streamable HTTP, and HTTP+SSE are qualified through the stable official
+SDK; see the [SSE milestone](sse-plan.md). SSE OAuth is explicitly deferred;
+that transport supports unauthenticated or static-header access.
+Trusted global and
 workspace configuration discovery is complete. Typed query and header values
 for Streamable HTTP endpoints and transparent OAuth with encrypted credential
 persistence are complete; their contracts are

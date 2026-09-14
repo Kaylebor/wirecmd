@@ -48,6 +48,9 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Qualify historical transports
+        run: bash scripts/qualify-legacy.sh
+
   macos:
     name: macOS 15 (${{ matrix.arch }})
     strategy:
@@ -89,3 +92,6 @@ jobs:
 
       - name: Build
         run: go build ./...
+
+      - name: Qualify historical transports
+        run: bash scripts/qualify-legacy.sh

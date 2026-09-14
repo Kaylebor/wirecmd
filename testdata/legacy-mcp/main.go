@@ -18,7 +18,8 @@ import (
 const fixtureSDKVersion = "v1.6.1"
 
 var (
-	listenAddress  = flag.String("listen", "", "serve stateful Streamable HTTP on this address instead of stdio")
+	listenAddress  = flag.String("listen", "", "serve stateful HTTP on this address instead of stdio")
+	sse            = flag.Bool("sse", false, "serve historical HTTP+SSE instead of Streamable HTTP (requires --listen)")
 	protocolRecord = flag.String("protocol-record", "", "append observed initialized protocol versions as JSON Lines to this test-only file")
 )
 
@@ -148,6 +149,10 @@ func main() {
 	defer recorder.close() //nolint:errcheck // diagnostics cannot recover from process shutdown.
 
 	if *listenAddress == "" {
+		if *sse {
+			fmt.Fprintln(os.Stderr, "legacy-mcp: --sse requires --listen")
+			os.Exit(2)
+		}
 		server := newServer(recorder)
 		if err := server.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 			fmt.Fprintf(os.Stderr, "legacy-mcp: stdio server: %v\n", err)
@@ -167,11 +172,22 @@ func main() {
 	}
 	defer listener.Close() //nolint:errcheck // the server owns the listener until process shutdown.
 
+	endpoint := "/mcp"
+	var handler http.Handler
+	if *sse {
+		endpoint = "/sse"
+		handler = mcp.NewSSEHandler(func(*http.Request) *mcp.Server {
+			return newServer(recorder)
+		}, nil)
+	} else {
+		handler = mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
+			return newServer(recorder)
+		}, &mcp.StreamableHTTPOptions{JSONResponse: true})
+	}
+
 	mux := http.NewServeMux()
-	mux.Handle("/mcp", mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
-		return newServer(recorder)
-	}, &mcp.StreamableHTTPOptions{JSONResponse: true}))
-	fmt.Fprintf(os.Stderr, "legacy-mcp listening: http://%s/mcp\n", listener.Addr())
+	mux.Handle(endpoint, handler)
+	fmt.Fprintf(os.Stderr, "legacy-mcp listening: http://%s%s\n", listener.Addr(), endpoint)
 	if err := http.Serve(listener, mux); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		fmt.Fprintf(os.Stderr, "legacy-mcp: HTTP server: %v\n", err)
 	}

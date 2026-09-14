@@ -279,7 +279,11 @@ func semanticServer(server config.Server) any {
 			}
 			oauth = map[string]any{"client_id": server.HTTP.OAuth.ClientID, "client_secret": secret, "redirect_uri": server.HTTP.OAuth.RedirectURI}
 		}
-		return map[string]any{"name": server.Name, "scope": server.Scope, "transport": "http", "endpoint": server.HTTP.Endpoint, "query": query, "headers": headers, "oauth": oauth}
+		transport := "http"
+		if server.HTTP.Kind == config.HTTPTransportSSE {
+			transport = "sse"
+		}
+		return map[string]any{"name": server.Name, "scope": server.Scope, "transport": transport, "endpoint": server.HTTP.Endpoint, "query": query, "headers": headers, "oauth": oauth}
 	}
 	args := make([]any, 0, len(server.Stdio.Args))
 	for _, arg := range server.Stdio.Args {
@@ -1250,7 +1254,7 @@ func (d *daemon) acquire(ctx context.Context, server config.Server, root *config
 		return d.waitForInstance(ctx, entry, generation, false)
 	}
 	entry := &poolEntry{ready: make(chan struct{})}
-	if server.HTTP != nil && !hasAuthorizationHeader(*server.HTTP) {
+	if server.HTTP != nil && server.HTTP.Kind != config.HTTPTransportSSE && !hasAuthorizationHeader(*server.HTTP) {
 		entry.authStarted = make(chan struct{})
 	}
 	d.pools[key] = entry
@@ -1310,7 +1314,7 @@ func (d *daemon) startInstance(clientCtx context.Context, entry *poolEntry, key 
 	defer d.wg.Done()
 	lookup := func(name string) (string, bool) { value, ok := inputs[name]; return value.Value, ok && value.Present }
 	target, secrets, appErr := makeTarget(server, root, cwd, lookup)
-	if appErr == nil && server.HTTP != nil {
+	if appErr == nil && server.HTTP != nil && server.HTTP.Kind != config.HTTPTransportSSE {
 		var oauthSecrets []string
 		target, oauthSecrets, appErr = attachOAuth(target, server.Name, *server.HTTP, lookup, interactive, false, func(raw string) {
 			if emitURL != nil {
@@ -1345,7 +1349,7 @@ func (d *daemon) startInstance(clientCtx context.Context, entry *poolEntry, key 
 			if target.oauthRun != nil {
 				target.oauthRun.markConnected()
 			}
-			started = &retainedInstance{session: session, redactor: redactor, breakOnRequestCancel: target.endpoint != "", oauthRun: target.oauthRun}
+			started = &retainedInstance{session: session, redactor: redactor, breakOnRequestCancel: target.endpoint != "", toolsPrimed: target.sse, oauthRun: target.oauthRun}
 		}
 	}
 	d.mu.Lock()

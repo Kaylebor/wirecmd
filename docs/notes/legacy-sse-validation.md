@@ -2,6 +2,11 @@
 
 Status: non-authoritative deferred-compatibility note, 2026-08-25
 
+Update 2026-09-04: upstream v1.8.0-pre.2 contains PRs #1127 and #1121. The
+approved [draft milestone](../sse-plan.md) permits branch-only qualification
+before stable release. The failure and stable-only decision below are the
+historical baseline, not the current draft-branch restriction.
+
 Wirecmd supports and qualifies only legacy initialized stdio and Streamable
 HTTP with the pinned official Go SDK v1.7.0. Its uncommitted HTTP+SSE KDL,
 runtime, tests, and fixture mode were removed rather than retaining an

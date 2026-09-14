@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -654,6 +655,95 @@ func TestDirectStreamableHTTPContracts(t *testing.T) {
 	}
 }
 
+func TestDirectLegacySSEContracts(t *testing.T) {
+	fixture := newSSEFixture(t)
+	config := sseConfig(t, fixture.URL)
+
+	code, output, stderr := invoke(t, []string{"--direct", "--config", config})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("list SSE servers: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	servers := decodeOutput(t, output)["servers"].([]any)
+	if len(servers) != 1 || servers[0].(map[string]any)["transport"] != "sse" {
+		t.Fatalf("SSE server list = %#v", servers)
+	}
+
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "remote"})
+	if code != exitOK || stderr != "" || !strings.Contains(output, `"name":"set_value"`) {
+		t.Fatalf("SSE tool list: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	if !fixture.sawProtocol("2024-11-05") {
+		t.Fatalf("SSE initialized protocols = %#v", fixture.protocols)
+	}
+	if fixture.sawMethod("server/discover") {
+		t.Fatal("SSE fixture observed unsupported modern server/discover")
+	}
+
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "--help", "remote", "set_value"})
+	if code != exitOK || stderr != "" || !strings.Contains(output, "set_value") {
+		t.Fatalf("SSE focused help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	code, output, stderr = invoke(t, []string{"--direct", "--config", config, "remote", `{"tool":"set_value","arguments":{"value":"direct"}}`})
+	if code != exitOK || stderr != "" || callValue(t, output) != "direct" {
+		t.Fatalf("SSE call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, _ = invoke(t, []string{"--direct", "--config", config, "remote", "read_value"})
+	if code != exitOK || callValue(t, output) != "" {
+		t.Fatalf("direct SSE calls must use fresh sessions: code=%d output=%s", code, output)
+	}
+
+	code, output, _ = invoke(t, []string{"--direct", "--config", config, "remote", "failure"})
+	if code != exitUpstreamTool || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_reported_error" {
+		t.Fatalf("SSE tool failure: code=%d output=%s", code, output)
+	}
+}
+
+func TestDirectLegacySSEConfiguredQueryAndHeaders(t *testing.T) {
+	fixture := newSSEFixture(t)
+	t.Setenv("WIRECMD_SSE_TOKEN", "a/b c")
+	t.Setenv("WIRECMD_SSE_KEY", "header-secret")
+	config := sseValuesConfig(t, fixture.URL+"?tenant=old&kept=yes")
+
+	code, output, stderr := invoke(t, []string{"--direct", "--config", config, "remote"})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("SSE tool list: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	fixture.mu.Lock()
+	query := fixture.endpointQuery
+	messageQuery := fixture.messageQuery
+	headers := fixture.lastHeaders
+	fixture.mu.Unlock()
+	if query.Get("tenant") != "acme" || query.Get("token") != "a/b c" || query.Get("kept") != "yes" {
+		t.Fatalf("configured SSE query = %#v", query)
+	}
+	if messageQuery.Get("tenant") != "acme" || messageQuery.Get("token") != "a/b c" || messageQuery.Get("kept") != "yes" {
+		t.Fatalf("configured SSE message query = %#v", messageQuery)
+	}
+	if headers.Get("X-API-Key") != "header-secret" {
+		t.Fatalf("configured SSE header = %q", headers.Get("X-API-Key"))
+	}
+}
+
+func TestLegacySSEConnectionFailureRedactsEndpointQuery(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := "http://" + listener.Addr().String() + "/sse?access_token=sse-query-secret"
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	config := sseConfig(t, endpoint)
+	code, output, stderr := invoke(t, []string{"--direct", "--config", config, "remote"})
+	if code != exitTransport || strings.Contains(output, "access_token") || strings.Contains(output, "sse-query-secret") || strings.Contains(stderr, "access_token") || strings.Contains(stderr, "sse-query-secret") {
+		t.Fatalf("direct SSE query disclosure: code=%d stdout=%q stderr=%q", code, output, stderr)
+	}
+	if !strings.Contains(output, "?[REDACTED]") {
+		t.Fatalf("direct SSE endpoint was not usefully sanitized: %s", output)
+	}
+}
+
 func TestDirectStreamableHTTPConfiguredQueryAndHeaders(t *testing.T) {
 	fixture := newHTTPFixture(t)
 	t.Setenv("WIRECMD_HTTP_TOKEN", "a/b c")
@@ -781,7 +871,7 @@ func TestInvocationValidationAndDaemonFailure(t *testing.T) {
 
 func TestHelpDoesNotRequireConfiguration(t *testing.T) {
 	code, output, stderr := invoke(t, []string{"--help"})
-	if code != exitOK || stderr != "" || !strings.Contains(output, "--config PATH") || !strings.HasSuffix(output, "\n") {
+	if code != exitOK || stderr != "" || !strings.Contains(output, "--config PATH") || !strings.Contains(output, "sse uses legacy HTTP+SSE") || !strings.Contains(output, "not transparent OAuth") || !strings.HasSuffix(output, "\n") {
 		t.Fatalf("help: code=%d stderr=%q output=%s", code, stderr, output)
 	}
 }
@@ -1738,6 +1828,100 @@ type httpFixture struct {
 	lastHeaders         http.Header
 }
 
+type sseFixture struct {
+	*httptest.Server
+	mu            sync.Mutex
+	endpointQuery url.Values
+	messageQuery  url.Values
+	lastHeaders   http.Header
+	methods       []string
+	protocols     []string
+	blockStarted  chan struct{}
+	blockRelease  chan struct{}
+	blockOnce     sync.Once
+	blockReleased sync.Once
+}
+
+func newSSEFixture(t *testing.T) *sseFixture {
+	t.Helper()
+	fixture := &sseFixture{blockStarted: make(chan struct{}), blockRelease: make(chan struct{})}
+	handler := mcp.NewSSEHandler(func(*http.Request) *mcp.Server {
+		value := ""
+		server := mcp.NewServer(&mcp.Implementation{Name: "wirecmd-sse-test-server", Version: "dev"}, &mcp.ServerOptions{
+			InitializedHandler: func(_ context.Context, request *mcp.InitializedRequest) {
+				if params := request.Session.InitializeParams(); params != nil {
+					fixture.mu.Lock()
+					fixture.protocols = append(fixture.protocols, params.ProtocolVersion)
+					fixture.mu.Unlock()
+				}
+			},
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "set_value", Description: "retain a session value"}, func(_ context.Context, _ *mcp.CallToolRequest, input struct {
+			Value string `json:"value"`
+		}) (*mcp.CallToolResult, any, error) {
+			value = input.Value
+			return nil, map[string]any{"value": value}, nil
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "read_value", Description: "read a session value"}, func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+			return nil, map[string]any{"value": value}, nil
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "failure", Description: "return a tool error"}, failureTool)
+		mcp.AddTool(server, &mcp.Tool{Name: "block", Description: "wait for cancellation"}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+			fixture.blockOnce.Do(func() { close(fixture.blockStarted) })
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-fixture.blockRelease:
+				return nil, nil, errors.New("fixture released")
+			}
+		})
+		return server
+	}, nil)
+	fixture.Server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		fixture.mu.Lock()
+		fixture.lastHeaders = request.Header.Clone()
+		if request.Method == http.MethodGet {
+			fixture.endpointQuery = request.URL.Query()
+		}
+		if request.Method == http.MethodPost {
+			fixture.messageQuery = request.URL.Query()
+			body, err := io.ReadAll(request.Body)
+			if err == nil {
+				var message struct {
+					Method string `json:"method"`
+				}
+				if json.Unmarshal(body, &message) == nil && message.Method != "" {
+					fixture.methods = append(fixture.methods, message.Method)
+				}
+				request.Body = io.NopCloser(bytes.NewReader(body))
+			}
+		}
+		fixture.mu.Unlock()
+		handler.ServeHTTP(writer, request)
+	}))
+	t.Cleanup(func() {
+		fixture.releaseBlock()
+		fixture.Close()
+	})
+	return fixture
+}
+
+func (f *sseFixture) releaseBlock() {
+	f.blockReleased.Do(func() { close(f.blockRelease) })
+}
+
+func (f *sseFixture) sawMethod(want string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.methods, want)
+}
+
+func (f *sseFixture) sawProtocol(want string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Contains(f.protocols, want)
+}
+
 func newHTTPFixture(t *testing.T) *httpFixture {
 	return newHTTPFixtureWithBlockedToolList(t, false)
 }
@@ -1849,6 +2033,16 @@ func httpConfig(t *testing.T, endpoint string) string {
 func httpValuesConfig(t *testing.T, endpoint string) string {
 	t.Helper()
 	return writeConfig(t, "wirecmd { mcp \"remote\" { scope \"workspace\"; http "+strconv.Quote(endpoint)+" { query tenant=\"acme\"; query token=(secret)\"env://WIRECMD_HTTP_TOKEN\"; header Authorization=\"Bearer fixture\"; header X-API-Key=(secret)\"env://WIRECMD_HTTP_KEY\" } } }")
+}
+
+func sseConfig(t *testing.T, endpoint string) string {
+	t.Helper()
+	return writeConfig(t, "wirecmd { mcp \"remote\" { scope \"workspace\"; sse "+strconv.Quote(endpoint)+" } }")
+}
+
+func sseValuesConfig(t *testing.T, endpoint string) string {
+	t.Helper()
+	return writeConfig(t, "wirecmd { mcp \"remote\" { scope \"workspace\"; sse "+strconv.Quote(endpoint)+" { query tenant=\"acme\"; query token=(secret)\"env://WIRECMD_SSE_TOKEN\"; header X-API-Key=(secret)\"env://WIRECMD_SSE_KEY\" } } }")
 }
 
 func helperConfigAt(t *testing.T, path, root, env string) string {

@@ -406,6 +406,10 @@ Start here:
   wirecmd lsp signature-help --file PATH --line N --column N
   wirecmd lsp status [--file PATH]
 
+Transports:
+  stdio runs a local command; http uses Streamable HTTP; sse uses legacy HTTP+SSE.
+  SSE supports configured static headers, including Authorization, but not transparent OAuth.
+
 Prefix flags (before mcp/server/tool names):
   --config PATH                      repeatable; later files override earlier
   --direct                           one-shot operation without the daemon
