@@ -451,8 +451,8 @@ flags, and JSON contents are not completed. Bash/Zsh support is deferred.
 - [Validation plan](docs/validation-plan.md) records the completed first
   falsifiable implementation milestone.
 - [Compatibility plan](docs/compatibility-plan.md) defines the current
-  supported newest-to-oldest protocol qualification and the deferred SSE
-  boundary.
+  supported newest-to-oldest protocol qualification. Legacy HTTP+SSE is
+  qualified; transparent SSE OAuth remains deferred.
 - [Discovery plan](docs/discovery-plan.md) records the completed authoritative
   automatic configuration-discovery and workspace-trust milestone.
 - [HTTP values plan](docs/http-values-plan.md) defines the authoritative

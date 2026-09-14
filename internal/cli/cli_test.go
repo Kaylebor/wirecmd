@@ -744,6 +744,45 @@ func TestLegacySSEConnectionFailureRedactsEndpointQuery(t *testing.T) {
 	}
 }
 
+func TestLegacySSEDerivedEndpointFailureRedactsConfiguredQuery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.Method {
+		case http.MethodGet:
+			writer.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(writer, "event: endpoint\ndata: /messages?session=x\n\n")
+			writer.(http.Flusher).Flush()
+			<-request.Context().Done()
+		case http.MethodPost:
+			connection, _, err := writer.(http.Hijacker).Hijack()
+			if err == nil {
+				_ = connection.Close()
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	t.Setenv("WIRECMD_SSE_API_KEY", "sse-query-secret")
+	config := writeConfig(t, `wirecmd {
+    mcp "remote" {
+        scope "workspace"
+        sse `+strconv.Quote(server.URL+"/sse?z=2")+` {
+            query api_key=(secret)"env://WIRECMD_SSE_API_KEY"
+        }
+    }
+}`)
+	code, output, stderr := invoke(t, []string{"--direct", "--config", config, "remote"})
+	combined := output + stderr
+	if code != exitTransport {
+		t.Fatalf("direct SSE derived-endpoint failure: code=%d stdout=%q stderr=%q", code, output, stderr)
+	}
+	if strings.Contains(combined, "api_key") || strings.Contains(combined, "sse-query-secret") || strings.Contains(combined, "z=2") {
+		t.Fatalf("derived SSE endpoint disclosed configured query material: %q", combined)
+	}
+	if !strings.Contains(combined, "session=x") {
+		t.Fatalf("derived SSE failure did not include the discovered endpoint for redaction coverage: %q", combined)
+	}
+}
+
 func TestDirectStreamableHTTPConfiguredQueryAndHeaders(t *testing.T) {
 	fixture := newHTTPFixture(t)
 	t.Setenv("WIRECMD_HTTP_TOKEN", "a/b c")

@@ -2301,12 +2301,13 @@ func writeJSON(writer io.Writer, value any) {
 // redactor keeps at most the suffix that could start a secret spanning the
 // next write. It is intentionally only used for known resolved secret values.
 type redactor struct {
-	secrets       []string
-	endpoint      string
-	endpointQuery string
-	safeEndpoint  string
-	pending       string
-	writer        io.Writer
+	secrets            []string
+	endpoint           string
+	endpointQuery      string
+	endpointQueryParts []string
+	safeEndpoint       string
+	pending            string
+	writer             io.Writer
 }
 
 func newRedactor(values []string, writer io.Writer) *redactor {
@@ -2319,6 +2320,9 @@ func (r *redactor) Redact(value string) string {
 	if r.endpoint != "" {
 		value = strings.ReplaceAll(value, r.endpoint, r.safeEndpoint)
 		value = strings.ReplaceAll(value, r.endpointQuery, "[REDACTED]")
+		for _, part := range r.endpointQueryParts {
+			value = strings.ReplaceAll(value, part, "[REDACTED]")
+		}
 	}
 	for _, secret := range r.secrets {
 		value = strings.ReplaceAll(value, secret, "[REDACTED]")
@@ -2361,10 +2365,10 @@ func (r *redactor) ProtectSecrets(values ...string) {
 	sort.Slice(r.secrets, func(i, j int) bool { return len(r.secrets[i]) > len(r.secrets[j]) })
 }
 
-// ProtectEndpoint makes literal query strings diagnostic-only: the endpoint
-// path stays useful, but no raw query or query value can escape in SDK errors.
-// Query entries are not configuration secrets in this slice; this is solely a
-// boundary redaction rule until typed header/query values are introduced.
+// ProtectEndpoint makes configured endpoint queries diagnostic-only: the
+// endpoint path stays useful, but query material cannot escape in SDK errors.
+// Individual entries cover legacy SSE message endpoints, whose query is merged
+// with the configured one after the initial connection.
 func (r *redactor) ProtectEndpoint(endpoint string) {
 	if endpoint == "" {
 		return
@@ -2378,7 +2382,35 @@ func (r *redactor) ProtectEndpoint(endpoint string) {
 	bare.ForceQuery = false
 	r.endpoint = endpoint
 	r.endpointQuery = parsed.RawQuery
+	r.endpointQueryParts = endpointQueryParts(parsed)
 	r.safeEndpoint = bare.String() + "?[REDACTED]"
+}
+
+// endpointQueryParts covers a configured query when an SSE server advertises
+// a derived message endpoint. The SDK serializes the merged query canonically,
+// so retain both its original spelling and its encoded name/value entries.
+func endpointQueryParts(endpoint *url.URL) []string {
+	parts := make([]string, 0, strings.Count(endpoint.RawQuery, "&")+1)
+	seen := make(map[string]struct{}, cap(parts))
+	add := func(part string) {
+		if part == "" {
+			return
+		}
+		if _, exists := seen[part]; exists {
+			return
+		}
+		seen[part] = struct{}{}
+		parts = append(parts, part)
+	}
+	for _, part := range strings.Split(endpoint.RawQuery, "&") {
+		add(part)
+	}
+	for name, values := range endpoint.Query() {
+		for _, value := range values {
+			add(url.QueryEscape(name) + "=" + url.QueryEscape(value))
+		}
+	}
+	return parts
 }
 
 func (r *redactor) Write(input []byte) (int, error) {
