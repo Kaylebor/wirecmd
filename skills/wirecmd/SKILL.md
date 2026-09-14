@@ -115,6 +115,17 @@ completion.
 
 ## Configure HTTP values
 
+See the [configuration reference](../../docs/configuration.md) for complete KDL
+documents, discovery, composition, secrets, every transport, and LSP selectors.
+
+Legacy HTTP+SSE uses `sse "URL"` instead of
+`http "URL"`, with the same query/header value syntax below. Choose it only
+for an explicitly configured legacy SSE endpoint; there is no transport
+autodetection. SSE accepts static authentication headers but has no transparent
+OAuth or auth-management commands. Do not suggest an SSE `oauth` block.
+Transport switches replace the prior transport and its credentials rather
+than inheriting them. See the [SSE milestone](../../docs/sse-plan.md).
+
 Streamable HTTP endpoints can declare structural query and header values:
 
 ```kdl
@@ -142,7 +153,7 @@ definition cannot reuse an instance started with different credentials.
 
 ## Authenticate protected HTTP servers
 
-When an HTTP server has no configured `Authorization` header, Wirecmd can use
+When a Streamable HTTP (`http`) server has no configured `Authorization` header, Wirecmd can use
 the official SDK's OAuth implementation. Dynamic client registration is
 automatic. Configure a preregistered client only when the provider requires
 one:

@@ -34,9 +34,9 @@ surface includes:
 - selector-routed native LSP navigation, hover, signature help, document
   symbols, and workspace symbols across multiple providers.
 
-Modern and legacy initialized stdio and Streamable HTTP are qualified. Legacy
-HTTP+SSE is not implemented and remains deferred at the SDK boundary described
-below.
+Modern and legacy initialized stdio and Streamable HTTP are qualified in
+v0.2.0. This next-release candidate qualifies legacy HTTP+SSE through stable
+SDK v1.8.0; transparent SSE OAuth remains deferred.
 
 Normal operations remain daemon-backed and must fail clearly when the daemon is
 offline. `--direct` is the explicit one-shot path. SDK protocol types and MCP
@@ -88,13 +88,13 @@ semantics and could eventually front native LSP operations or translate
 supported older upstream MCPs, but it must not drive a generic proxy framework
 or weaken the shell-first product boundary.
 
-## External compatibility trigger
+## Completed external compatibility trigger
 
-Legacy HTTP+SSE remains deferred until a stable official Go SDK release exposes
-`ClientSessionOptions.ProtocolVersion`. At that point, follow the dependency
-decision process, update the SDK deliberately, and requalify the historical
-fixture before adding configuration or runtime support. Do not restore the
-discarded local SSE path or maintain a second MCP protocol implementation.
+Stable official Go SDK v1.8.0 exposes
+`ClientSessionOptions.ProtocolVersion`; the historical HTTP+SSE fixture and
+public `sse` configuration path are qualified without a local protocol stack.
+Future protocol changes still follow the dependency decision process and must
+preserve this SDK-owned boundary.
 
 ## Deferred supporting work
 

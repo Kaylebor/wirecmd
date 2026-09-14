@@ -1,5 +1,8 @@
 # Wire Command (`wirecmd`)
 
+This branch qualifies legacy HTTP+SSE with the stable official Go SDK
+`v1.8.0`. See the [SSE milestone](docs/sse-plan.md).
+
 This repository explores a shell-native capability runtime for agents, humans,
 scripts, and CI. Its first upstream adapter is the Model Context Protocol
 (MCP), but MCP is not intended to be part of the harness-facing contract.
@@ -42,9 +45,8 @@ The module path deliberately does not depend on a vanity domain. A project
 website such as `wirecmd.dev` may be added independently later.
 
 The first agent-facing validation milestone is complete: comparative evidence
-supports continuing the project. Supported legacy stdio and Streamable HTTP
-protocol layers are qualified; legacy HTTP+SSE remains deferred at the SDK
-boundary. Automatic configuration discovery, workspace trust, typed HTTP query
+supports continuing the project. Legacy stdio, Streamable HTTP, and HTTP+SSE
+protocol layers are qualified through the official SDK. Automatic configuration discovery, workspace trust, typed HTTP query
 and header values, and SDK-owned OAuth with encrypted credential persistence
 are also complete. The first native LSP adapter adds automatically routed,
 multi-provider source navigation and read-only inspection. Normal commands use
@@ -59,7 +61,7 @@ not a claim of exhaustive physical-device qualification. The checklist remains i
 
 ## First call
 
-Save this complete KDL 2 document as `wirecmd.kdl`, replacing the command with
+Save this minimal KDL 2 configuration as `wirecmd.kdl`, replacing the command with
 an installed stdio MCP server executable and its actual arguments:
 
 ```kdl
@@ -117,6 +119,19 @@ while allowing active calls to finish. Ctrl-C in the daemon terminal stops it.
 
 ## Configuration and trust
 
+The complete KDL surface and composition rules are documented in the
+[configuration reference](docs/configuration.md). A minimal local MCP looks
+like this:
+
+```kdl
+wirecmd {
+    mcp "local" {
+        scope "workspace"
+        stdio "local-mcp-server"
+    }
+}
+```
+
 Without `--config`, Wirecmd loads the global file at
 `$XDG_CONFIG_HOME/wirecmd/config.kdl`, or `~/.config/wirecmd/config.kdl` when
 `XDG_CONFIG_HOME` is unset or not absolute. It then composes trusted workspace `wirecmd.kdl`
@@ -154,7 +169,9 @@ tool-side `--` remains the raw JSON overlay.
 Wirecmd also provides native, workspace-scoped navigation and read-only
 inspection through configured Language Server Protocol processes. It does not
 supply language servers, infer executables, or maintain a language catalog.
-Configure the actual command and one or more selectors alongside MCP sources:
+Configure the actual command and one or more selectors alongside MCP sources;
+see the [configuration reference](docs/configuration.md) for the complete
+syntax:
 
 ```kdl
 wirecmd {
@@ -289,8 +306,18 @@ wirecmd {
 }
 ```
 
+Wirecmd supports explicit legacy HTTP+SSE via `sse "https://example.test/sse"`
+in place of `http`. It accepts the same `query` and `header` children, including
+secret-backed static Authorization. It does not support transparent OAuth:
+`oauth` blocks and `auth` commands are rejected for SSE servers. There is no
+automatic HTTP/SSE fallback. Switching transport in a stronger configuration
+layer replaces the whole transport without inheriting the previous endpoint,
+query values or credentials. Same-transport overrides still compose normally.
+
 The HTTP endpoint accepts structural query and header entries. Values are
-literal strings by default or environment-backed secret references:
+literal strings by default or environment-backed secret references. The
+[configuration reference](docs/configuration.md#streamable-http) documents the
+complete HTTP, SSE, secret, and composition rules:
 
 ```kdl
 http "https://example.test/mcp" {
@@ -316,7 +343,9 @@ distinguish retained instances.
 Protected Streamable HTTP servers use the official SDK's OAuth implementation
 when no static `Authorization` header is configured. Dynamic client
 registration is automatic. A preregistered client can be supplied when a
-provider requires one:
+provider requires one; see the
+[configuration reference](docs/configuration.md#streamable-http) for its exact
+constraints:
 
 ```kdl
 mcp "remote" {
@@ -422,8 +451,8 @@ flags, and JSON contents are not completed. Bash/Zsh support is deferred.
 - [Validation plan](docs/validation-plan.md) records the completed first
   falsifiable implementation milestone.
 - [Compatibility plan](docs/compatibility-plan.md) defines the current
-  supported newest-to-oldest protocol qualification and the deferred SSE
-  boundary.
+  supported newest-to-oldest protocol qualification. Legacy HTTP+SSE is
+  qualified; transparent SSE OAuth remains deferred.
 - [Discovery plan](docs/discovery-plan.md) records the completed authoritative
   automatic configuration-discovery and workspace-trust milestone.
 - [HTTP values plan](docs/http-values-plan.md) defines the authoritative

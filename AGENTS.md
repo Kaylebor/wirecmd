@@ -3,6 +3,8 @@
 ## Authority and document roles
 
 - `README.md` is the short public orientation.
+- `docs/configuration.md` is the practical reference for the implemented KDL
+  surface, discovery order, composition, transports, secrets, and LSP selectors.
 - `docs/onboarding-plan.md` defines administrative help and private Fish
   completion. Completion must remain local, read-only, secret-free and must not
   contact the daemon or upstream servers. MCP help and execution use the `mcp`
@@ -19,9 +21,11 @@
 - `docs/validation-plan.md` is the authoritative record of the completed first
   validation milestone and its acceptance criteria.
 - `docs/compatibility-plan.md` is the authoritative record of the completed
-  supported-protocol qualification; legacy HTTP+SSE remains deferred there.
+  supported-protocol qualification, including legacy HTTP+SSE.
 - `docs/resources-plan.md` is authoritative for the MCP resources slice and
   its SDK-owned pagination, reading, normalization, and redaction boundary.
+- `docs/sse-plan.md` is authoritative for stable SDK-backed legacy HTTP+SSE
+  qualification; transparent SSE OAuth remains deferred.
 - `docs/discovery-plan.md` is authoritative for the completed automatic
   configuration-discovery milestone and its acceptance criteria.
 - `docs/http-values-plan.md` is authoritative for the completed typed HTTP

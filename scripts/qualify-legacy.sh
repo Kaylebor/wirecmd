@@ -5,10 +5,13 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work_dir="$(mktemp -d)"
 runtime_dir="$work_dir/runtime"
 http_log="$work_dir/legacy-http.stderr"
+sse_log="$work_dir/legacy-sse.stderr"
 stdio_protocol="$work_dir/legacy-stdio-protocol.jsonl"
 http_protocol="$work_dir/legacy-http-protocol.jsonl"
+sse_protocol="$work_dir/legacy-sse-protocol.jsonl"
 daemon_pid=""
 fixture_pid=""
+sse_pid=""
 
 cleanup() {
   if [[ -n "$daemon_pid" ]]; then
@@ -18,6 +21,10 @@ cleanup() {
   if [[ -n "$fixture_pid" ]]; then
     kill -TERM "$fixture_pid" 2>/dev/null || true
     wait "$fixture_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$sse_pid" ]]; then
+    kill -TERM "$sse_pid" 2>/dev/null || true
+    wait "$sse_pid" 2>/dev/null || true
   fi
   rm -rf -- "$work_dir"
 }
@@ -53,6 +60,24 @@ done
   exit 1
 }
 
+"$work_dir/legacy-mcp" --listen 127.0.0.1:0 --sse \
+  --protocol-record "$sse_protocol" 2>"$sse_log" &
+sse_pid=$!
+sse_endpoint=""
+for _ in {1..100}; do
+  sse_endpoint="$(sed -n 's/^legacy-mcp listening: //p' "$sse_log")"
+  [[ -n "$sse_endpoint" ]] && break
+  kill -0 "$sse_pid" 2>/dev/null || {
+    sed -n '1,120p' "$sse_log" >&2
+    exit 1
+  }
+  sleep 0.05
+done
+[[ -n "$sse_endpoint" ]] || {
+  echo "legacy SSE fixture did not become ready" >&2
+  exit 1
+}
+
 cat >"$work_dir/wirecmd.kdl" <<EOF
 wirecmd {
     mcp "legacy-stdio" {
@@ -65,6 +90,10 @@ wirecmd {
     mcp "legacy-http" {
         scope "workspace"
         http "$endpoint"
+    }
+    mcp "legacy-sse" {
+        scope "workspace"
+        sse "$sse_endpoint"
     }
 }
 EOF
@@ -93,42 +122,49 @@ wirecmd() {
     --config "$work_dir/wirecmd.kdl" "$@"
 }
 
-wirecmd mcp legacy-stdio | jq -e '.ok and any(.tools[]; .name == "set_value")' >/dev/null
-wirecmd --help mcp legacy-stdio tool set_value | grep -F -- '--value' >/dev/null
-wirecmd mcp legacy-stdio tool set_value --value stdio-retained \
-  | jq -e '.ok and .result.data.value == "stdio-retained"' >/dev/null
-wirecmd mcp legacy-stdio tool read_value \
-  | jq -e '.ok and .result.data.exists and .result.data.value == "stdio-retained"' >/dev/null
+for server in legacy-stdio legacy-http legacy-sse; do
+  wirecmd mcp "$server" | jq -e '.ok and any(.tools[]; .name == "set_value")' >/dev/null
+  wirecmd --help mcp "$server" tool set_value | grep -F -- '--value' >/dev/null
+  wirecmd mcp "$server" tool set_value --value "$server-retained" |
+    jq -e --arg value "$server-retained" '.ok and .result.data.value == $value' >/dev/null
+  wirecmd mcp "$server" tool read_value |
+    jq -e --arg value "$server-retained" '.ok and .result.data.exists and .result.data.value == $value' >/dev/null
+  wirecmd mcp "$server" '{"tool":"set_value","arguments":{"value":"exact-retained"}}' |
+    jq -e '.ok and .result.data.value == "exact-retained"' >/dev/null
+  wirecmd mcp "$server" tool read_value |
+    jq -e '.ok and .result.data.exists and .result.data.value == "exact-retained"' >/dev/null
+  wirecmd --direct mcp "$server" tool read_value |
+    jq -e '.ok and (.result.data.exists | not)' >/dev/null
+  wirecmd --direct mcp "$server" tool set_value --value direct |
+    jq -e '.ok and .result.data.value == "direct"' >/dev/null
 
-wirecmd mcp legacy-http '{"tool":"set_value","arguments":{"value":"http-retained"}}' \
-  | jq -e '.ok and .result.data.value == "http-retained"' >/dev/null
-wirecmd mcp legacy-http tool read_value \
-  | jq -e '.ok and .result.data.exists and .result.data.value == "http-retained"' >/dev/null
-
-"$work_dir/wirecmd" --direct --config "$work_dir/wirecmd.kdl" mcp legacy-stdio tool read_value \
-  | jq -e '.ok and (.result.data.exists | not)' >/dev/null
-"$work_dir/wirecmd" --direct --config "$work_dir/wirecmd.kdl" mcp legacy-http tool read_value \
-  | jq -e '.ok and (.result.data.exists | not)' >/dev/null
-
-set +e
-failure="$(wirecmd mcp legacy-http tool fail)"
-failure_exit=$?
-set -e
-[[ "$failure_exit" -eq 5 ]]
-jq -e '.ok == false and .error.category == "upstream_tool" and .error.code == "tool_reported_error"' \
-  <<<"$failure" >/dev/null
+  set +e
+  failure="$(wirecmd mcp "$server" tool fail)"
+  failure_exit=$?
+  set -e
+  [[ "$failure_exit" -eq 5 ]]
+  jq -e '.ok == false and .error.category == "upstream_tool" and .error.code == "tool_reported_error"' \
+    <<<"$failure" >/dev/null
+done
 
 XDG_RUNTIME_DIR="$runtime_dir" "$work_dir/wirecmd" daemon reload \
-  | jq -e '.ok and .reload.instances_retired == 2' >/dev/null
-wirecmd mcp legacy-stdio tool read_value \
-  | jq -e '.ok and (.result.data.exists | not)' >/dev/null
-wirecmd mcp legacy-http tool read_value \
-  | jq -e '.ok and (.result.data.exists | not)' >/dev/null
+  | jq -e '.ok and .reload.instances_retired == 3' >/dev/null
+for server in legacy-stdio legacy-http legacy-sse; do
+  wirecmd mcp "$server" tool read_value \
+    | jq -e '.ok and (.result.data.exists | not)' >/dev/null
+done
 
-[[ -s "$stdio_protocol" && -s "$http_protocol" ]]
+[[ -s "$stdio_protocol" && -s "$http_protocol" && -s "$sse_protocol" ]]
 jq -e -s 'length > 0 and all(.[]; .protocol_version == "2025-11-25")' \
   "$stdio_protocol" >/dev/null
 jq -e -s 'length > 0 and all(.[]; .protocol_version == "2025-11-25")' \
   "$http_protocol" >/dev/null
+jq -e -s 'length > 0 and all(.[]; .protocol_version == "2024-11-05")' \
+  "$sse_protocol" >/dev/null
 
-echo "legacy initialized stdio and Streamable HTTP qualification passed"
+kill -TERM "$daemon_pid"
+wait "$daemon_pid"
+daemon_pid=""
+[[ ! -S "$runtime_dir/wirecmd/daemon.sock" ]]
+
+echo "legacy stdio/Streamable HTTP (2025-11-25) and SSE (2024-11-05) qualification passed"

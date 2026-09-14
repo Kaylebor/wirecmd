@@ -1,9 +1,9 @@
 # Automatic Configuration Discovery and Workspace Trust
 
-Status: completed authoritative milestone; supported MCP compatibility
-qualification is complete; legacy HTTP+SSE remains deferred at the SDK
-boundary. The completed typed HTTP query/header milestone is recorded in the
-[HTTP values plan](http-values-plan.md).
+Status: completed authoritative milestone. Supported MCP compatibility,
+including legacy HTTP+SSE, is recorded in the
+[compatibility plan](compatibility-plan.md). The completed typed HTTP
+query/header milestone is recorded in the [HTTP values plan](http-values-plan.md).
 
 ## Objective
 

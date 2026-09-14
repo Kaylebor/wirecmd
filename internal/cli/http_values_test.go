@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -54,6 +55,9 @@ func TestMakeHTTPTargetResolvesQueryAndHeaders(t *testing.T) {
 	if capture.request.Header.Get("X-API-Key") != "header-secret" {
 		t.Fatalf("X-API-Key = %q", capture.request.Header.Get("X-API-Key"))
 	}
+	if got := capture.request.URL.Query(); got.Get("tenant") != "acme" || got.Get("token") != "a/b c" || got.Get("kept") != "yes" {
+		t.Fatalf("configured query = %#v", got)
+	}
 	headerValues, present := capture.request.Header["X-Empty"]
 	if !present || len(headerValues) != 1 || headerValues[0] != "" {
 		t.Fatalf("present-empty header = %#v, %v", headerValues, present)
@@ -96,6 +100,7 @@ func TestConfiguredHeadersAreNotInjectedAcrossOrigins(t *testing.T) {
 	transport := &configuredHeaderTransport{
 		base:    &captureRoundTripper{},
 		headers: http.Header{"Authorization": []string{"Bearer secret"}},
+		query:   url.Values{"token": []string{"secret"}},
 		scheme:  "https",
 		host:    "example.test",
 	}
@@ -109,6 +114,52 @@ func TestConfiguredHeadersAreNotInjectedAcrossOrigins(t *testing.T) {
 	captured := transport.base.(*captureRoundTripper).request
 	if captured.Header.Get("Authorization") != "" {
 		t.Fatal("configured authorization was injected into a different origin")
+	}
+	if captured.URL.Query().Get("token") != "" {
+		t.Fatal("configured query was injected into a different origin")
+	}
+}
+
+func TestConfiguredSSEValuesFollowSameOriginDiscoveredEndpoint(t *testing.T) {
+	transport := &configuredHeaderTransport{
+		base:    &captureRoundTripper{},
+		headers: http.Header{"X-API-Key": []string{"secret"}},
+		query:   url.Values{"tenant": []string{"acme"}},
+		scheme:  "https",
+		host:    "example.test",
+	}
+	request, err := http.NewRequest(http.MethodPost, "https://example.test/messages?session=one", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := transport.RoundTrip(request); err != nil {
+		t.Fatal(err)
+	}
+	captured := transport.base.(*captureRoundTripper).request
+	if captured.Header.Get("X-API-Key") != "secret" || captured.URL.Query().Get("tenant") != "acme" || captured.URL.Query().Get("session") != "one" {
+		t.Fatalf("same-origin discovered endpoint = %s headers=%v", captured.URL, captured.Header)
+	}
+}
+
+func TestStreamableHTTPDoesNotOverlayQueriesOntoOtherPaths(t *testing.T) {
+	target, _, appErr := makeHTTPTarget(config.HTTP{
+		Endpoint: "https://example.test/mcp",
+		Query:    []config.HTTPField{{Name: "token", Value: literalValue("configured")}},
+	}, nil)
+	if appErr != nil {
+		t.Fatal(appErr)
+	}
+	capture := &captureRoundTripper{}
+	target.httpClient.Transport.(*configuredHeaderTransport).base = capture
+	request, err := http.NewRequest(http.MethodGet, "https://example.test/redirected?token=destination", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := target.httpClient.Do(request); err != nil {
+		t.Fatal(err)
+	}
+	if got := capture.request.URL.Query().Get("token"); got != "destination" {
+		t.Fatalf("redirect query token = %q, want destination", got)
 	}
 }
 
@@ -128,6 +179,20 @@ func TestHTTPSecretsParticipateInDaemonInputsAndIdentity(t *testing.T) {
 	second := d.authIdentity(server, inputs)
 	if first == second {
 		t.Fatal("HTTP credential change did not change daemon authentication identity")
+	}
+}
+
+func TestHTTPTransportKindChangesFingerprints(t *testing.T) {
+	httpServer := config.Server{Name: "remote", Scope: config.ScopeWorkspace, HTTP: &config.HTTP{Endpoint: "https://example.test/mcp"}}
+	sseServer := httpServer
+	sseServer.HTTP = &config.HTTP{Kind: config.HTTPTransportSSE, Endpoint: httpServer.HTTP.Endpoint}
+	if executionFingerprint(httpServer, nil, "/work") == executionFingerprint(sseServer, nil, "/work") {
+		t.Fatal("HTTP and SSE execution fingerprints must differ")
+	}
+	httpConfig := &config.Config{Servers: []config.Server{httpServer}}
+	sseConfig := &config.Config{Servers: []config.Server{sseServer}}
+	if configFingerprint(httpConfig, "/work") == configFingerprint(sseConfig, "/work") {
+		t.Fatal("HTTP and SSE configuration fingerprints must differ")
 	}
 }
 

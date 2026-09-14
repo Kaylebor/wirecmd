@@ -105,8 +105,19 @@ type HTTPField struct {
 	Provenance
 }
 
-// HTTP describes one complete modern Streamable HTTP transport.
+// HTTPTransportKind identifies the protocol carried by an HTTP endpoint. Its
+// zero value is Streamable HTTP so existing programmatic HTTP configuration
+// remains compatible.
+type HTTPTransportKind string
+
+const (
+	HTTPTransportHTTP HTTPTransportKind = ""
+	HTTPTransportSSE  HTTPTransportKind = "sse"
+)
+
+// HTTP describes one complete HTTP-family transport.
 type HTTP struct {
+	Kind               HTTPTransportKind
 	Endpoint           string
 	EndpointProvenance Provenance
 	Query              []HTTPField
@@ -209,10 +220,11 @@ type StdioSource struct {
 	Provenance
 }
 
-// HTTPSource is a potentially partial HTTP transport layer. A present source
-// selects HTTP even when it omits the endpoint to inherit one from a weaker
-// HTTP layer.
+// HTTPSource is a potentially partial HTTP-family transport layer. A present
+// source selects its transport even when it omits the endpoint to inherit one
+// from a weaker layer of the same kind.
 type HTTPSource struct {
+	Kind               HTTPTransportKind
 	Endpoint           *string
 	EndpointProvenance Provenance
 	Query              []HTTPField
@@ -378,6 +390,9 @@ func Compose(sources ...*Source) (*Config, error) {
 					server.Stdio = Stdio{}
 					server.HTTP = nil
 				}
+				if server.HTTP != nil && server.HTTP.Kind != partial.HTTP.Kind {
+					server.HTTP = nil
+				}
 				if server.HTTP == nil {
 					server.HTTP = &HTTP{}
 				}
@@ -432,6 +447,7 @@ func Compose(sources ...*Source) (*Config, error) {
 }
 
 func composeHTTP(result *HTTP, partial *HTTPSource) {
+	result.Kind = partial.Kind
 	result.Provenance = partial.Provenance
 	if partial.Endpoint != nil {
 		result.Endpoint = *partial.Endpoint
@@ -533,32 +549,39 @@ func validate(config *Config) error {
 			return validationError(server.ScopeProvenance, path+".scope", "unsupported scope %q", server.Scope)
 		}
 		if server.HTTP != nil {
+			transportPath := path + "." + httpTransportName(server.HTTP.Kind)
+			if server.HTTP.Kind != HTTPTransportHTTP && server.HTTP.Kind != HTTPTransportSSE {
+				return validationError(server.HTTP.Provenance, path+".http", "unsupported HTTP transport %q", server.HTTP.Kind)
+			}
 			if server.HTTP.Endpoint == "" {
-				return validationError(server.HTTP.Provenance, path+".http", "endpoint is required")
+				return validationError(server.HTTP.Provenance, transportPath, "endpoint is required")
 			}
 			if err := validateHTTPEndpoint(server.HTTP.Endpoint); err != nil {
-				return validationError(server.HTTP.EndpointProvenance, path+".http", "%v", err)
+				return validationError(server.HTTP.EndpointProvenance, transportPath, "%v", err)
 			}
 			if err := validateHTTPHeaders(server.HTTP.Headers); err != nil {
 				return validationError(err.Provenance, err.Path, "%s", err.Message)
 			}
 			if server.HTTP.OAuth != nil {
+				if server.HTTP.Kind == HTTPTransportSSE {
+					return validationError(server.HTTP.OAuth.Provenance, transportPath+".oauth", "oauth is not supported for sse transport")
+				}
 				if hasHTTPHeader(server.HTTP.Headers, "authorization") {
-					return validationError(server.HTTP.OAuth.Provenance, path+".http.oauth", "oauth cannot be combined with an Authorization header")
+					return validationError(server.HTTP.OAuth.Provenance, transportPath+".oauth", "oauth cannot be combined with an Authorization header")
 				}
 				if server.HTTP.OAuth.ClientID == "" {
-					return validationError(server.HTTP.OAuth.Provenance, path+".http.oauth.client-id", "client-id is required")
+					return validationError(server.HTTP.OAuth.Provenance, transportPath+".oauth.client-id", "client-id is required")
 				}
 				if server.HTTP.OAuth.RedirectURI == "" {
-					return validationError(server.HTTP.OAuth.Provenance, path+".http.oauth.redirect-uri", "redirect-uri is required")
+					return validationError(server.HTTP.OAuth.Provenance, transportPath+".oauth.redirect-uri", "redirect-uri is required")
 				}
 				if err := validateOAuthRedirectURI(server.HTTP.OAuth.RedirectURI); err != nil {
-					return validationError(server.HTTP.OAuth.RedirectURIProvenance, path+".http.oauth.redirect-uri", "%v", err)
+					return validationError(server.HTTP.OAuth.RedirectURIProvenance, transportPath+".oauth.redirect-uri", "%v", err)
 				}
 			}
 		} else {
 			if server.Stdio.Provenance == (Provenance{}) {
-				return validationError(server.Provenance, path+".stdio", "stdio or http is required")
+				return validationError(server.Provenance, path+".stdio", "stdio, http, or sse is required")
 			}
 			if server.Stdio.Command == "" {
 				return validationError(server.Stdio.Provenance, path+".stdio", "executable is required")
@@ -813,21 +836,28 @@ func parseServer(file string, node *document.Node) (ServerSource, error) {
 				return ServerSource{}, fmt.Errorf("%s.stdio: duplicate stdio", path)
 			}
 			if server.HTTP != nil {
-				return ServerSource{}, fmt.Errorf("%s: stdio and http are mutually exclusive", path)
+				return ServerSource{}, fmt.Errorf("%s: stdio and %s are mutually exclusive", path, httpTransportName(server.HTTP.Kind))
 			}
 			stdio, err := parseStdio(file, child, path)
 			if err != nil {
 				return ServerSource{}, err
 			}
 			server.Stdio = &stdio
-		case "http":
+		case "http", "sse":
+			kind := HTTPTransportHTTP
+			if nodeName(child) == "sse" {
+				kind = HTTPTransportSSE
+			}
 			if server.HTTP != nil {
-				return ServerSource{}, fmt.Errorf("%s.http: duplicate http", path)
+				if server.HTTP.Kind == kind {
+					return ServerSource{}, fmt.Errorf("%s.%s: duplicate %s", path, httpTransportName(kind), httpTransportName(kind))
+				}
+				return ServerSource{}, fmt.Errorf("%s: %s and %s are mutually exclusive", path, httpTransportName(server.HTTP.Kind), httpTransportName(kind))
 			}
 			if server.Stdio != nil {
-				return ServerSource{}, fmt.Errorf("%s: stdio and http are mutually exclusive", path)
+				return ServerSource{}, fmt.Errorf("%s: stdio and %s are mutually exclusive", path, httpTransportName(kind))
 			}
-			http, err := parseHTTP(file, child, path)
+			http, err := parseHTTP(file, child, path, kind)
 			if err != nil {
 				return ServerSource{}, err
 			}
@@ -946,15 +976,15 @@ func parseLSPSelector(file string, node *document.Node, lspPath string, index in
 	return selector, nil
 }
 
-func parseHTTP(file string, node *document.Node, serverPath string) (HTTPSource, error) {
-	path := serverPath + ".http"
+func parseHTTP(file string, node *document.Node, serverPath string, kind HTTPTransportKind) (HTTPSource, error) {
+	path := serverPath + "." + httpTransportName(kind)
 	if err := plainNode(node, path); err != nil {
 		return HTTPSource{}, err
 	}
 	if len(node.Arguments) > 1 {
 		return HTTPSource{}, fmt.Errorf("%s: expected at most one endpoint", path)
 	}
-	source := HTTPSource{Provenance: provenance(file, path)}
+	source := HTTPSource{Kind: kind, Provenance: provenance(file, path)}
 	if len(node.Arguments) == 1 {
 		endpoint, err := literalText(node.Arguments[0], path)
 		if err != nil {
@@ -989,6 +1019,9 @@ func parseHTTP(file string, node *document.Node, serverPath string) (HTTPSource,
 			seenHeader[key] = struct{}{}
 			source.Headers = append(source.Headers, field)
 		case "oauth":
+			if kind == HTTPTransportSSE {
+				return HTTPSource{}, fmt.Errorf("%s: oauth is not supported for sse transport", path)
+			}
 			if source.OAuth != nil {
 				return HTTPSource{}, fmt.Errorf("%s.oauth: duplicate oauth", path)
 			}
@@ -1223,4 +1256,11 @@ func serverPath(name string) string {
 
 func lspPath(name string) string {
 	return fmt.Sprintf("wirecmd.lsp[%q]", name)
+}
+
+func httpTransportName(kind HTTPTransportKind) string {
+	if kind == HTTPTransportSSE {
+		return "sse"
+	}
+	return "http"
 }

@@ -188,7 +188,7 @@ func TestComposeValidatesOnlyEffectiveConfiguration(t *testing.T) {
 	}{
 		{name: "no server", source: `wirecmd { root "/workspace" }`, want: "expected at least one server"},
 		{name: "missing scope", source: `wirecmd { mcp "memory" { stdio "memory" } }`, want: `mcp["memory"].scope: scope is required`},
-		{name: "missing transport", source: `wirecmd { mcp "memory" { scope "workspace"; } }`, want: `mcp["memory"].stdio: stdio or http is required`},
+		{name: "missing transport", source: `wirecmd { mcp "memory" { scope "workspace"; } }`, want: `mcp["memory"].stdio: stdio, http, or sse is required`},
 		{name: "missing executable", source: `wirecmd { mcp "memory" { scope "workspace"; stdio { env FLAG="one" } } }`, want: `mcp["memory"].stdio: executable is required`},
 	}
 	for _, test := range tests {
@@ -462,6 +462,162 @@ func TestComposeHTTPFieldsRetainsOrderAndProvenance(t *testing.T) {
 	secret := base.Servers[0].HTTP.Headers[0]
 	if secret.Value.Kind != ValueSecretReference || secret.Value.Text != "env://API_KEY" || secret.Value.Provenance != secret.Provenance {
 		t.Fatalf("secret header field/value provenance = %#v", secret)
+	}
+}
+
+func TestComposeSSETransportRetainsHTTPFieldValuesAndProvenance(t *testing.T) {
+	base, err := ParseString("base.kdl", `wirecmd {
+        mcp "events" {
+            scope "workspace"
+            sse "https://example.test/events?base=1" {
+                query tenant="base"
+                query token=(secret)"env://SSE_TOKEN"
+                header X-API-Key=(secret)"env://SSE_API_KEY"
+                header X-Kept="base"
+            }
+        }
+    }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := ParseString("local.kdl", `wirecmd {
+        mcp "events" {
+            sse {
+                query tenant="local"
+                header x-api-key="local"
+                header X-Trace="trace"
+            }
+        }
+    }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config, err := Compose(base, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sse := config.Servers[0].HTTP
+	if sse == nil || sse.Kind != HTTPTransportSSE {
+		t.Fatalf("SSE = %#v", sse)
+	}
+	if sse.Endpoint != "https://example.test/events?base=1" || sse.EndpointProvenance.File != "base.kdl" || sse.Provenance.File != "local.kdl" {
+		t.Fatalf("SSE endpoint/provenance = %#v", sse)
+	}
+	if got, want := httpFieldNames(sse.Query), []string{"tenant", "token"}; !sameStrings(got, want) {
+		t.Fatalf("query order = %#v, want %#v", got, want)
+	}
+	if sse.Query[0].Value.Text != "local" || sse.Query[0].File != "local.kdl" || sse.Query[0].Path != `wirecmd.mcp["events"].sse.query["tenant"]` {
+		t.Fatalf("overridden SSE query = %#v", sse.Query[0])
+	}
+	if sse.Query[1].Value.Kind != ValueSecretReference || sse.Query[1].Value.Text != "env://SSE_TOKEN" || sse.Query[1].File != "base.kdl" || sse.Query[1].Path != `wirecmd.mcp["events"].sse.query["token"]` {
+		t.Fatalf("retained SSE secret query = %#v", sse.Query[1])
+	}
+	if got, want := httpFieldNames(sse.Headers), []string{"x-api-key", "X-Kept", "X-Trace"}; !sameStrings(got, want) {
+		t.Fatalf("header order = %#v, want %#v", got, want)
+	}
+	if sse.Headers[0].Value.Text != "local" || sse.Headers[0].File != "local.kdl" || sse.Headers[1].File != "base.kdl" || sse.Headers[2].File != "local.kdl" {
+		t.Fatalf("SSE headers = %#v", sse.Headers)
+	}
+}
+
+func TestComposeTransportSwitchDoesNotInheritHTTPValuesOrOAuth(t *testing.T) {
+	http, err := ParseString("http.kdl", `wirecmd {
+        mcp "remote" {
+            scope "workspace"
+            http "https://example.test/mcp" {
+                query inherited="query"
+                header Authorization=(secret)"env://HTTP_AUTH"
+                oauth {
+                    client-id "http-client"
+                    client-secret (secret)"env://HTTP_CLIENT_SECRET"
+                    redirect-uri "http://127.0.0.1:8765/callback"
+                }
+            }
+        }
+    }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withoutEndpoint, err := ParseString("sse-without-endpoint.kdl", `wirecmd {
+        mcp "remote" { sse { header X-SSE="configured" } }
+    }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compose(http, withoutEndpoint); err == nil || !strings.Contains(err.Error(), `sse-without-endpoint.kdl: wirecmd.mcp["remote"].sse: endpoint is required`) {
+		t.Fatalf("HTTP to incomplete SSE switch error = %v", err)
+	}
+	sse, err := ParseString("sse.kdl", `wirecmd {
+        mcp "remote" {
+            scope "workspace"
+            sse "https://example.test/events" {
+                query retained="sse"
+                header X-SSE="configured"
+            }
+        }
+    }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	effective, err := Compose(http, sse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := effective.Servers[0].HTTP
+	if transport == nil || transport.Kind != HTTPTransportSSE || transport.Endpoint != "https://example.test/events" || transport.OAuth != nil {
+		t.Fatalf("HTTP to SSE switch = %#v", transport)
+	}
+	if got, want := httpFieldNames(transport.Query), []string{"retained"}; !sameStrings(got, want) {
+		t.Fatalf("HTTP to SSE query = %#v", got)
+	}
+	if got, want := httpFieldNames(transport.Headers), []string{"X-SSE"}; !sameStrings(got, want) {
+		t.Fatalf("HTTP to SSE headers = %#v", got)
+	}
+
+	backToHTTP, err := ParseString("replacement.kdl", `wirecmd {
+        mcp "remote" { http "https://example.test/replacement" }
+    }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective, err = Compose(sse, backToHTTP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport = effective.Servers[0].HTTP
+	if transport == nil || transport.Kind != HTTPTransportHTTP || transport.Endpoint != "https://example.test/replacement" || len(transport.Query) != 0 || len(transport.Headers) != 0 || transport.OAuth != nil {
+		t.Fatalf("SSE to HTTP switch = %#v", transport)
+	}
+}
+
+func TestSSEConfigurationRejectsOAuth(t *testing.T) {
+	source, err := ParseString("test.kdl", `wirecmd {
+        mcp "events" {
+            scope "workspace"
+            sse "https://example.test/events" {
+                oauth { client-id "client" }
+            }
+        }
+    }`)
+	if source != nil || err == nil || !strings.Contains(err.Error(), `sse: oauth is not supported for sse transport`) {
+		t.Fatalf("ParseString() = %#v, %v", source, err)
+	}
+
+	scope := ScopeWorkspace
+	endpoint := "https://example.test/events"
+	direct := &Source{Servers: []ServerSource{{
+		Name:  "events",
+		Scope: &scope,
+		HTTP: &HTTPSource{
+			Kind:     HTTPTransportSSE,
+			Endpoint: &endpoint,
+			OAuth:    &OAuthSource{},
+		},
+	}}}
+	if _, err := Compose(direct); err == nil || !strings.Contains(err.Error(), `sse.oauth: oauth is not supported for sse transport`) {
+		t.Fatalf("Compose() SSE OAuth error = %v", err)
 	}
 }
 

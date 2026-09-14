@@ -42,6 +42,10 @@ documented native LSP operations. Modern and legacy initialized stdio and
 Streamable HTTP are qualified. Legacy HTTP+SSE is not implemented and remains
 explicitly deferred at the official SDK boundary.
 
+The next-release candidate qualifies legacy HTTP+SSE through stable SDK v1.8.0
+under the [SSE milestone](sse-plan.md). That candidate does not retroactively
+change the published v0.2.0 surface and must pass this document's release gates.
+
 Within the pre-1.0 stable line, backward-incompatible changes to the documented
 CLI, configuration, and structured output contracts require the next minor
 version. A security or correctness defect that cannot safely preserve existing
@@ -138,5 +142,5 @@ exact release commits passed the gates above.
 - Automated tagging or GitHub Release publication.
 - Windows build or runtime qualification. macOS qualification is tracked in
   the [macOS plan](macos-plan.md).
-- Legacy HTTP+SSE and additional MCP primitives listed in the compatibility
-  plan.
+- Transparent OAuth for legacy HTTP+SSE and additional MCP primitives listed
+  in the compatibility plan.

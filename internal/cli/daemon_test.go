@@ -353,6 +353,83 @@ func TestDaemonStreamableHTTPContracts(t *testing.T) {
 	}
 }
 
+func TestDaemonLegacySSEContractsAndReload(t *testing.T) {
+	runtime := testRuntimeDirectory(t)
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	d := startTestDaemon(t)
+	fixture := newSSEFixture(t)
+	t.Cleanup(d.close)
+	config := sseConfig(t, fixture.URL)
+
+	directCode, directOutput, directStderr := invoke(t, []string{"--direct", "--config", config, "--help", "remote", "set_value"})
+	if directCode != exitOK || directStderr != "" {
+		t.Fatalf("direct SSE help: code=%d stderr=%q output=%s", directCode, directStderr, directOutput)
+	}
+	code, output, stderr := invoke(t, []string{"--config", config, "--help", "remote", "set_value"})
+	if code != exitOK || stderr != "" || output != directOutput {
+		t.Fatalf("daemon SSE help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	code, output, stderr = invoke(t, []string{"--config", config, "remote", `{"tool":"set_value","arguments":{"value":"retained"}}`})
+	if code != exitOK || stderr != "" || callValue(t, output) != "retained" {
+		t.Fatalf("daemon SSE set: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, stderr = invoke(t, []string{"--config", config, "remote", "read_value"})
+	if code != exitOK || stderr != "" || callValue(t, output) != "retained" {
+		t.Fatalf("daemon SSE retained value: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, _ = invoke(t, []string{"--config", config, "remote", "failure"})
+	if code != exitUpstreamTool || decodeOutput(t, output)["error"].(map[string]any)["code"] != "tool_reported_error" {
+		t.Fatalf("daemon SSE tool failure: code=%d output=%s", code, output)
+	}
+
+	code, output, stderr = invoke(t, []string{"daemon", "reload"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["reload"].(map[string]any)["instances_retired"].(json.Number).String() != "1" {
+		t.Fatalf("daemon SSE reload: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	code, output, _ = invoke(t, []string{"--config", config, "remote", "read_value"})
+	if code != exitOK || callValue(t, output) != "" {
+		t.Fatalf("reloaded SSE value: code=%d output=%s", code, output)
+	}
+}
+
+func TestDaemonCancellationMarksSSEInstanceBroken(t *testing.T) {
+	runtime := testRuntimeDirectory(t)
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	d := startTestDaemon(t)
+	fixture := newSSEFixture(t)
+	t.Cleanup(d.close)
+	config := sseConfig(t, fixture.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan int, 1)
+	go func() {
+		var stdout, stderr bytes.Buffer
+		done <- Run(ctx, namespacedTestArgs([]string{"--config", config, "remote", "block"}), strings.NewReader(""), &stdout, &stderr)
+	}()
+	select {
+	case <-fixture.blockStarted:
+	case <-time.After(time.Second):
+		t.Fatal("SSE block tool did not start")
+	}
+	cancel()
+	select {
+	case code := <-done:
+		if code != exitTransport {
+			t.Fatalf("canceled SSE daemon caller code=%d, want transport failure", code)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("canceled SSE daemon client remained blocked")
+	}
+	// The CLI returning does not mean the daemon has observed its disconnect.
+	// Keep the upstream call blocked until cancellation is recorded; releasing
+	// it here would race a completed tool error against daemon cancellation.
+	waitForBrokenInstance(t)
+	code, output, _ := invoke(t, []string{"--config", config, "remote", "read_value"})
+	if code != exitTransport || decodeOutput(t, output)["error"].(map[string]any)["code"] != "instance_unavailable" {
+		t.Fatalf("canceled SSE session must remain honestly unavailable: code=%d output=%s", code, output)
+	}
+}
+
 func TestDaemonStreamableHTTPCredentialsSelectInstances(t *testing.T) {
 	runtime := testRuntimeDirectory(t)
 	t.Setenv("XDG_RUNTIME_DIR", runtime)

@@ -1,21 +1,24 @@
 # MCP Compatibility Qualification Record
 
-Status: authoritative completed supported-protocol qualification; legacy HTTP+SSE deferred at the SDK boundary; OAuth tracked separately
+Status: authoritative completed supported-protocol qualification, including
+legacy HTTP+SSE; OAuth tracked separately
+
+The [SSE qualification](sse-plan.md) records the stable SDK v1.8.0 boundary.
+SSE OAuth remains deferred. Qualification evidence is recorded separately;
+release support still follows the normal release gate.
 
 ## Objective
 
-Record the qualified legacy initialized stdio and Streamable HTTP protocol
+Record the qualified legacy initialized stdio, Streamable HTTP, and HTTP+SSE protocol
 layers that the pinned official SDK supports today, while preserving one
 shell-facing command, result, error, and daemon contract across those eras.
-Legacy HTTP+SSE remains a full-MVP target, but is deferred until the official
-SDK exposes the required stable client API.
 
 Qualification covered the deployed layers newest to oldest:
 
 1. establish and retain the modern `2026-07-28` baseline;
 2. qualify legacy initialized MCP over stdio and Streamable HTTP; and
-3. defer legacy HTTP+SSE associated with `2024-11-05` pending a stable SDK
-   release containing `ClientSessionOptions.ProtocolVersion`.
+3. qualify legacy HTTP+SSE associated with `2024-11-05` through stable SDK
+   `v1.8.0` and `ClientSessionOptions.ProtocolVersion`.
 
 The official Go SDK remains the default owner of negotiation, initialization,
 pagination, calls, shutdown, authorization, and transport behavior. Protocol
@@ -51,25 +54,25 @@ direct sessions remained isolated, and reload retired both instances. Exact
 commands and outputs are recorded in
 `docs/notes/legacy-initialized-validation.md`.
 
-Legacy HTTP+SSE is not a configured or implemented transport in this release.
-The v1.7.0 SDK cannot connect to the isolated v1.6.1 historical SSE handler:
-the handler rejects the initial modern `server/discover` request with HTTP 400,
-closing the connection before legacy initialization can run. The pinned stable
-SDK has no public protocol-selection option. The removed implementation and
-upstream tracking evidence are recorded in `docs/notes/legacy-sse-validation.md`.
-Do not add a local shim or restore the public transport surface. Re-evaluate
-only after a stable official SDK release contains
-`ClientSessionOptions.ProtocolVersion` from upstream PR #1127.
+Legacy HTTP+SSE is qualified against the isolated v1.6.1 historical fixture
+through SDK v1.8.0's `ClientSessionOptions.ProtocolVersion`. It initializes at
+`2024-11-05` and uses the same shell contract, retained-session lifecycle,
+typed query/header values, redaction, and reload behavior. Configuration uses
+an explicit `sse` transport; Wirecmd does not infer or fall back between HTTP
+transports. Transparent SSE OAuth remains deferred because the SDK's SSE
+transport does not expose the OAuth handler used by Streamable HTTP. Historical
+failure and later qualification evidence are recorded in
+`docs/notes/legacy-sse-validation.md` and
+`docs/notes/sse-pre2-validation.md`.
 
 ## Qualification result
 
 The supported compatibility qualification is complete. Modern MCP, legacy
-initialized stdio, and legacy initialized Streamable HTTP use the same direct
-and daemon-backed shell contract, with the recorded fixtures demonstrating
-discovery, invocation, retained state where applicable, and clean reload.
-Legacy HTTP+SSE remains deferred at the SDK boundary and is not exposed in
-configuration or runtime behavior. Automatic configuration discovery is now
-tracked by the authoritative [discovery plan](discovery-plan.md).
+initialized stdio, legacy initialized Streamable HTTP, and legacy HTTP+SSE use
+the same direct and daemon-backed shell contract, with the recorded fixtures
+demonstrating discovery, invocation, retained state where applicable, and clean
+reload. Automatic configuration discovery is tracked by the authoritative
+[discovery plan](discovery-plan.md).
 
 ## Reproduction sequence
 
@@ -94,13 +97,13 @@ including pagination, session retention where the upstream requires it,
 cancellation, connection failure, and schema-dependent SDK transport behavior.
 Do not infer support from modern stateless HTTP success.
 
-### 4. Re-evaluate deferred legacy HTTP+SSE
+### 4. Qualify legacy HTTP+SSE
 
-After a stable official SDK release contains
-`ClientSessionOptions.ProtocolVersion` from PR #1127, first update the SDK by
-the normal dependency decision process. Then requalify the historical fixture
-with the legacy revision explicitly requested through the SDK. Do not restore
-an SSE configuration or runtime path before that qualification succeeds.
+Use stable SDK `ClientSessionOptions.ProtocolVersion` to request the historical
+revision explicitly. Exercise discovery, focused help, projected and exact
+calls, state retention and direct isolation, typed query/header forwarding,
+redaction, cancellation, reload, and shutdown. Do not implement local protocol
+negotiation or automatic transport fallback.
 
 ### 5. Run cross-era contract checks
 
@@ -137,9 +140,8 @@ changing dependencies, configuration, or architecture.
 
 - Provider-specific OAuth qualification and compatibility guards beyond the
   SDK-backed contract recorded in the [OAuth plan](oauth-plan.md).
-- Legacy HTTP+SSE, until a stable official Go SDK release includes
-  `ClientSessionOptions.ProtocolVersion` (PR #1127); then requalify against the
-  historical fixture before exposing it in configuration or runtime behavior.
+- Transparent OAuth for legacy HTTP+SSE; static authentication headers are
+  supported and qualified.
 - Templates and additional secret providers.
 - Detached daemon startup, service-manager integration, watchers, idle
   eviction, automatic recovery, and pool widths above one.
