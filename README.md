@@ -37,7 +37,8 @@ go install github.com/Kaylebor/wirecmd@latest
 wirecmd --version
 ```
 
-Use `github.com/Kaylebor/wirecmd@v0.3.0` when an exact version is required.
+After v0.3.0 is published, use `github.com/Kaylebor/wirecmd@v0.3.0` when an
+exact version is required. Until then, the current exact release is `v0.2.0`.
 Tagged module installations report their version through `wirecmd --version`;
 source-checkout builds report `wirecmd dev`.
 

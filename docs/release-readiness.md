@@ -25,11 +25,13 @@ release with:
 go install github.com/Kaylebor/wirecmd@latest
 ```
 
-For reproducible installation of the current release, use:
+After v0.3.0 is published, its reproducible installation is:
 
 ```sh
 go install github.com/Kaylebor/wirecmd@v0.3.0
 ```
+
+Until publication, the current exact stable release remains `v0.2.0`.
 
 Linux and macOS are supported. Apple Silicon has native CI and maintainer M2
 smoke evidence; Intel macOS is CI-qualified without a physical-device claim.
