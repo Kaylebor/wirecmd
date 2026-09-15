@@ -40,6 +40,8 @@ The runtime provides:
 - optional local lifecycle brokering that does not change command semantics.
 - transparent OAuth for protected HTTP sources when an interactive caller
   permits browser authorization, with encrypted local credential persistence.
+- optional age-backed secret resolution for configured values, using
+  user-managed hardware-backed identities when available.
 - workspace-scoped native LSP navigation when workspace configuration supplies
   compatible language-server processes and selectors.
 
@@ -92,7 +94,9 @@ OAuth callback. Authorization URLs and browser diagnostics go to stderr; the
 result remains a single stdout response in the selected presentation. Explicit
 `wirecmd auth login SERVER` provides the deliberate credential-management
 flow, and headless callers receive an actionable structured condition instead
-of an unexpected prompt.
+of an unexpected prompt. This OAuth policy does not suppress a selected
+hardware-backed `age` identity's own authorization prompt; that prompt belongs
+to the user's local identity and is bounded by secret resolution.
 
 ### Daemon-backed normal operation
 
@@ -141,7 +145,7 @@ request APIs.
 Project code should primarily implement the product outside MCP: shell UX,
 configuration and provenance, normalized output and recovery, local daemon IPC,
 managed process lifecycle, instance scope, caching policy, diagnostics,
-encrypted credential persistence, and Skills. It must not reimplement protocol
+encrypted credential persistence, optional secret resolution, and Skills. It must not reimplement protocol
 negotiation, wire codecs, transports, revision gates, or authorization
 mechanics that the SDK handles. The current SDK does not expose a separate
 stable resource/issuer identity for the storage boundary, so this slice uses
@@ -191,11 +195,12 @@ that transport supports unauthenticated or static-header access.
 Trusted global and
 workspace configuration discovery is complete. Typed query and header values
 for Streamable HTTP endpoints and transparent OAuth with encrypted credential
-persistence are complete; their contracts are
-recorded in the [HTTP values plan](http-values-plan.md) and
-[OAuth plan](oauth-plan.md). OAuth must use the official SDK's authorization
-surface, with Wirecmd adding only interaction, persistence, daemon
-coordination, redaction, and error mapping.
+persistence are complete; their contracts are recorded in the
+[HTTP values plan](http-values-plan.md) and [OAuth plan](oauth-plan.md).
+Age-backed secret resolution is specified separately in the
+[age secrets plan](age-secrets-plan.md). OAuth must use the official SDK's
+authorization surface, with Wirecmd adding only interaction, persistence,
+daemon coordination, redaction, and error mapping.
 
 Native LSP navigation and read-only inspection, including signature help,
 completed direct and retained-daemon qualification with a configured real
@@ -205,7 +210,7 @@ not product dependencies, defaults, or routing knowledge.
 
 For this milestone, endpoint values remain structural configuration rather than
 preassembled URL or request strings. `query NAME=value` and `header NAME=value`
-children accept literal values or `(secret)"env://NAME"` references. Query
+children accept literal values or provider-qualified secret references. Query
 names are case-sensitive and header names are case-insensitive. Stronger
 configuration layers replace matching keyed entries while preserving their
 position and append new entries. Only the selected server resolves its secret
@@ -232,6 +237,8 @@ identity so retained instances cannot cross credential boundaries.
   identity, and provider-specific OAuth compatibility guards are deferred.
 - Templated or dynamically composed HTTP values and dynamic per-request
   headers remain deferred.
+- Arbitrary shell secret providers, provider plugins, and plaintext generated
+  configuration files remain deferred.
 
 An optional future MCP-server frontend is not part of the current product
 contract. If later justified, it may expose the daemon's aggregated semantic
