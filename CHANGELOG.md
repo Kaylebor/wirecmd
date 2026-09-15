@@ -11,9 +11,10 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Hardware-backed `age` secret files for MCP and LSP arguments and environment,
-  HTTP query and header values, and OAuth client secrets, with scoped batch
-  resolution, strict store validation, redaction, and daemon reuse.
+- Age-encrypted secret files, with optional hardware-backed identities, for MCP
+  and LSP arguments and environment, HTTP query and header values, and OAuth
+  client secrets, with scoped batch resolution, strict store validation,
+  redaction, and daemon reuse.
 - A closed internal secret-provider registry for the built-in `env` and `age`
   schemes.
 
@@ -25,6 +26,14 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   configuration and product contracts kept in their dedicated documentation.
 - Restructured top-level command help around the public command families,
   clarified prefix-flag placement, and improved MCP resource discoverability.
+
+### Fixed
+
+- Rejected symlinked or replaced workspace metadata directories during
+  automatic configuration and age-store discovery, and rejected non-regular
+  age stores without blocking on FIFOs.
+- Prevented age identity changes from invalidating retained MCP or LSP
+  executions that do not use age-backed secrets.
 
 ## [0.3.1] - 2026-09-15
 

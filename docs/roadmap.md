@@ -1,7 +1,7 @@
 # Current Roadmap
 
-Status: authoritative current-state handoff after v0.4.0; later items remain a
-decision queue
+Status: authoritative current-state handoff for the v0.4.0 release candidate;
+later items remain a decision queue
 
 ## Purpose
 
@@ -21,9 +21,10 @@ authoritative milestone documents and their precedence.
 
 ## Current baseline
 
-Wirecmd v0.4.0 is the current stable baseline. Wirecmd is a shell-native
-capability client and local daemon. MCP is its first upstream adapter rather
-than the harness-facing abstraction. The baseline surface includes:
+Wirecmd v0.3.1 is the current published stable release; this checkout contains
+the v0.4.0 release candidate. Wirecmd is a shell-native capability client and
+local daemon. MCP is its first upstream adapter rather than the harness-facing
+abstraction. The candidate surface includes:
 
 - explicit `wirecmd mcp` discovery, focused help, projected and exact-JSON tool
   calls, and deterministic structured results;
@@ -45,7 +46,7 @@ Normal operations remain daemon-backed and must fail clearly when the daemon is
 offline. `--direct` is the explicit one-shot path. SDK protocol types and MCP
 revision details must not leak into the public semantic command/result contract.
 
-## Completed v0.4.0 milestone
+## Implemented v0.4.0 milestone
 
 Age-backed secret resolution adds the fixed `age` CLI as an optional internal
 provider beside `env`. It reads encrypted stores only for selected operations,
@@ -54,6 +55,8 @@ metadata needed to reuse retained daemon instances. Workspace discovery uses
 `.wirecmd/config.kdl` and `.wirecmd/secrets.json.age`; the former top-level
 workspace filename is not part of discovery. The exact contract and
 qualification requirements are in the [age secrets plan](age-secrets-plan.md).
+Publication remains pending the release gates, including physical Apple
+Silicon qualification.
 
 ## Decision queue
 
