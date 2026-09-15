@@ -53,3 +53,28 @@ func TestReadAgeStoreRejectsParentDirectoryReplacement(t *testing.T) {
 		t.Fatalf("code = %q, want %q", got, CodeSecretStoreInvalid)
 	}
 }
+
+func TestReadAgeStoreRejectsDanglingSymlinks(t *testing.T) {
+	t.Run("store", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "secrets.json.age")
+		if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), path); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		_, _, err := readAgeStore(path, 1024)
+		if got := errorCode(t, err); got != CodeSecretStoreInvalid {
+			t.Fatalf("code = %q, want %q", got, CodeSecretStoreInvalid)
+		}
+	})
+
+	t.Run("parent", func(t *testing.T) {
+		workspace := t.TempDir()
+		directory := filepath.Join(workspace, ".wirecmd")
+		if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), directory); err != nil {
+			t.Skipf("symlink unavailable: %v", err)
+		}
+		_, _, err := readAgeStore(filepath.Join(directory, "secrets.json.age"), 1024)
+		if got := errorCode(t, err); got != CodeSecretStoreInvalid {
+			t.Fatalf("code = %q, want %q", got, CodeSecretStoreInvalid)
+		}
+	})
+}

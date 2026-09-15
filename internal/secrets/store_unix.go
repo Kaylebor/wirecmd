@@ -14,7 +14,14 @@ func readAgeStore(path string, limit int64) ([]byte, bool, error) {
 	directory := filepath.Dir(path)
 	root, err := os.OpenRoot(directory)
 	if errors.Is(err, syscall.ENOENT) {
-		return nil, false, nil
+		info, inspectErr := os.Lstat(directory)
+		if errors.Is(inspectErr, syscall.ENOENT) {
+			return nil, false, nil
+		}
+		if inspectErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store parent must be a non-symlink directory"}
+		}
+		return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store cannot be read safely"}
 	}
 	if err != nil {
 		return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store cannot be read safely"}
@@ -30,7 +37,14 @@ func readAgeStore(path string, limit int64) ([]byte, bool, error) {
 	}
 	file, err := root.OpenFile(filepath.Base(path), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, syscall.ENOENT) {
-		return nil, false, nil
+		info, inspectErr := root.Lstat(filepath.Base(path))
+		if errors.Is(inspectErr, syscall.ENOENT) {
+			return nil, false, nil
+		}
+		if inspectErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store must be a regular non-symlink file"}
+		}
+		return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store cannot be read safely"}
 	}
 	if err != nil {
 		return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store cannot be read safely"}
