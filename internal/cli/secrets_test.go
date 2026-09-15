@@ -253,7 +253,7 @@ func TestAgeBatchFeedsHTTPAndOAuthDestinations(t *testing.T) {
 	}
 	server := config.Server{Name: "remote", HTTP: &transport}
 	configured := config.Secrets{Age: &config.AgeSecrets{Identities: []config.AgeIdentity{{Path: filepath.Join(directory, "identity.age")}}}}
-	resolved, appErr := resolveSelectedSecrets(context.Background(), configured, []string{store}, nil, serverSecretValues(server), os.LookupEnv)
+	resolved, appErr := resolveSelectedSecrets(context.Background(), configured, []string{store}, false, nil, serverSecretValues(server), os.LookupEnv)
 	if appErr != nil {
 		t.Fatal(appErr)
 	}
@@ -287,7 +287,7 @@ func TestLSPMatchesShareOneAgeBatch(t *testing.T) {
 		{Definition: config.LSP{Stdio: config.Stdio{Env: []config.Environment{{Name: "TOKEN", Value: config.Value{Kind: config.ValueSecretReference, Text: "age://SECOND"}}}}}},
 	}
 	configured := config.Secrets{Age: &config.AgeSecrets{Identities: []config.AgeIdentity{{Path: filepath.Join(directory, "identity.age")}}}}
-	resolved, appErr := resolveSelectedSecrets(context.Background(), configured, []string{store}, nil, lspSecretValues(matches), os.LookupEnv)
+	resolved, appErr := resolveSelectedSecrets(context.Background(), configured, []string{store}, false, nil, lspSecretValues(matches), os.LookupEnv)
 	if appErr != nil {
 		t.Fatal(appErr)
 	}

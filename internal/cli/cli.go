@@ -311,7 +311,7 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 			result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequest, errOut)
 			return result, appErr
 		}
-		resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, nil, selectedValues, os.LookupEnv)
+		resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, discovered, nil, selectedValues, os.LookupEnv)
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
@@ -333,7 +333,7 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		return result, nil
 	}
 
-	resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, nil, selectedValues, os.LookupEnv)
+	resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, discovered, nil, selectedValues, os.LookupEnv)
 	if resolveErr != nil {
 		return nil, resolveErr
 	}

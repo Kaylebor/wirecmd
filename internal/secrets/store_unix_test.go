@@ -16,7 +16,7 @@ func TestReadAgeStoreRejectsFIFOWithoutBlocking(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	_, _, err := readAgeStore(path, 1024)
+	_, _, err := readAgeStore(path, 1024, false)
 	if got := errorCode(t, err); got != CodeSecretStoreInvalid {
 		t.Fatalf("code = %q, want %q", got, CodeSecretStoreInvalid)
 	}
@@ -48,9 +48,25 @@ func TestReadAgeStoreRejectsParentDirectoryReplacement(t *testing.T) {
 	if err := os.Symlink(outside, directory); err != nil {
 		t.Skipf("symlink unavailable: %v", err)
 	}
-	_, _, err := readAgeStore(path, 1024)
+	_, _, err := readAgeStore(path, 1024, true)
 	if got := errorCode(t, err); got != CodeSecretStoreInvalid {
 		t.Fatalf("code = %q, want %q", got, CodeSecretStoreInvalid)
+	}
+}
+
+func TestReadAgeStoreAllowsPinnedSymlinkParentWhenNotWorkspaceDiscovery(t *testing.T) {
+	outside := t.TempDir()
+	contents := []byte("ciphertext")
+	if err := os.WriteFile(filepath.Join(outside, "secrets.json.age"), contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(t.TempDir(), "config-link")
+	if err := os.Symlink(outside, directory); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	data, exists, err := readAgeStore(filepath.Join(directory, "secrets.json.age"), 1024, false)
+	if err != nil || !exists || string(data) != string(contents) {
+		t.Fatalf("readAgeStore() = %q, %t, %v", data, exists, err)
 	}
 }
 
@@ -60,7 +76,7 @@ func TestReadAgeStoreRejectsDanglingSymlinks(t *testing.T) {
 		if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), path); err != nil {
 			t.Skipf("symlink unavailable: %v", err)
 		}
-		_, _, err := readAgeStore(path, 1024)
+		_, _, err := readAgeStore(path, 1024, false)
 		if got := errorCode(t, err); got != CodeSecretStoreInvalid {
 			t.Fatalf("code = %q, want %q", got, CodeSecretStoreInvalid)
 		}
@@ -72,7 +88,7 @@ func TestReadAgeStoreRejectsDanglingSymlinks(t *testing.T) {
 		if err := os.Symlink(filepath.Join(t.TempDir(), "missing"), directory); err != nil {
 			t.Skipf("symlink unavailable: %v", err)
 		}
-		_, _, err := readAgeStore(filepath.Join(directory, "secrets.json.age"), 1024)
+		_, _, err := readAgeStore(filepath.Join(directory, "secrets.json.age"), 1024, true)
 		if got := errorCode(t, err); got != CodeSecretStoreInvalid {
 			t.Fatalf("code = %q, want %q", got, CodeSecretStoreInvalid)
 		}

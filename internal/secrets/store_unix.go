@@ -10,30 +10,38 @@ import (
 	"syscall"
 )
 
-func readAgeStore(path string, limit int64) ([]byte, bool, error) {
+func readAgeStore(path string, limit int64, rejectParentSymlink bool) ([]byte, bool, error) {
 	directory := filepath.Dir(path)
 	root, err := os.OpenRoot(directory)
 	if errors.Is(err, syscall.ENOENT) {
-		info, inspectErr := os.Lstat(directory)
-		if errors.Is(inspectErr, syscall.ENOENT) {
-			return nil, false, nil
+		if rejectParentSymlink {
+			info, inspectErr := os.Lstat(directory)
+			if inspectErr == nil && info.Mode()&os.ModeSymlink != 0 {
+				return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store parent must be a non-symlink directory"}
+			}
+			if inspectErr != nil && !errors.Is(inspectErr, syscall.ENOENT) {
+				return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store cannot be read safely"}
+			}
 		}
-		if inspectErr == nil && info.Mode()&os.ModeSymlink != 0 {
-			return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store parent must be a non-symlink directory"}
-		}
-		return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store cannot be read safely"}
+		return nil, false, nil
 	}
 	if err != nil {
 		return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store cannot be read safely"}
 	}
 	defer root.Close()
-	directoryInfo, err := os.Lstat(directory)
+	directoryInfo, err := os.Stat(directory)
 	if err != nil {
 		return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store cannot be read safely"}
 	}
+	if rejectParentSymlink {
+		pathInfo, err := os.Lstat(directory)
+		if err != nil || pathInfo.Mode()&os.ModeSymlink != 0 {
+			return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store parent must remain a non-symlink directory"}
+		}
+	}
 	openedDirectoryInfo, err := root.Stat(".")
-	if err != nil || directoryInfo.Mode()&os.ModeSymlink != 0 || !directoryInfo.IsDir() || !openedDirectoryInfo.IsDir() || !os.SameFile(directoryInfo, openedDirectoryInfo) {
-		return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store parent must remain a non-symlink directory"}
+	if err != nil || !directoryInfo.IsDir() || !openedDirectoryInfo.IsDir() || !os.SameFile(directoryInfo, openedDirectoryInfo) {
+		return nil, false, &Error{Code: CodeSecretStoreInvalid, Message: "age secret store parent changed while opening"}
 	}
 	file, err := root.OpenFile(filepath.Base(path), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, syscall.ENOENT) {
