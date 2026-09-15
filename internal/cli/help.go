@@ -394,83 +394,38 @@ func parseProjectedValue(property projectedProperty, raw projectedArgument) (any
 func globalHelpText() string {
 	return "Usage:\n  " + usage + `
 
-Start here:
-  wirecmd daemon run                  keep running in a separate terminal
-  wirecmd                             show this static overview
-  wirecmd mcp                         list configured MCP servers
-  wirecmd mcp SERVER                  list that server's tools
-  wirecmd mcp SERVER --help           inspect a server (trailing help also works)
-  wirecmd mcp -- --help               reach a server literally named --help
-  wirecmd --help mcp SERVER tool TOOL inspect arguments before calling
-  wirecmd lsp definition --file PATH --line N --column N
-  wirecmd lsp signature-help --file PATH --line N --column N
-  wirecmd lsp status [--file PATH]
+Commands:
+  mcp      discover and invoke configured MCP tools and resources
+  lsp      navigate and inspect source through configured language servers
+  daemon   run, inspect, or reload the local daemon
+  config   manage workspace configuration trust
+  auth     manage OAuth credentials for configured HTTP servers
 
-Transports:
-  stdio runs a local command; http uses Streamable HTTP; sse uses legacy HTTP+SSE.
-  SSE supports configured static headers, including Authorization, but not transparent OAuth.
+Run wirecmd --help COMMAND for command-specific help.
 
-Prefix flags (before mcp/server/tool names):
+Prefix flags (before the command path; availability depends on command):
   --config PATH                      repeatable; later files override earlier
-  --direct                           one-shot operation without the daemon
-  --json OBJECT                      supply the complete tool argument object
-  --stdin                            read that object from stdin, not --json
+  --direct                           bypass the daemon where supported
+  --json OBJECT                      complete MCP tool argument object
+  --stdin                            read that object from stdin
   --help, -h                         global, administrative, or focused help
   --version                          standalone version; no other arguments
-  --format auto|json|pretty           terminal-aware output format
-  --color auto|always|never           color output independently of format
-  --colour auto|always|never          alias for --color
+  --format auto|json|pretty          terminal-aware output format
+  --color auto|always|never          color output independently of format
+  --colour auto|always|never         alias for --color
 
 Without --config, discover global configuration and trusted workspace files.
-Supply configuration to calls, not daemon run. Normal calls are daemon-backed;
-there is no automatic direct fallback. Linux requires a private absolute
-XDG_RUNTIME_DIR; macOS can use its validated per-user temporary directory.
+Normal capability calls are daemon-backed and never fall back to --direct.
 
-Static help (offline: wirecmd --help daemon|config|auth|lsp):
-  wirecmd daemon run|status|reload
-  wirecmd config trust [PATH]
-  wirecmd config untrust [PATH]
-  wirecmd config trust status [PATH]
-  wirecmd config trust list
-  wirecmd [--config PATH] [--direct] auth login|status|logout SERVER
-  wirecmd [client flags] lsp definition|declaration|type-definition|implementation --file PATH --line N --column N
-  wirecmd [client flags] lsp references [--include-declaration] --file PATH --line N --column N
-  wirecmd [client flags] lsp signature-help --file PATH --line N --column N
-  wirecmd [client flags] lsp status [--file PATH]
+Start here:
+  wirecmd daemon run
+  wirecmd mcp
+  wirecmd --help mcp SERVER tool TOOL
+  wirecmd --help lsp
 
-Focused help:
-  wirecmd [client flags] --help mcp SERVER [tool TOOL]
-  wirecmd [client flags] --help mcp --          inspect a server literally named --
-  wirecmd [client flags] --help mcp -- --help [tool TOOL]
-  wirecmd [client flags] mcp SERVER --help
-  wirecmd [client flags] mcp SERVER tool TOOL --help
-MCP servers named daemon, config, auth, or lsp are naturally reachable under
-the mcp namespace; bare lsp remains native help. For a server literally named
---help or -h, use mcp -- --help or mcp -- -h; focused help uses the same form.
-The distinct prefix form --help mcp -- inspects a server literally named --.
-
-Conventional trailing help also works for recognized built-in operations, such
-as wirecmd daemon status --help and wirecmd lsp definition --help. After mcp
-SERVER tool TOOL, an explicit projected help property owns a final --help or
--h; otherwise Wirecmd renders focused help from the live schema.
-
-Tool input examples (use the names and types from focused help):
-  wirecmd mcp SERVER tool TOOL --query 'text'
-  wirecmd --json '{"query":"text"}' mcp SERVER tool TOOL
-  printf '%s\n' '{"query":"text"}' | wirecmd --stdin mcp SERVER tool TOOL
-  wirecmd mcp SERVER '{"tool":"TOOL","arguments":{"query":"text"}}'
-  wirecmd mcp SERVER tool TOOL --query 'text' -- '{"extra":42}'
-Flags after TOOL belong to the tool. The tool-side -- takes one raw JSON object;
-do not repeat keys already supplied by flags. Without arguments, calls use {}.
-
-Output and authentication:
-  --format json --color never         machine output, including in a PTY
-Auto format is pretty on stdout TTYs and JSON in pipes. Automatic color is
-disabled by non-empty NO_COLOR or TERM=dumb. Successful help stays plain text.
-Protected HTTP calls may open a browser when stdin and stderr are TTYs; set
-WIRECMD_NONINTERACTIVE=1 to receive an authentication error instead. OAuth needs
-a native keyring. Browser handoffs and diagnostics go to stderr; results and
-structured errors go to stdout. Follow the error's recovery action.
+Command results default to compact JSON when piped. Help remains plain text.
+For machine output in a terminal, use --format json --color never. Diagnostics
+go to stderr.
 `
 }
 
@@ -478,7 +433,7 @@ func mcpHelpText() string {
 	return `MCP capabilities:
   wirecmd mcp                                  list configured MCP servers
   wirecmd mcp SERVER                           list one server's tools
-  wirecmd mcp SERVER --help                    inspect one server
+  wirecmd mcp SERVER --help                    inspect one server's tools
   wirecmd mcp -- --help                        list tools for a server named --help
   wirecmd mcp SERVER tool TOOL [arguments]     invoke one tool
   wirecmd mcp SERVER '{"tool":"TOOL","arguments":{}}'  exact call envelope
@@ -514,6 +469,7 @@ func renderServerHelp(server string, tools []toolSummary) string {
 		}
 	}
 	fmt.Fprintf(&text, "\nInspect one tool:\n  wirecmd [client flags] --help mcp %s tool <tool>\n", server)
+	fmt.Fprintf(&text, "\nOther MCP capabilities:\n  wirecmd [client flags] mcp %s resources\n  wirecmd [client flags] mcp %s resource-templates\n  wirecmd --help mcp %s resources\n", server, server, server)
 	return text.String()
 }
 

@@ -910,7 +910,7 @@ func TestInvocationValidationAndDaemonFailure(t *testing.T) {
 
 func TestHelpDoesNotRequireConfiguration(t *testing.T) {
 	code, output, stderr := invoke(t, []string{"--help"})
-	if code != exitOK || stderr != "" || !strings.Contains(output, "--config PATH") || !strings.Contains(output, "sse uses legacy HTTP+SSE") || !strings.Contains(output, "not transparent OAuth") || !strings.HasSuffix(output, "\n") {
+	if code != exitOK || stderr != "" || !strings.Contains(output, "--config PATH") || !strings.Contains(output, "mcp      discover and invoke") || !strings.Contains(output, "never fall back to --direct") || !strings.HasSuffix(output, "\n") {
 		t.Fatalf("help: code=%d stderr=%q output=%s", code, stderr, output)
 	}
 }
@@ -1021,6 +1021,30 @@ func TestMCPNamespaceGrammarAndLegacyRejection(t *testing.T) {
 		if code != exitInvocation || decodeOutput(t, output)["error"].(map[string]any)["code"] != "mcp_namespace_required" {
 			t.Fatalf("legacy form %v: code=%d output=%s", args, code, output)
 		}
+	}
+}
+
+func TestGlobalHelpRoutesEveryPublicCommand(t *testing.T) {
+	code, output, stderr := invokeRaw(t, []string{"--help"})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("global help: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	for _, want := range []string{
+		"wirecmd [client flags] <command> [arguments]",
+		"mcp      discover and invoke",
+		"lsp      navigate and inspect",
+		"daemon   run, inspect, or reload",
+		"config   manage workspace configuration trust",
+		"auth     manage OAuth credentials",
+		"Prefix flags (before the command path; availability depends on command):",
+		"wirecmd --help COMMAND",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("global help missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "daemon|config|auth|lsp") {
+		t.Fatalf("global help contains a copy-unsafe pipeline:\n%s", output)
 	}
 }
 

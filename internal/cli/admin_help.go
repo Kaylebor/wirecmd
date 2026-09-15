@@ -263,9 +263,10 @@ Wirecmd returns daemon_unavailable (exit 7).
 Usage:
   wirecmd [--format auto|json|pretty] [--color auto|always|never] daemon reload
 
-Invalidates cached configurations and retires retained MCP sessions globally.
-Active requests finish; later requests create fresh sessions using configuration
-loaded after the reload. It does not watch files or reload only one workspace.
+Invalidates cached configurations and retires retained MCP and LSP sessions
+globally. Active requests finish; later requests create fresh sessions using
+configuration loaded after the reload. It does not watch files or reload only
+one workspace.
 `
 		}
 	case "config":
