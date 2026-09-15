@@ -242,7 +242,10 @@ func (p *AgeProvider) qualify(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", &Error{Code: CodeAgeUnavailable, Message: "age executable is unavailable"}
 	}
-	operation, cancel := context.WithTimeout(ctx, p.timeout)
+	// Version qualification is a separate executable call from each store
+	// decryption. Keep its bound independent so a deliberately short per-store
+	// timeout (used by callers and tests) cannot expire during process startup.
+	operation, cancel := context.WithTimeout(ctx, defaultAgeTimeout)
 	defer cancel()
 	output, exceeded, err := runAge(operation, command, []string{"--version"}, nil, 1024)
 	if errors.Is(operation.Err(), context.DeadlineExceeded) {
