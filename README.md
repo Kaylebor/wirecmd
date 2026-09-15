@@ -1,8 +1,5 @@
 # Wire Command (`wirecmd`)
 
-This branch qualifies legacy HTTP+SSE with the stable official Go SDK
-`v1.8.0`. See the [SSE milestone](docs/sse-plan.md).
-
 This repository explores a shell-native capability runtime for agents, humans,
 scripts, and CI. Its first upstream adapter is the Model Context Protocol
 (MCP), but MCP is not intended to be part of the harness-facing contract.
@@ -37,8 +34,8 @@ go install github.com/Kaylebor/wirecmd@latest
 wirecmd --version
 ```
 
-After v0.3.0 is published, use `github.com/Kaylebor/wirecmd@v0.3.0` when an
-exact version is required. Until then, the current exact release is `v0.2.0`.
+For the v0.3.1 release, use `github.com/Kaylebor/wirecmd@v0.3.1` when an exact
+version is required.
 Tagged module installations report their version through `wirecmd --version`;
 source-checkout builds report `wirecmd dev`.
 
@@ -443,7 +440,7 @@ flags, and JSON contents are not completed. Bash/Zsh support is deferred.
   help, the MCP namespace, and local-only Fish completion.
 - [Product thesis](docs/product-thesis.md) defines the authoritative product
   direction and boundaries.
-- [Current roadmap](docs/roadmap.md) records the v0.3.0 baseline, open
+- [Current roadmap](docs/roadmap.md) records the v0.3.1 baseline, open
   decision queue, and external compatibility trigger.
 - [Validation plan](docs/validation-plan.md) records the completed first
   falsifiable implementation milestone.

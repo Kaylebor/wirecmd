@@ -7,6 +7,13 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-15
+
+### Changed
+
+- MCP definitions now default an omitted `scope` to `workspace`, matching the
+  existing LSP default while preserving explicit scope configuration.
+
 ## [0.3.0] - 2026-09-14
 
 ### Added
@@ -49,7 +56,8 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hover, document symbols, and workspace symbols.
 - Terminal-aware pretty output alongside deterministic compact JSON.
 
-[Unreleased]: https://github.com/Kaylebor/wirecmd/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Kaylebor/wirecmd/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/Kaylebor/wirecmd/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Kaylebor/wirecmd/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Kaylebor/wirecmd/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Kaylebor/wirecmd/releases/tag/v0.1.0

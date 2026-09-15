@@ -1,6 +1,6 @@
 # Stable Release Readiness
 
-Status: authoritative stable release contract; v0.3.0 release candidate
+Status: authoritative stable release contract
 
 ## Objective
 
@@ -25,19 +25,17 @@ release with:
 go install github.com/Kaylebor/wirecmd@latest
 ```
 
-After v0.3.0 is published, its reproducible installation is:
+The reproducible v0.3.1 installation is:
 
 ```sh
-go install github.com/Kaylebor/wirecmd@v0.3.0
+go install github.com/Kaylebor/wirecmd@v0.3.1
 ```
-
-Until publication, the current exact stable release remains `v0.2.0`.
 
 Linux and macOS are supported. Apple Silicon has native CI and maintainer M2
 smoke evidence; Intel macOS is CI-qualified without a physical-device claim.
 Windows remains unsupported.
 
-The v0.3.0 release candidate supports the public CLI, KDL configuration,
+The v0.3.1 release supports the public CLI, KDL configuration,
 structured result and error contracts, daemon/direct split, stdio and
 Streamable HTTP and legacy HTTP+SSE MCP transports, SDK-backed OAuth for
 Streamable HTTP, MCP resources, and the documented native LSP operations.
@@ -130,8 +128,8 @@ Publication remains an explicit maintainer action:
    version and exercise the release smoke operations.
 
 Every tag and GitHub Release requires a separate explicit release action.
-`v0.1.0` was published on 2026-09-08 and `v0.2.0` on 2026-09-10 after their
-exact release commits passed the gates above.
+`v0.1.0` was published on 2026-09-08, `v0.2.0` on 2026-09-10, and `v0.3.0` on
+2026-09-14 after their exact release commits passed the gates above.
 
 ## Deferred
 
