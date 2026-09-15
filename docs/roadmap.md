@@ -1,7 +1,7 @@
 # Current Roadmap
 
-Status: authoritative current-state handoff; v0.4.0 age-secret work is an
-accepted milestone, while later items remain a decision queue
+Status: authoritative current-state handoff after v0.4.0; later items remain a
+decision queue
 
 ## Purpose
 
@@ -21,10 +21,9 @@ authoritative milestone documents and their precedence.
 
 ## Current baseline
 
-Wirecmd v0.3.1 is the current stable baseline; current main prepares v0.4.0.
-Wirecmd is a shell-native capability client and local daemon. MCP is its first
-upstream adapter rather than the harness-facing abstraction. The baseline
-surface includes:
+Wirecmd v0.4.0 is the current stable baseline. Wirecmd is a shell-native
+capability client and local daemon. MCP is its first upstream adapter rather
+than the harness-facing abstraction. The baseline surface includes:
 
 - explicit `wirecmd mcp` discovery, focused help, projected and exact-JSON tool
   calls, and deterministic structured results;
@@ -46,7 +45,7 @@ Normal operations remain daemon-backed and must fail clearly when the daemon is
 offline. `--direct` is the explicit one-shot path. SDK protocol types and MCP
 revision details must not leak into the public semantic command/result contract.
 
-## Accepted v0.4.0 milestone
+## Completed v0.4.0 milestone
 
 Age-backed secret resolution adds the fixed `age` CLI as an optional internal
 provider beside `env`. It reads encrypted stores only for selected operations,
