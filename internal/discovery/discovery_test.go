@@ -263,15 +263,23 @@ func TestAutomaticSecretStoreCandidatesIncludeMissingPathsNearestFirst(t *testin
 	if _, err := Trust(workspace); err != nil {
 		t.Fatal(err)
 	}
+	canonicalChild, err := canonicalDirectory(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalWorkspace, err := canonicalDirectory(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	candidates, err := SecretStoreCandidates(child, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
-		filepath.Join(child, projectConfigDirectory, projectSecrets),
-		filepath.Join(workspace, "a", projectConfigDirectory, projectSecrets),
-		filepath.Join(workspace, projectConfigDirectory, projectSecrets),
+		filepath.Join(canonicalChild, projectConfigDirectory, projectSecrets),
+		filepath.Join(canonicalWorkspace, "a", projectConfigDirectory, projectSecrets),
+		filepath.Join(canonicalWorkspace, projectConfigDirectory, projectSecrets),
 		filepath.Join(configHome, "wirecmd", projectSecrets),
 	}
 	if !reflect.DeepEqual(candidates, want) {
@@ -301,14 +309,22 @@ func TestAutomaticSecretStoreCandidatesUseNearestTrustedRoot(t *testing.T) {
 	if _, err := Trust(nested); err != nil {
 		t.Fatal(err)
 	}
+	canonicalChild, err := canonicalDirectory(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalNested, err := canonicalDirectory(nested)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	candidates, err := SecretStoreCandidates(child, nil, true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
-		filepath.Join(child, projectConfigDirectory, projectSecrets),
-		filepath.Join(nested, projectConfigDirectory, projectSecrets),
+		filepath.Join(canonicalChild, projectConfigDirectory, projectSecrets),
+		filepath.Join(canonicalNested, projectConfigDirectory, projectSecrets),
 		filepath.Join(configHome, "wirecmd", projectSecrets),
 	}
 	if !reflect.DeepEqual(candidates, want) {
