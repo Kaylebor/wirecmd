@@ -158,8 +158,28 @@ type Root struct {
 // a source to omit fields that are supplied by a weaker layer.
 type Source struct {
 	Root    *Root
+	Secrets *SecretsSource
 	Servers []ServerSource
 	LSPs    []LSPSource
+	Provenance
+}
+
+// SecretsSource is a potentially partial secret-provider configuration layer.
+type SecretsSource struct {
+	Age        *AgeSecretsSource
+	Provenance Provenance
+}
+
+// AgeSecretsSource is a potentially partial age configuration layer. A
+// non-empty identity list replaces weaker lists during composition.
+type AgeSecretsSource struct {
+	Identities []AgeIdentity
+	Provenance Provenance
+}
+
+// AgeIdentity identifies one user-managed age identity file.
+type AgeIdentity struct {
+	Path string
 	Provenance
 }
 
@@ -248,8 +268,21 @@ type OAuthSource struct {
 // consumed by execution.
 type Config struct {
 	Root    *Root
+	Secrets Secrets
 	Servers []Server
 	LSPs    []LSP
+}
+
+// Secrets is the complete secret-provider configuration consumed by secret
+// resolution. Nil providers are not configured.
+type Secrets struct {
+	Age *AgeSecrets
+}
+
+// AgeSecrets configures the fixed age executable's identity files.
+type AgeSecrets struct {
+	Identities []AgeIdentity
+	Provenance Provenance
 }
 
 // Load parses one KDL 2 configuration source file.
@@ -304,7 +337,7 @@ func LoadEffective(paths []string) (*Config, error) {
 	return loadEffective(paths, false)
 }
 
-// LoadEffectiveDiscovered validates workspace wirecmd.kdl files without
+// LoadEffectiveDiscovered validates workspace .wirecmd/config.kdl files without
 // changing the behavior of trusted global or explicitly supplied files.
 func LoadEffectiveDiscovered(paths []string) (*Config, error) {
 	return loadEffective(paths, true)
@@ -319,7 +352,7 @@ func loadEffective(paths []string, discovered bool) (*Config, error) {
 	for _, path := range paths {
 		var source *Source
 		var err error
-		if discovered && filepath.Base(path) == "wirecmd.kdl" {
+		if discovered && filepath.Base(path) == "config.kdl" && filepath.Base(filepath.Dir(path)) == ".wirecmd" {
 			source, err = loadDiscoveredProject(path)
 		} else {
 			source, err = Load(path)
@@ -359,6 +392,12 @@ func Compose(sources ...*Source) (*Config, error) {
 		if source.Root != nil {
 			root := *source.Root
 			config.Root = &root
+		}
+		if source.Secrets != nil && source.Secrets.Age != nil && len(source.Secrets.Age.Identities) != 0 {
+			config.Secrets.Age = &AgeSecrets{
+				Identities: append([]AgeIdentity(nil), source.Secrets.Age.Identities...),
+				Provenance: source.Secrets.Age.Provenance,
+			}
 		}
 
 		for _, partial := range source.Servers {
@@ -546,6 +585,16 @@ func validate(config *Config) error {
 	}
 	if len(config.Servers) == 0 && len(config.LSPs) == 0 {
 		return fmt.Errorf("configuration: expected at least one server")
+	}
+	if config.Secrets.Age != nil {
+		for _, identity := range config.Secrets.Age.Identities {
+			if identity.Path == "" {
+				return validationError(identity.Provenance, identity.Provenance.Path, "identity path must not be empty")
+			}
+			if !filepath.IsAbs(identity.Path) {
+				return validationError(identity.Provenance, identity.Provenance.Path, "identity path must be absolute")
+			}
+		}
 	}
 	for _, server := range config.Servers {
 		path := serverPath(server.Name)
@@ -767,6 +816,15 @@ func parseDocument(file string, doc *document.Document) (*Source, error) {
 				return nil, err
 			}
 			source.Root = &configRoot
+		case "secrets":
+			if source.Secrets != nil {
+				return nil, fmt.Errorf("wirecmd.secrets: duplicate secrets")
+			}
+			secrets, err := parseSecrets(file, child)
+			if err != nil {
+				return nil, err
+			}
+			source.Secrets = &secrets
 		case "mcp":
 			server, err := parseServer(file, child)
 			if err != nil {
@@ -792,6 +850,58 @@ func parseDocument(file string, doc *document.Document) (*Source, error) {
 		}
 	}
 	return source, nil
+}
+
+func parseSecrets(file string, node *document.Node) (SecretsSource, error) {
+	const path = "wirecmd.secrets"
+	if err := plainNode(node, path); err != nil {
+		return SecretsSource{}, err
+	}
+	if len(node.Arguments) != 0 {
+		return SecretsSource{}, fmt.Errorf("%s: does not accept arguments", path)
+	}
+
+	secrets := SecretsSource{Provenance: provenance(file, path)}
+	for _, child := range node.Children {
+		switch nodeName(child) {
+		case "age":
+			if secrets.Age != nil {
+				return SecretsSource{}, fmt.Errorf("%s.age: duplicate age", path)
+			}
+			age, err := parseAgeSecrets(file, child)
+			if err != nil {
+				return SecretsSource{}, err
+			}
+			secrets.Age = &age
+		default:
+			return SecretsSource{}, fmt.Errorf("%s: unknown child node %q", path, nodeName(child))
+		}
+	}
+	return secrets, nil
+}
+
+func parseAgeSecrets(file string, node *document.Node) (AgeSecretsSource, error) {
+	const path = "wirecmd.secrets.age"
+	if err := plainNode(node, path); err != nil {
+		return AgeSecretsSource{}, err
+	}
+	if len(node.Arguments) != 0 {
+		return AgeSecretsSource{}, fmt.Errorf("%s: does not accept arguments", path)
+	}
+
+	age := AgeSecretsSource{Provenance: provenance(file, path)}
+	for _, child := range node.Children {
+		if nodeName(child) != "identity" {
+			return AgeSecretsSource{}, fmt.Errorf("%s: unknown child node %q", path, nodeName(child))
+		}
+		identityPath := fmt.Sprintf("%s.identity[%d]", path, len(age.Identities))
+		identity, err := parseLiteral(child, identityPath)
+		if err != nil {
+			return AgeSecretsSource{}, err
+		}
+		age.Identities = append(age.Identities, AgeIdentity{Path: identity, Provenance: provenance(file, identityPath)})
+	}
+	return age, nil
 }
 
 func parseRoot(file string, node *document.Node) (Root, error) {
@@ -1215,13 +1325,35 @@ func parseValue(value *document.Value, p Provenance) (Value, error) {
 	case "":
 		return Value{Kind: ValueLiteral, Text: text, Provenance: p}, nil
 	case "secret":
-		if !strings.HasPrefix(text, "env://") || len(strings.TrimPrefix(text, "env://")) == 0 {
-			return Value{}, fmt.Errorf("%s: secret reference must be env://NAME", p.Path)
+		if !validSecretReference(text) {
+			return Value{}, fmt.Errorf("%s: secret reference must use SCHEME://LOCATOR", p.Path)
 		}
 		return Value{Kind: ValueSecretReference, Text: text, Provenance: p}, nil
 	default:
 		return Value{}, fmt.Errorf("%s: unsupported value annotation %q", p.Path, value.Type)
 	}
+}
+
+func validSecretReference(text string) bool {
+	scheme, locator, found := strings.Cut(text, "://")
+	return found && locator != "" && validSecretScheme(scheme)
+}
+
+func validSecretScheme(scheme string) bool {
+	if scheme == "" {
+		return false
+	}
+	for index := 0; index < len(scheme); index++ {
+		character := scheme[index]
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') {
+			continue
+		}
+		if index != 0 && ((character >= '0' && character <= '9') || character == '+' || character == '-' || character == '.') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func plainNode(node *document.Node, path string) error {

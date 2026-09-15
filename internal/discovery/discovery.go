@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	projectConfig = "wirecmd.kdl"
-	stateVersion  = 1
+	projectConfigDirectory = ".wirecmd"
+	projectConfig          = "config.kdl"
+	stateVersion           = 1
 )
 
 // UntrustedError reports the nearest workspace configuration that requires trust.
@@ -75,7 +76,7 @@ func Paths(cwd string) ([]string, error) {
 		}
 	}
 	for i := len(dirs) - 1; i >= 0; i-- {
-		candidate := filepath.Join(dirs[i], projectConfig)
+		candidate := projectConfigPath(dirs[i])
 		info, err := os.Lstat(candidate)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
@@ -376,7 +377,7 @@ func within(root, path string) bool {
 
 func nearestProjectConfig(cwd string) (string, error) {
 	for dir := cwd; ; dir = filepath.Dir(dir) {
-		candidate := filepath.Join(dir, projectConfig)
+		candidate := projectConfigPath(dir)
 		if _, err := os.Lstat(candidate); err == nil {
 			return dir, nil
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -387,6 +388,10 @@ func nearestProjectConfig(cwd string) (string, error) {
 			return "", nil
 		}
 	}
+}
+
+func projectConfigPath(directory string) string {
+	return filepath.Join(directory, projectConfigDirectory, projectConfig)
 }
 
 func pathExists(path string) (bool, error) {

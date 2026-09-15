@@ -62,7 +62,11 @@ func TestServerCompletionIsQuietForRejectedOrUnavailableInput(t *testing.T) {
 
 func TestServerCompletionDiscoveryIsQuietAndDoesNotCreateState(t *testing.T) {
 	workspace := t.TempDir()
-	if err := os.WriteFile(filepath.Join(workspace, "wirecmd.kdl"), []byte(`wirecmd { mcp "untrusted" { scope "workspace"; stdio "not-started" } }`), 0o600); err != nil {
+	configPath := filepath.Join(workspace, ".wirecmd", "config.kdl")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`wirecmd { mcp "untrusted" { scope "workspace"; stdio "not-started" } }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	stateHome := filepath.Join(t.TempDir(), "state")
@@ -152,7 +156,11 @@ func TestServerCompletionTrustedWorkspace(t *testing.T) {
 	workspace := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "global"))
-	if err := os.WriteFile(filepath.Join(workspace, "wirecmd.kdl"), []byte(`wirecmd { mcp "trusted" { scope "workspace"; stdio "never-started" } }`), 0o600); err != nil {
+	configPath := filepath.Join(workspace, ".wirecmd", "config.kdl")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte(`wirecmd { mcp "trusted" { scope "workspace"; stdio "never-started" } }`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := discovery.Trust(workspace); err != nil {

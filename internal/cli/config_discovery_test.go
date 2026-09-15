@@ -43,7 +43,7 @@ func TestConfigTrustAdminAndAutomaticDiscovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	explicit := helperConfig(t, "", "")
-	copyConfig(t, explicit, filepath.Join(workspace, "wirecmd.kdl"))
+	copyConfig(t, explicit, filepath.Join(workspace, ".wirecmd", "config.kdl"))
 	t.Chdir(child)
 
 	code, output, _ := invoke(t, []string{"mcp"})
@@ -134,8 +134,8 @@ func TestDaemonDiscoveryKeepsCallerWorkspacesSeparate(t *testing.T) {
 	source := helperConfig(t, "", "")
 	first := t.TempDir()
 	second := t.TempDir()
-	copyConfig(t, source, filepath.Join(first, "wirecmd.kdl"))
-	copyConfig(t, source, filepath.Join(second, "wirecmd.kdl"))
+	copyConfig(t, source, filepath.Join(first, ".wirecmd", "config.kdl"))
+	copyConfig(t, source, filepath.Join(second, ".wirecmd", "config.kdl"))
 	for _, workspace := range []string{first, second} {
 		if code, output, _ := invoke(t, []string{"config", "trust", workspace}); code != exitOK {
 			t.Fatalf("trust %s: code=%d output=%s", workspace, code, output)
