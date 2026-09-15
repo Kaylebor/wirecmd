@@ -169,7 +169,7 @@ func TestComposeValidatesOnlyEffectiveConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverOnly, err := ParseString("server.kdl", `wirecmd { mcp "memory" { scope "workspace"; } }`)
+	serverOnly, err := ParseString("server.kdl", `wirecmd { mcp "memory" }`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,6 @@ func TestComposeValidatesOnlyEffectiveConfiguration(t *testing.T) {
 		want   string
 	}{
 		{name: "no server", source: `wirecmd { root "/workspace" }`, want: "expected at least one server"},
-		{name: "missing scope", source: `wirecmd { mcp "memory" { stdio "memory" } }`, want: `mcp["memory"].scope: scope is required`},
 		{name: "missing transport", source: `wirecmd { mcp "memory" { scope "workspace"; } }`, want: `mcp["memory"].stdio: stdio, http, or sse is required`},
 		{name: "missing executable", source: `wirecmd { mcp "memory" { scope "workspace"; stdio { env FLAG="one" } } }`, want: `mcp["memory"].stdio: executable is required`},
 	}
@@ -202,6 +201,25 @@ func TestComposeValidatesOnlyEffectiveConfiguration(t *testing.T) {
 				t.Fatalf("Compose() error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestComposeDefaultsMCPScopeToWorkspace(t *testing.T) {
+	base, err := ParseString("base.kdl", `wirecmd { mcp "memory" { stdio "base" } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := ParseString("local.kdl", `wirecmd { mcp "memory" { stdio "local" } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := Compose(base, local)
+	if err != nil {
+		t.Fatalf("Compose() error = %v", err)
+	}
+	server := config.Servers[0]
+	if server.Scope != ScopeWorkspace || server.ScopeProvenance != (Provenance{File: "local.kdl", Path: `wirecmd.mcp["memory"]`}) {
+		t.Fatalf("default scope = %#v", server)
 	}
 }
 

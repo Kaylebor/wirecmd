@@ -12,7 +12,6 @@ wirecmd {
     root "."
 
     mcp "local" {
-        scope "workspace"
         stdio "local-mcp-server" {
             arg "--stdio"
             env LOG_LEVEL="warn"
@@ -21,7 +20,6 @@ wirecmd {
     }
 
     mcp "remote" {
-        scope "workspace"
         http "https://example.test/mcp" {
             query tenant="example"
             header X-API-Key=(secret)"env://REMOTE_API_KEY"
@@ -29,7 +27,6 @@ wirecmd {
     }
 
     mcp "legacy-events" {
-        scope "workspace"
         sse "https://example.test/sse" {
             header Authorization=(secret)"env://LEGACY_AUTHORIZATION"
         }
@@ -92,9 +89,8 @@ wirecmd {
 }
 ```
 
-MCP definitions require `scope "workspace"`. LSP definitions currently
-default to workspace scope; writing it explicitly is also valid. No other
-scope is implemented.
+MCP and LSP definitions default to workspace scope. Writing `scope "workspace"`
+explicitly is also valid. No other scope is implemented.
 
 ## MCP definitions
 
@@ -105,7 +101,6 @@ transport. The name is the `SERVER` used by `wirecmd mcp SERVER ...`.
 
 ```kdl
 mcp "local" {
-    scope "workspace"
     stdio "executable" {
         arg "first-argument"
         arg (secret)"env://SECRET_ARGUMENT"
@@ -123,7 +118,6 @@ Arguments retain their configured order.
 
 ```kdl
 mcp "remote" {
-    scope "workspace"
     http "https://example.test/mcp?existing=value" {
         query tenant="acme"
         query token=(secret)"env://QUERY_TOKEN"
@@ -146,7 +140,6 @@ preregistered client:
 
 ```kdl
 mcp "remote" {
-    scope "workspace"
     http "https://example.test/mcp" {
         oauth {
             client-id "wirecmd-client"
@@ -167,7 +160,6 @@ mutually exclusive.
 
 ```kdl
 mcp "legacy" {
-    scope "workspace"
     sse "https://example.test/sse" {
         query tenant="acme"
         header Authorization=(secret)"env://LEGACY_AUTHORIZATION"

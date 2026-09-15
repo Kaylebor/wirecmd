@@ -2090,7 +2090,7 @@ func helperConfigAt(t *testing.T, path, root, env string) string {
 	if root != "" {
 		rootNode = "root " + strconv.Quote(root)
 	}
-	source := "wirecmd {\n" + rootNode + "\nmcp \"helper\" {\nscope \"workspace\"\nstdio " + strconv.Quote(os.Args[0]) + " {\narg \"-test.run=TestHelperProcess\"\narg \"--\"\n" + env + "\n}\n}\n}"
+	source := "wirecmd {\n" + rootNode + "\nmcp \"helper\" {\nstdio " + strconv.Quote(os.Args[0]) + " {\narg \"-test.run=TestHelperProcess\"\narg \"--\"\n" + env + "\n}\n}\n}"
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
