@@ -324,6 +324,34 @@ func TestDiscoveredWorkspaceLoadRejectsFIFO(t *testing.T) {
 	}
 }
 
+func TestDiscoveredWorkspaceLoadRejectsMetadataDirectoryReplacement(t *testing.T) {
+	workspace := t.TempDir()
+	directory := filepath.Join(workspace, ".wirecmd")
+	path := filepath.Join(directory, "config.kdl")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`wirecmd { mcp "helper" { scope "workspace"; stdio "helper" } }`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "config.kdl"), []byte(`wirecmd { mcp "outside" { scope "workspace"; stdio "outside" } }`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(directory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, directory); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := LoadEffectiveDiscovered([]string{path}); err == nil {
+		t.Fatal("LoadEffectiveDiscovered() accepted a replaced workspace metadata directory")
+	}
+}
+
 func TestParseRejectsMalformedAndUnknownStructure(t *testing.T) {
 	tests := []struct {
 		name   string

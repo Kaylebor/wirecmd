@@ -285,17 +285,29 @@ func Load(path string) (*Source, error) {
 // loadDiscoveredProject rejects symlinks and pathname replacement before
 // parsing an automatically discovered workspace source.
 func loadDiscoveredProject(path string) (*Source, error) {
-	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
+	directory := filepath.Dir(path)
+	root, err := os.OpenRoot(directory)
 	if err != nil {
 		return nil, fmt.Errorf("load configuration %q: %w", path, err)
 	}
-	f := os.NewFile(uintptr(fd), path)
-	if f == nil {
-		_ = syscall.Close(fd)
-		return nil, fmt.Errorf("load configuration %q: invalid file descriptor", path)
+	defer root.Close()
+	directoryInfo, err := os.Lstat(directory)
+	if err != nil {
+		return nil, fmt.Errorf("load configuration %q: %w", path, err)
+	}
+	openedDirectoryInfo, err := root.Stat(".")
+	if err != nil {
+		return nil, fmt.Errorf("load configuration %q: %w", path, err)
+	}
+	if directoryInfo.Mode()&os.ModeSymlink != 0 || !directoryInfo.IsDir() || !openedDirectoryInfo.IsDir() || !os.SameFile(directoryInfo, openedDirectoryInfo) {
+		return nil, fmt.Errorf("load configuration %q: discovered workspace metadata must remain a non-symlink directory", path)
+	}
+	f, err := root.OpenFile(filepath.Base(path), os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, fmt.Errorf("load configuration %q: %w", path, err)
 	}
 	defer f.Close()
-	pathInfo, err := os.Lstat(path)
+	pathInfo, err := root.Lstat(filepath.Base(path))
 	if err != nil {
 		return nil, fmt.Errorf("load configuration %q: %w", path, err)
 	}

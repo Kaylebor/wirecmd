@@ -228,11 +228,19 @@ func semanticSecrets(configured config.Secrets) any {
 }
 
 func serverExecutionFingerprint(server config.Server, root *config.Root, cwd string, configured config.Secrets) string {
-	return fingerprint(map[string]any{"v": 1, "execution": executionFingerprint(server, root, cwd), "secrets": semanticSecrets(configured)})
+	value := map[string]any{"v": 1, "execution": executionFingerprint(server, root, cwd)}
+	if len(selectedAgeReferences(serverSecretValues(server))) != 0 {
+		value["secrets"] = semanticSecrets(configured)
+	}
+	return fingerprint(value)
 }
 
 func matchedLSPExecutionFingerprint(matches []lspMatch, root *config.Root, cwd string, configured config.Secrets) string {
-	return fingerprint(map[string]any{"v": 1, "execution": lspMatchesExecutionFingerprint(matches, root, cwd), "secrets": semanticSecrets(configured)})
+	value := map[string]any{"v": 1, "execution": lspMatchesExecutionFingerprint(matches, root, cwd)}
+	if len(selectedAgeReferences(lspSecretValues(matches))) != 0 {
+		value["secrets"] = semanticSecrets(configured)
+	}
+	return fingerprint(value)
 }
 
 func lspExecutionFingerprint(definition config.LSP, root *config.Root, cwd string) string {

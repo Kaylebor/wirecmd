@@ -77,6 +77,9 @@ func Paths(cwd string) ([]string, error) {
 		}
 	}
 	for i := len(dirs) - 1; i >= 0; i-- {
+		if err := validateProjectMetadataDirectory(dirs[i]); err != nil {
+			return nil, err
+		}
 		candidate := projectConfigPath(dirs[i])
 		info, err := os.Lstat(candidate)
 		if errors.Is(err, os.ErrNotExist) {
@@ -141,6 +144,9 @@ func SecretStoreCandidates(cwd string, configPaths []string, automatic bool) ([]
 
 	candidates := make([]string, 0)
 	for directory := canonicalCWD; ; directory = filepath.Dir(directory) {
+		if err := validateProjectMetadataDirectory(directory); err != nil {
+			return nil, err
+		}
 		candidates = appendCandidate(candidates, filepath.Join(directory, projectConfigDirectory, projectSecrets))
 		if directory == root {
 			break
@@ -442,6 +448,9 @@ func within(root, path string) bool {
 
 func nearestProjectConfig(cwd string) (string, error) {
 	for dir := cwd; ; dir = filepath.Dir(dir) {
+		if err := validateProjectMetadataDirectory(dir); err != nil {
+			return "", err
+		}
 		candidate := projectConfigPath(dir)
 		if _, err := os.Lstat(candidate); err == nil {
 			return dir, nil
@@ -453,6 +462,21 @@ func nearestProjectConfig(cwd string) (string, error) {
 			return "", nil
 		}
 	}
+}
+
+func validateProjectMetadataDirectory(directory string) error {
+	path := filepath.Join(directory, projectConfigDirectory)
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect workspace metadata directory %q: %w", path, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("workspace metadata directory %q must be a non-symlink directory", path)
+	}
+	return nil
 }
 
 func projectConfigPath(directory string) string {
