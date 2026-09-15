@@ -1,8 +1,7 @@
 # SDK 1.8 and legacy HTTP+SSE qualification
 
-Status: implemented and locally qualified with stable SDK `v1.8.0`; CI and
-review remain required before merge. See
-[local evidence](notes/sse-pre2-validation.md).
+Status: implemented, qualified, and released in v0.3.0 with stable SDK `v1.8.0`.
+See [local evidence](notes/sse-pre2-validation.md).
 
 The historical server fixture stays pinned to v1.6.1. The main module uses
 stable SDK `v1.8.0`, which upstream declares equivalent to the previously
@@ -33,7 +32,11 @@ shutdown retain the existing shell contract. The SDK owns initialization,
 negotiation, parsing, pagination, calls and lifecycle. Confirmed additional SDK
 gaps require discussion, not local protocol shims or weakened acceptance.
 
-## Acceptance and merge gate
+## Historical acceptance and merge gate
+
+The following checklist governed the v0.3.0 change. Stable local evidence is
+recorded below, and [PR #6](https://github.com/Kaylebor/wirecmd/pull/6) passed
+Linux and both macOS CI jobs before merge.
 
 - Extend the historical fixture with SDK-backed SSE, preserving its older SDK.
 - Exercise direct and retained daemon discovery/help/calls, state isolation,
