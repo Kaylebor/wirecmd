@@ -7,6 +7,13 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Reworked the README as a concise public introduction, with detailed
+  configuration and product contracts kept in their dedicated documentation.
+- Restructured top-level command help around the public command families,
+  clarified prefix-flag placement, and improved MCP resource discoverability.
+
 ## [0.3.1] - 2026-09-15
 
 ### Changed
