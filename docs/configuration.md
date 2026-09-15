@@ -110,9 +110,12 @@ mcp "local" {
 }
 ```
 
-Wirecmd inherits the caller environment, then applies configured `env`
-entries. A present-but-empty value remains distinct from an absent value.
-Arguments retain their configured order.
+In direct mode, the child inherits the invoking CLI process environment. In
+daemon-backed mode, it inherits the environment from when the daemon was
+started. Configured `env` entries are then applied; secret references are
+resolved for each call and forwarded to the daemon. A present-but-empty value
+remains distinct from an absent value. Arguments retain their configured
+order. The same inheritance boundary applies to LSP stdio processes.
 
 ### Streamable HTTP
 

@@ -17,8 +17,9 @@ browser login transparently; scripts, CI, and headless callers remain
 deterministic and receive a structured recovery action.
 
 Wirecmd owns only the shell and daemon boundary, browser handoff, credential
-persistence, redaction, and error mapping. The pinned official MCP SDK
-(`github.com/modelcontextprotocol/go-sdk v1.7.0`) owns OAuth discovery,
+persistence, redaction, and error mapping. The milestone was implemented
+against official MCP SDK `github.com/modelcontextprotocol/go-sdk v1.7.0`;
+current main uses v1.8.0. The SDK owns OAuth discovery,
 protected-resource and authorization-server metadata, PKCE, dynamic client
 registration, preregistered clients, token exchange, refresh, resource
 indicators, scopes, issuer validation, and HTTP retry behavior. Wirecmd does

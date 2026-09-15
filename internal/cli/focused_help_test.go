@@ -20,6 +20,11 @@ func TestFocusedHelpRequiresDaemonAfterDirectDiscoveryAndSecretSwitch(t *testing
 	if serverCode != exitOK || serverStderr != "" || !strings.Contains(serverHelp, "Tools for helper:") {
 		t.Fatalf("direct server help: code=%d stderr=%q output=%s", serverCode, serverStderr, serverHelp)
 	}
+	for _, want := range []string{"Other MCP capabilities:", "mcp helper resources", "mcp helper resource-templates"} {
+		if !strings.Contains(serverHelp, want) {
+			t.Fatalf("direct server help missing %q: %s", want, serverHelp)
+		}
+	}
 	toolArgs := []string{"--direct", "--config", configPath, "--help", "helper", "projected"}
 	toolCode, toolHelp, toolStderr := invoke(t, toolArgs)
 	if toolCode != exitOK || toolStderr != "" || !strings.Contains(toolHelp, "--query") {

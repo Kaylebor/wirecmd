@@ -60,7 +60,7 @@ func TestAdministrativeLeafHelpIsFocused(t *testing.T) {
 	}{
 		{[]string{"daemon", "run"}, []string{"Run the foreground daemon.", "daemon run", "does not load configuration"}, "Daemon administration:"},
 		{[]string{"daemon", "status"}, []string{"Inspect the running daemon.", "daemon status", "daemon_unavailable"}, "Daemon administration:"},
-		{[]string{"daemon", "reload"}, []string{"Reload daemon-managed configuration and sessions.", "daemon reload", "Active requests finish"}, "Daemon administration:"},
+		{[]string{"daemon", "reload"}, []string{"Reload daemon-managed configuration and sessions.", "daemon reload", "retained MCP and LSP sessions", "Active requests finish"}, "Daemon administration:"},
 		{[]string{"config", "trust"}, []string{"Trust a workspace", "config trust [PATH]", "Trust is recursive"}, "Configuration trust:"},
 		{[]string{"config", "untrust"}, []string{"Remove one workspace trust entry.", "config untrust [PATH]", "trusted ancestor"}, "Configuration trust:"},
 		{[]string{"config", "trust", "status"}, []string{"Inspect effective workspace trust.", "config trust status [PATH]", "nearest trust root"}, "Configuration trust:"},

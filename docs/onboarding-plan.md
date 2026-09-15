@@ -1,16 +1,17 @@
 # Onboarding, Help, and Fish Completion
 
 Status: authoritative accepted slice; implementation and local qualification.
-This milestone is independent of the parked SDK/SSE prerelease branch.
 
 ## Help and onboarding
 
-README gives a first-call sequence, real release/platform status, complete KDL,
-foreground daemon setup, discovery and argument inspection. Global help lists
-all public prefix flags and input forms; the agent Skill keeps only operational
-guidance. Dedicated administrative help is offline and side-effect-free.
+README gives a first-call sequence, release/platform orientation, minimal KDL,
+foreground daemon setup, discovery and argument inspection, then links to the
+complete configuration reference. Global help lists all public prefix flags
+and input forms; the agent Skill keeps only operational guidance. Dedicated
+administrative help is offline and side-effect-free.
 
-`wirecmd --help daemon|config|auth` describes that administrative group;
+`wirecmd --help daemon`, `wirecmd --help config`, and `wirecmd --help auth`
+describe their respective administrative groups;
 recognized subcommands return focused leaf help rather than repeating the whole
 group page. Auth help accepts configuration/direct selection without resolving
 it. Daemon/config help retains restrictions on those flags. Known Wirecmd flags

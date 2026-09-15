@@ -72,7 +72,7 @@ func Run(ctx context.Context, args []string, in io.Reader, out, errOut io.Writer
 	return exitOK
 }
 
-const usage = "wirecmd [--config PATH] [--direct] [--format auto|json|pretty] [--color auto|always|never] [--json OBJECT|--stdin] mcp [<server> [tool <tool>|resources|resource-templates|resource URI|<exact-call-object>]]"
+const usage = "wirecmd [client flags] <command> [arguments]"
 
 var isInteractiveTerminal = terminalIO
 var openAuthorizationURL = openBrowserURL
