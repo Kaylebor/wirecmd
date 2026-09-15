@@ -430,8 +430,15 @@ func Compose(sources ...*Source) (*Config, error) {
 		}
 	}
 
-	// LSP scope is intentionally workspace-only in this milestone. An omitted
-	// scope is therefore a useful shorthand rather than an incomplete value.
+	// Scope is intentionally workspace-only in this milestone. An omitted scope
+	// is therefore a useful shorthand rather than an incomplete value.
+	for index := range config.Servers {
+		server := &config.Servers[index]
+		if server.Scope == "" && server.ScopeProvenance == (Provenance{}) {
+			server.Scope = ScopeWorkspace
+			server.ScopeProvenance = server.Provenance
+		}
+	}
 	for index := range config.LSPs {
 		lsp := &config.LSPs[index]
 		if lsp.Scope == "" && lsp.ScopeProvenance == (Provenance{}) {
@@ -542,9 +549,6 @@ func validate(config *Config) error {
 	}
 	for _, server := range config.Servers {
 		path := serverPath(server.Name)
-		if server.Scope == "" {
-			return validationError(server.Provenance, path+".scope", "scope is required")
-		}
 		if server.Scope != ScopeWorkspace {
 			return validationError(server.ScopeProvenance, path+".scope", "unsupported scope %q", server.Scope)
 		}

@@ -1231,11 +1231,11 @@ func startTestDaemon(t *testing.T) *daemon {
 }
 
 func helperSource(extra string) string {
-	return "wirecmd {\nmcp \"helper\" {\nscope \"workspace\"\nstdio " + strconv.Quote(os.Args[0]) + " {\narg \"-test.run=TestHelperProcess\"\narg \"--\"\n" + extra + "\n}\n}\n}\n"
+	return "wirecmd {\nmcp \"helper\" {\nstdio " + strconv.Quote(os.Args[0]) + " {\narg \"-test.run=TestHelperProcess\"\narg \"--\"\n" + extra + "\n}\n}\n}\n"
 }
 
 func helperSourceWithRoot(root string) string {
-	return "wirecmd {\nroot " + strconv.Quote(root) + "\nmcp \"helper\" {\nscope \"workspace\"\nstdio " + strconv.Quote(os.Args[0]) + " {\narg \"-test.run=TestHelperProcess\"\narg \"--\"\n}\n}\n}\n"
+	return "wirecmd {\nroot " + strconv.Quote(root) + "\nmcp \"helper\" {\nstdio " + strconv.Quote(os.Args[0]) + " {\narg \"-test.run=TestHelperProcess\"\narg \"--\"\n}\n}\n}\n"
 }
 
 func writeSource(t *testing.T, path, source string) {

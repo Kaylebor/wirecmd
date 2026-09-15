@@ -68,7 +68,6 @@ an installed stdio MCP server executable and its actual arguments:
 ```kdl
 wirecmd {
     mcp "local" {
-        scope "workspace"
         stdio "/absolute/path/to/mcp-server" {
             arg "--server-option"
         }
@@ -127,7 +126,6 @@ like this:
 ```kdl
 wirecmd {
     mcp "local" {
-        scope "workspace"
         stdio "local-mcp-server"
     }
 }
@@ -188,7 +186,7 @@ wirecmd {
 }
 ```
 
-LSP scope defaults to `workspace`; the executable remains user-supplied and
+MCP and LSP scope default to `workspace`; the executable remains user-supplied and
 argv/environment are optional. A selector requires `language-id`; its optional
 `pattern` defaults to `**/*` and is matched relative to the workspace root.
 Multiple definitions may match one file and are queried concurrently. Partial
@@ -301,7 +299,6 @@ endpoint. They are mutually exclusive in an effective server definition:
 ```kdl
 wirecmd {
     mcp "remote" {
-        scope "workspace"
         http "https://example.test/mcp"
     }
 }
@@ -350,7 +347,6 @@ constraints:
 
 ```kdl
 mcp "remote" {
-    scope "workspace"
     http "https://example.test/mcp" {
         oauth {
             client-id "wirecmd-client"
