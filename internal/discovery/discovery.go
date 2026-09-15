@@ -14,6 +14,7 @@ import (
 const (
 	projectConfigDirectory = ".wirecmd"
 	projectConfig          = "config.kdl"
+	projectSecrets         = "secrets.json.age"
 	stateVersion           = 1
 )
 
@@ -93,6 +94,59 @@ func Paths(cwd string) ([]string, error) {
 		return nil, &NotFoundError{}
 	}
 	return paths, nil
+}
+
+// SecretStoreCandidates returns encrypted age-store paths in strongest to
+// weakest precedence order. Candidates are returned whether or not they exist
+// so callers can detect store appearance and removal without discovery hiding
+// those transitions.
+//
+// Automatic discovery walks from cwd through the nearest trusted root. Explicit
+// configuration uses only siblings of the supplied paths in reverse source
+// precedence and never consults trusted-workspace state.
+func SecretStoreCandidates(cwd string, configPaths []string, automatic bool) ([]string, error) {
+	global, err := globalSecretStorePath()
+	if err != nil {
+		return nil, err
+	}
+	global, err = absoluteCleanPath(global)
+	if err != nil {
+		return nil, err
+	}
+
+	if !automatic {
+		candidates := make([]string, 0, len(configPaths)+1)
+		for index := len(configPaths) - 1; index >= 0; index-- {
+			configPath, err := absoluteCleanPath(configPaths[index])
+			if err != nil {
+				return nil, err
+			}
+			candidates = appendCandidate(candidates, filepath.Join(filepath.Dir(configPath), projectSecrets))
+		}
+		return appendCandidate(candidates, global), nil
+	}
+
+	canonicalCWD, err := canonicalDirectory(cwd)
+	if err != nil {
+		return nil, err
+	}
+	trusted, err := List()
+	if err != nil {
+		return nil, err
+	}
+	root := nearestTrustedAncestor(canonicalCWD, trusted)
+	if root == "" {
+		return []string{global}, nil
+	}
+
+	candidates := make([]string, 0)
+	for directory := canonicalCWD; ; directory = filepath.Dir(directory) {
+		candidates = appendCandidate(candidates, filepath.Join(directory, projectConfigDirectory, projectSecrets))
+		if directory == root {
+			break
+		}
+	}
+	return appendCandidate(candidates, global), nil
 }
 
 // Trust adds path to the trusted workspace roots and returns its canonical form.
@@ -300,6 +354,17 @@ func globalConfigPath() (string, error) {
 	return filepath.Join(home, ".config", "wirecmd", "config.kdl"), nil
 }
 
+func globalSecretStorePath() (string, error) {
+	if path := os.Getenv("XDG_CONFIG_HOME"); filepath.IsAbs(path) {
+		return filepath.Join(path, "wirecmd", projectSecrets), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".config", "wirecmd", projectSecrets), nil
+}
+
 func canonicalDirectory(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -392,6 +457,24 @@ func nearestProjectConfig(cwd string) (string, error) {
 
 func projectConfigPath(directory string) string {
 	return filepath.Join(directory, projectConfigDirectory, projectConfig)
+}
+
+func absoluteCleanPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(abs), nil
+}
+
+func appendCandidate(candidates []string, path string) []string {
+	path = filepath.Clean(path)
+	for _, candidate := range candidates {
+		if candidate == path {
+			return candidates
+		}
+	}
+	return append(candidates, path)
 }
 
 func pathExists(path string) (bool, error) {
