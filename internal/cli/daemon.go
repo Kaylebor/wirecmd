@@ -228,11 +228,19 @@ func semanticSecrets(configured config.Secrets) any {
 }
 
 func serverExecutionFingerprint(server config.Server, root *config.Root, cwd string, configured config.Secrets) string {
-	return fingerprint(map[string]any{"v": 1, "execution": executionFingerprint(server, root, cwd), "secrets": semanticSecrets(configured)})
+	value := map[string]any{"v": 1, "execution": executionFingerprint(server, root, cwd)}
+	if len(selectedAgeReferences(serverSecretValues(server))) != 0 {
+		value["secrets"] = semanticSecrets(configured)
+	}
+	return fingerprint(value)
 }
 
 func matchedLSPExecutionFingerprint(matches []lspMatch, root *config.Root, cwd string, configured config.Secrets) string {
-	return fingerprint(map[string]any{"v": 1, "execution": lspMatchesExecutionFingerprint(matches, root, cwd), "secrets": semanticSecrets(configured)})
+	value := map[string]any{"v": 1, "execution": lspMatchesExecutionFingerprint(matches, root, cwd)}
+	if len(selectedAgeReferences(lspSecretValues(matches))) != 0 {
+		value["secrets"] = semanticSecrets(configured)
+	}
+	return fingerprint(value)
 }
 
 func lspExecutionFingerprint(definition config.LSP, root *config.Root, cwd string) string {
@@ -890,7 +898,7 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	var storeSnapshot *secretpkg.StoreSnapshot
 	if request.Auth == "" && len(ageReferences) != 0 {
 		var snapshotErr *appError
-		storeSnapshot, snapshotErr = captureAgeStores(request.SecretStores)
+		storeSnapshot, snapshotErr = captureAgeStores(request.SecretStores, request.Discovered)
 		if snapshotErr != nil {
 			return errorReplyWithWarnings(snapshotErr, warnings)
 		}
@@ -905,7 +913,7 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	var resolved resolvedSecretSet
 	if instance == nil || request.Auth != "" {
 		var resolveErr *appError
-		resolved, resolveErr = resolveSelectedSecrets(ctx, cached.config.Secrets, request.SecretStores, storeSnapshot, selectedValues, envLookup)
+		resolved, resolveErr = resolveSelectedSecrets(ctx, cached.config.Secrets, request.SecretStores, request.Discovered, storeSnapshot, selectedValues, envLookup)
 		if resolveErr != nil {
 			return errorReplyWithWarnings(resolveErr, warnings)
 		}
@@ -1101,7 +1109,7 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 	allCached := len(ageReferences) != 0
 	if allCached {
 		var snapshotErr *appError
-		storeSnapshot, snapshotErr = captureAgeStores(request.SecretStores)
+		storeSnapshot, snapshotErr = captureAgeStores(request.SecretStores, request.Discovered)
 		if snapshotErr != nil {
 			return errorReplyWithWarnings(snapshotErr, warnings)
 		}
@@ -1127,7 +1135,7 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 	var resolved resolvedSecretSet
 	if !allCached {
 		var resolveErr *appError
-		resolved, resolveErr = resolveSelectedSecrets(ctx, cached.config.Secrets, request.SecretStores, storeSnapshot, selectedValues, envLookup)
+		resolved, resolveErr = resolveSelectedSecrets(ctx, cached.config.Secrets, request.SecretStores, request.Discovered, storeSnapshot, selectedValues, envLookup)
 		if resolveErr != nil {
 			return errorReplyWithWarnings(resolveErr, warnings)
 		}
@@ -1382,10 +1390,10 @@ func (d *daemon) lspResolvedAuthIdentity(definition config.LSP, lookup func(stri
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func captureAgeStores(paths []string) (*secretpkg.StoreSnapshot, *appError) {
+func captureAgeStores(paths []string, automatic bool) (*secretpkg.StoreSnapshot, *appError) {
 	stores := make([]secretpkg.Store, len(paths))
 	for index, path := range paths {
-		stores[index] = secretpkg.Store{Path: path}
+		stores[index] = secretpkg.Store{Path: path, RejectParentSymlink: automatic && filepath.Base(filepath.Dir(path)) == ".wirecmd"}
 	}
 	snapshot, err := secretpkg.CaptureStores(stores)
 	if err != nil {

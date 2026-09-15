@@ -234,6 +234,10 @@
   before that PR merges, re-curate against the new `main` before proceeding.
   Changelog headings use `X.Y.Z`; tags, module versions, and binary versions
   use `vX.Y.Z`.
+- After opening or updating a PR, leave it unmerged for at least five minutes
+  so automated Codex review notes can arrive, then inspect all PR comments,
+  reviews, and unresolved threads before merging. Bypass this hold only when
+  the user explicitly authorizes it for that PR.
 - Put unresolved alternatives, research fragments, and speculative mechanisms
   in `docs/notes/` with an explicit non-authoritative label.
 - Do not commit generated artifacts, credentials, local runtime state, or test

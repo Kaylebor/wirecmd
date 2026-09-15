@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -22,7 +23,7 @@ func (s resolvedSecretSet) lookup(reference string) (string, bool) {
 	return value, ok
 }
 
-func resolveSelectedSecrets(ctx context.Context, configured config.Secrets, stores []string, snapshot *secretpkg.StoreSnapshot, values []config.Value, envLookup func(string) (string, bool)) (resolvedSecretSet, *appError) {
+func resolveSelectedSecrets(ctx context.Context, configured config.Secrets, stores []string, automatic bool, snapshot *secretpkg.StoreSnapshot, values []config.Value, envLookup func(string) (string, bool)) (resolvedSecretSet, *appError) {
 	identities := []string(nil)
 	if configured.Age != nil {
 		identities = make([]string, len(configured.Age.Identities))
@@ -32,7 +33,7 @@ func resolveSelectedSecrets(ctx context.Context, configured config.Secrets, stor
 	}
 	ageStores := make([]secretpkg.Store, len(stores))
 	for index, path := range stores {
-		ageStores[index] = secretpkg.Store{Path: path}
+		ageStores[index] = secretpkg.Store{Path: path, RejectParentSymlink: automatic && filepath.Base(filepath.Dir(path)) == ".wirecmd"}
 	}
 	envProvider, err := secretpkg.NewEnvProvider(envLookup)
 	if err != nil {

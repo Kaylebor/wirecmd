@@ -753,6 +753,28 @@ func TestDaemonConfigMismatchAndSecretIsolation(t *testing.T) {
 	}
 }
 
+func TestDaemonWarnsButRunsWhenUnusedAgeIdentityChanges(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
+	startTestDaemon(t)
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.kdl")
+	source := func(identity string) string {
+		return "wirecmd {\nsecrets { age { identity " + strconv.Quote(identity) + " } }\nmcp \"helper\" {\nstdio " + strconv.Quote(os.Args[0]) + " {\narg \"-test.run=TestHelperProcess\"\narg \"--\"\n}\n}\n}\n"
+	}
+	writeSource(t, path, source(filepath.Join(directory, "first.identity")))
+	code, output, stderr := invoke(t, []string{"--config", path, "helper"})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("initial call: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	writeSource(t, path, source(filepath.Join(directory, "second.identity")))
+	code, output, stderr = invoke(t, []string{"--config", path, "helper"})
+	if code != exitOK || !strings.Contains(stderr, "configuration differs from the daemon cache") {
+		t.Fatalf("unused identity change: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+}
+
 func TestDaemonRejectsMovedRelativeRootWithoutReload(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
 	runtime := testRuntimeDirectory(t)

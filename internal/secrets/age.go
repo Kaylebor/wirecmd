@@ -34,7 +34,8 @@ var (
 // Store is one encrypted age document. Stores are evaluated in the order
 // supplied to NewAgeProvider, from strongest to weakest precedence.
 type Store struct {
-	Path string
+	Path                string
+	RejectParentSymlink bool
 }
 
 type capturedStore struct {
@@ -67,7 +68,7 @@ func CaptureStores(stores []Store) (*StoreSnapshot, error) {
 	_, _ = digest.Write([]byte("wirecmd-age-stores-v1\x00"))
 	captured := make([]capturedStore, len(stores))
 	for index, store := range stores {
-		ciphertext, exists, err := readAgeStore(store.Path, maxCiphertextSize)
+		ciphertext, exists, err := readAgeStore(store.Path, maxCiphertextSize, store.RejectParentSymlink)
 		if err != nil {
 			return nil, err
 		}
@@ -228,7 +229,7 @@ func (p *AgeProvider) snapshotStores() ([]capturedStore, error) {
 	}
 	stores := make([]capturedStore, 0, len(p.stores))
 	for _, store := range p.stores {
-		ciphertext, exists, err := readAgeStore(store.Path, maxCiphertextSize)
+		ciphertext, exists, err := readAgeStore(store.Path, maxCiphertextSize, store.RejectParentSymlink)
 		if err != nil {
 			return nil, err
 		}

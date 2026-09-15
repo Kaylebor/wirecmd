@@ -131,6 +131,25 @@ func TestUntrustAndDiscoveredSymlinkRejection(t *testing.T) {
 	}
 }
 
+func TestDiscoveredWorkspaceMetadataSymlinkRejected(t *testing.T) {
+	testEnvironment(t)
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	writeFile(t, projectConfigPath(outside))
+	if err := os.Symlink(filepath.Join(outside, projectConfigDirectory), filepath.Join(workspace, projectConfigDirectory)); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if _, err := Trust(workspace); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Paths(workspace); err == nil {
+		t.Fatal("Paths() accepted a symlinked workspace metadata directory")
+	}
+	if _, err := SecretStoreCandidates(workspace, nil, true); err == nil {
+		t.Fatal("SecretStoreCandidates() accepted a symlinked workspace metadata directory")
+	}
+}
+
 func TestConcurrentTrustUpdatesAndPrivateState(t *testing.T) {
 	_, stateHome := testEnvironment(t)
 	base := t.TempDir()

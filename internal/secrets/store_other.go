@@ -8,7 +8,7 @@ import (
 	"os"
 )
 
-func readAgeStore(path string, limit int64) ([]byte, bool, error) {
+func readAgeStore(path string, limit int64, _ bool) ([]byte, bool, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil

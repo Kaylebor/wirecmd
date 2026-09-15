@@ -485,7 +485,7 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 		result, callErr, _ := daemonRequestCallWithClient(client, rpc, errOut)
 		return result, callErr
 	}
-	resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, nil, selectedValues, os.LookupEnv)
+	resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, discovered, nil, selectedValues, os.LookupEnv)
 	if resolveErr != nil {
 		return nil, resolveErr
 	}
