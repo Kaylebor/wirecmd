@@ -7,8 +7,20 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-15
+
+### Added
+
+- Hardware-backed `age` secret files for MCP and LSP arguments and environment,
+  HTTP query and header values, and OAuth client secrets, with scoped batch
+  resolution, strict store validation, redaction, and daemon reuse.
+- A closed internal secret-provider registry for the built-in `env` and `age`
+  schemes.
+
 ### Changed
 
+- Workspace configuration discovery now uses `.wirecmd/config.kdl`; automatic
+  discovery no longer considers a top-level `wirecmd.kdl`.
 - Reworked the README as a concise public introduction, with detailed
   configuration and product contracts kept in their dedicated documentation.
 - Restructured top-level command help around the public command families,
@@ -63,7 +75,8 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hover, document symbols, and workspace symbols.
 - Terminal-aware pretty output alongside deterministic compact JSON.
 
-[Unreleased]: https://github.com/Kaylebor/wirecmd/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/Kaylebor/wirecmd/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Kaylebor/wirecmd/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Kaylebor/wirecmd/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Kaylebor/wirecmd/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Kaylebor/wirecmd/compare/v0.1.0...v0.2.0

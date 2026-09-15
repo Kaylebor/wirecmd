@@ -43,7 +43,7 @@ wirecmd --version
 To install this release exactly:
 
 ```sh
-go install github.com/Kaylebor/wirecmd@v0.3.1
+go install github.com/Kaylebor/wirecmd@v0.4.0
 ```
 
 Linux and macOS are supported; see [release readiness](docs/release-readiness.md)

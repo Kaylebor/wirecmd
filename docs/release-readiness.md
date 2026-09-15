@@ -25,23 +25,25 @@ release with:
 go install github.com/Kaylebor/wirecmd@latest
 ```
 
-The reproducible v0.3.1 installation is:
+The reproducible v0.4.0 installation is:
 
 ```sh
-go install github.com/Kaylebor/wirecmd@v0.3.1
+go install github.com/Kaylebor/wirecmd@v0.4.0
 ```
 
 Linux and macOS are supported. Apple Silicon has native CI and maintainer M2
 smoke evidence; Intel macOS is CI-qualified without a physical-device claim.
 Windows remains unsupported.
 
-The v0.3.1 release supports the public CLI, KDL configuration,
+The v0.4.0 release supports the public CLI, KDL configuration,
 structured result and error contracts, daemon/direct split, stdio and
 Streamable HTTP and legacy HTTP+SSE MCP transports, SDK-backed OAuth for
 Streamable HTTP, MCP resources, and the documented native LSP operations.
 Modern and legacy initialized stdio and Streamable HTTP are qualified, as is
 legacy HTTP+SSE through stable SDK v1.8.0. Transparent OAuth for legacy SSE
-remains deferred under the [SSE milestone](sse-plan.md).
+remains deferred under the [SSE milestone](sse-plan.md). The release also
+supports optional age-backed secret resolution under the
+[age secrets plan](age-secrets-plan.md).
 
 Within the pre-1.0 stable line, backward-incompatible changes to the documented
 CLI, configuration, and structured output contracts require the next minor
