@@ -84,7 +84,8 @@ mcp "remote" {
 
 The `oauth` block requires `client-id` and an exact loopback HTTP
 `redirect-uri` with an explicit port; `client-secret` is optional and accepts
-the existing literal or `(secret)"env://NAME"` value. Dynamic registration
+a literal or a configured secret reference such as `(secret)"env://NAME"` or
+`(secret)"age://NAME"`. Dynamic registration
 binds an ephemeral `127.0.0.1` callback. Loopback redirects may use
 `127.0.0.1`, `::1`, or `localhost`, but may not contain user information or a
 fragment.

@@ -47,12 +47,12 @@ func TestTrustedDiscoveryOrderAndBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	global := filepath.Join(configHome, "wirecmd", "config.kdl")
-	rootConfig := filepath.Join(workspace, projectConfig)
-	nearConfig := filepath.Join(workspace, "a", projectConfig)
+	rootConfig := projectConfigPath(workspace)
+	nearConfig := projectConfigPath(filepath.Join(workspace, "a"))
 	writeFile(t, global)
 	writeFile(t, rootConfig)
 	writeFile(t, nearConfig)
-	writeFile(t, filepath.Join(filepath.Dir(workspace), projectConfig)) // outside the trust boundary
+	writeFile(t, projectConfigPath(filepath.Dir(workspace))) // outside the trust boundary
 
 	canonicalWorkspace := canonicalTestPath(t, workspace)
 	canonicalChild := canonicalTestPath(t, child)
@@ -86,13 +86,13 @@ func TestUntrustedAndNotFound(t *testing.T) {
 	if err := os.Mkdir(child, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, filepath.Join(workspace, projectConfig))
+	writeFile(t, projectConfigPath(workspace))
 	_, err := Paths(child)
 	var untrusted *UntrustedError
 	if !errors.As(err, &untrusted) || untrusted.Workspace != canonicalTestPath(t, workspace) {
 		t.Fatalf("Paths() error = %#v", err)
 	}
-	if err := os.Remove(filepath.Join(workspace, projectConfig)); err != nil {
+	if err := os.Remove(projectConfigPath(workspace)); err != nil {
 		t.Fatal(err)
 	}
 	_, err = Paths(child)
@@ -114,7 +114,10 @@ func TestUntrustAndDiscoveredSymlinkRejection(t *testing.T) {
 	}
 	target := filepath.Join(t.TempDir(), "target.kdl")
 	writeFile(t, target)
-	if err := os.Symlink(target, filepath.Join(workspace, projectConfig)); err != nil {
+	if err := os.MkdirAll(filepath.Dir(projectConfigPath(workspace)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, projectConfigPath(workspace)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Paths(workspace); err == nil {
@@ -213,8 +216,8 @@ func TestNearestNestedTrustRootWins(t *testing.T) {
 	if err := os.MkdirAll(child, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	outerConfig := filepath.Join(outer, projectConfig)
-	nestedConfig := filepath.Join(nested, projectConfig)
+	outerConfig := projectConfigPath(outer)
+	nestedConfig := projectConfigPath(nested)
 	writeFile(t, outerConfig)
 	writeFile(t, nestedConfig)
 	if _, err := Trust(outer); err != nil {
@@ -226,6 +229,146 @@ func TestNearestNestedTrustRootWins(t *testing.T) {
 	paths, err := Paths(child)
 	if err != nil || !reflect.DeepEqual(paths, []string{canonicalTestPath(t, nestedConfig)}) {
 		t.Fatalf("nested Paths() = %#v, %v", paths, err)
+	}
+}
+
+func TestLegacyTopLevelConfigIsIgnored(t *testing.T) {
+	testEnvironment(t)
+	workspace := t.TempDir()
+	legacy := filepath.Join(workspace, "wirecmd.kdl")
+	writeFile(t, legacy)
+
+	paths, err := Paths(workspace)
+	var notFound *NotFoundError
+	if !errors.As(err, &notFound) || paths != nil {
+		t.Fatalf("Paths() = %#v, %v; want ordinary not found", paths, err)
+	}
+
+	if _, err := Trust(workspace); err != nil {
+		t.Fatal(err)
+	}
+	paths, err = Paths(workspace)
+	if !errors.As(err, &notFound) || paths != nil {
+		t.Fatalf("trusted Paths() = %#v, %v; want ordinary not found", paths, err)
+	}
+}
+
+func TestAutomaticSecretStoreCandidatesIncludeMissingPathsNearestFirst(t *testing.T) {
+	configHome, _ := testEnvironment(t)
+	workspace := t.TempDir()
+	child := filepath.Join(workspace, "a", "b")
+	if err := os.MkdirAll(child, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Trust(workspace); err != nil {
+		t.Fatal(err)
+	}
+	canonicalChild, err := canonicalDirectory(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalWorkspace, err := canonicalDirectory(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := SecretStoreCandidates(child, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		filepath.Join(canonicalChild, projectConfigDirectory, projectSecrets),
+		filepath.Join(canonicalWorkspace, "a", projectConfigDirectory, projectSecrets),
+		filepath.Join(canonicalWorkspace, projectConfigDirectory, projectSecrets),
+		filepath.Join(configHome, "wirecmd", projectSecrets),
+	}
+	if !reflect.DeepEqual(candidates, want) {
+		t.Fatalf("SecretStoreCandidates() = %#v, want %#v", candidates, want)
+	}
+	for _, candidate := range candidates {
+		if !filepath.IsAbs(candidate) || filepath.Clean(candidate) != candidate {
+			t.Fatalf("candidate %q is not absolute and clean", candidate)
+		}
+		if _, err := os.Lstat(candidate); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("candidate %q should be returned while missing: %v", candidate, err)
+		}
+	}
+}
+
+func TestAutomaticSecretStoreCandidatesUseNearestTrustedRoot(t *testing.T) {
+	configHome, _ := testEnvironment(t)
+	outer := t.TempDir()
+	nested := filepath.Join(outer, "nested")
+	child := filepath.Join(nested, "child")
+	if err := os.MkdirAll(child, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Trust(outer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Trust(nested); err != nil {
+		t.Fatal(err)
+	}
+	canonicalChild, err := canonicalDirectory(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalNested, err := canonicalDirectory(nested)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := SecretStoreCandidates(child, nil, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		filepath.Join(canonicalChild, projectConfigDirectory, projectSecrets),
+		filepath.Join(canonicalNested, projectConfigDirectory, projectSecrets),
+		filepath.Join(configHome, "wirecmd", projectSecrets),
+	}
+	if !reflect.DeepEqual(candidates, want) {
+		t.Fatalf("SecretStoreCandidates() = %#v, want %#v", candidates, want)
+	}
+}
+
+func TestAutomaticSecretStoreCandidatesWithoutTrustUseGlobalOnly(t *testing.T) {
+	configHome, _ := testEnvironment(t)
+	workspace := t.TempDir()
+
+	candidates, err := SecretStoreCandidates(workspace, []string{projectConfigPath(workspace)}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{filepath.Join(configHome, "wirecmd", projectSecrets)}
+	if !reflect.DeepEqual(candidates, want) {
+		t.Fatalf("SecretStoreCandidates() = %#v, want %#v", candidates, want)
+	}
+}
+
+func TestExplicitSecretStoreCandidatesReverseConfigPrecedenceAndDeduplicate(t *testing.T) {
+	configHome, stateHome := testEnvironment(t)
+	project := t.TempDir()
+	globalConfig := filepath.Join(configHome, "wirecmd", projectConfig)
+	projectConfig := filepath.Join(project, ".wirecmd", projectConfig)
+	secondProjectConfig := filepath.Join(project, ".wirecmd", "extra.kdl")
+	if err := os.MkdirAll(filepath.Join(stateHome, "wirecmd"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateHome, "wirecmd", "trust.json"), []byte("not JSON"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	candidates, err := SecretStoreCandidates(project, []string{globalConfig, projectConfig, secondProjectConfig}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		filepath.Join(project, ".wirecmd", projectSecrets),
+		filepath.Join(configHome, "wirecmd", projectSecrets),
+	}
+	if !reflect.DeepEqual(candidates, want) {
+		t.Fatalf("SecretStoreCandidates() = %#v, want %#v", candidates, want)
 	}
 }
 

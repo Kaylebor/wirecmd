@@ -74,6 +74,12 @@ Service on Linux or Keychain on macOS. Interactive browser authorization uses
 storage remains an explicit structured user-action failure; there is no
 plaintext fallback.
 
+Configurations that select `age://` values additionally require `age` 1.3.0 or
+newer on `PATH` and at least one configured absolute identity path. Age is not
+a general runtime prerequisite for configurations that do not select it. A
+hardware identity may request local authorization during decryption even when
+`WIRECMD_NONINTERACTIVE=1`; see the [age secrets plan](age-secrets-plan.md).
+
 ## Qualification gates
 
 CI runs on Linux, macOS Apple Silicon, and macOS Intel for pull requests,
@@ -90,6 +96,13 @@ go vet ./...
 go build ./...
 git diff --check
 ```
+
+For a release that includes age-backed secrets, additionally qualify a
+non-secret sentinel store in direct and daemon-backed modes on Linux with the
+maintainer's TPM identity and on a physical Apple Silicon Mac with the Secure
+Enclave identity. Record first-start prompting, unchanged retained reuse,
+reload, direct execution, and cancellation. The physical Mac result is a
+release gate for that feature.
 
 ## Manual release procedure
 

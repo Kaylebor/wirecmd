@@ -278,7 +278,7 @@ Usage:
   wirecmd [--format auto|json|pretty] [--color auto|always|never] config trust [PATH]
 
 PATH defaults to the current directory. Trust is recursive, so it permits
-future wirecmd.kdl changes below that root. This records local Wirecmd security
+future .wirecmd/config.kdl changes below that root. This records local Wirecmd security
 state; it neither loads project configuration nor starts the daemon.
 `
 		case "untrust":
@@ -299,7 +299,7 @@ Usage:
 
 PATH defaults to the current directory. Reports the resolved workspace, whether
 it is trusted, and the nearest trust root when one applies. It does not load
-wirecmd.kdl or contact the daemon.
+.wirecmd/config.kdl or contact the daemon.
 `
 		case "list":
 			return `List trusted workspace roots.

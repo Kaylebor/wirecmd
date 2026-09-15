@@ -22,9 +22,11 @@ http "https://example.test/mcp" {
 ```
 
 Values are literal strings unless they use the native KDL `(secret)` annotation.
-The initial secret provider is `env://NAME`; the resolved value is the complete
-destination value. Authorization prefixes are not inferred or composed, so an
-`AUTHORIZATION` value must already contain its scheme and credentials.
+This completed slice originally qualified `env://NAME`; the current secret
+surface also accepts `age://NAME` under the [age secrets plan](age-secrets-plan.md).
+The resolved value is the complete destination value. Authorization prefixes
+are not inferred or composed, so an `AUTHORIZATION` value must already contain
+its scheme and credentials.
 
 Query names are case-sensitive. Header names are case-insensitive for duplicate
 detection, overlay matching, and validation, while their configured spelling is
@@ -48,10 +50,11 @@ transport.
 
 ## Resolution, safety, and identity
 
-Only the selected server's secret references are resolved. Listing, help, and
-other operations that do not execute a server do not resolve unselected
-secrets. Missing references produce the structured `secret_not_available`
-condition; present-empty values are not treated as missing.
+Only the selected server's secret references are resolved. `env://NAME` and
+`age://NAME` are both valid secret schemes. Listing, help, and other operations
+that do not execute a server do not resolve unselected secrets. Missing
+references produce the structured `secret_not_available` condition;
+present-empty values are not treated as missing.
 
 Resolved values are validated as UTF-8 text. Header names must be valid HTTP
 tokens, header values must reject CR/LF, and transport-owned headers are
@@ -76,8 +79,8 @@ HTTP session behavior.
 
 ## Acceptance record
 
-- KDL parses and composes literal and `(secret)"env://..."` query/header values
-  with stable order and source provenance.
+- KDL parses and composes literal and provider-qualified secret query/header
+  values with stable order and source provenance.
 - Endpoint query encoding, existing-URL overrides, empty values, header
   case-insensitivity, invalid names/values, and reserved-header rejection are
   deterministic.

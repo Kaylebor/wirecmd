@@ -205,7 +205,11 @@ func TestLSPDefinitionUsesTrustedWorkspaceComposition(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeSource(t, global, "wirecmd {\nlsp \"fixture\" {\nselector language-id=\"fixture\"\n}\n}\n")
-	writeSource(t, filepath.Join(workspace, "wirecmd.kdl"), fmt.Sprintf("wirecmd {\nroot \".\"\nlsp \"fixture\" {\nstdio %s {\narg \"-test.run=TestCLILSPHelperProcess\"\n}\n}\n}\n", strconv.Quote(os.Args[0])))
+	workspaceConfig := filepath.Join(workspace, ".wirecmd", "config.kdl")
+	if err := os.MkdirAll(filepath.Dir(workspaceConfig), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeSource(t, workspaceConfig, fmt.Sprintf("wirecmd {\nroot \"..\"\nlsp \"fixture\" {\nstdio %s {\narg \"-test.run=TestCLILSPHelperProcess\"\n}\n}\n}\n", strconv.Quote(os.Args[0])))
 	alias := filepath.Join(t.TempDir(), "workspace-alias")
 	if err := os.Symlink(workspace, alias); err != nil {
 		t.Fatal(err)

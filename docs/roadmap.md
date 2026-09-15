@@ -1,7 +1,7 @@
 # Current Roadmap
 
-Status: authoritative current-state handoff after v0.3.1; future items are a
-decision queue, not accepted implementation milestones
+Status: authoritative current-state handoff; v0.4.0 age-secret work is an
+accepted milestone, while later items remain a decision queue
 
 ## Purpose
 
@@ -14,14 +14,16 @@ unspecified design or commit the project to every candidate.
 The governing documents are the [product thesis](product-thesis.md),
 [LSP plan](lsp-plan.md), [MCP compatibility plan](compatibility-plan.md),
 [MCP resources plan](resources-plan.md),
+[age secrets plan](age-secrets-plan.md),
 [release-readiness contract](release-readiness.md), and
 [macOS qualification plan](macos-plan.md). `AGENTS.md` is the complete index of
 authoritative milestone documents and their precedence.
 
 ## Current baseline
 
-Wirecmd v0.3.1 is a shell-native capability client and local daemon. MCP is its
-first upstream adapter rather than the harness-facing abstraction. The shipped
+Wirecmd v0.3.1 is the current stable baseline; current main prepares v0.4.0.
+Wirecmd is a shell-native capability client and local daemon. MCP is its first
+upstream adapter rather than the harness-facing abstraction. The baseline
 surface includes:
 
 - explicit `wirecmd mcp` discovery, focused help, projected and exact-JSON tool
@@ -43,6 +45,16 @@ deferred.
 Normal operations remain daemon-backed and must fail clearly when the daemon is
 offline. `--direct` is the explicit one-shot path. SDK protocol types and MCP
 revision details must not leak into the public semantic command/result contract.
+
+## Accepted v0.4.0 milestone
+
+Age-backed secret resolution adds the fixed `age` CLI as an optional internal
+provider beside `env`. It reads encrypted stores only for selected operations,
+supports user-managed TPM and Secure Enclave identities, and keeps only
+metadata needed to reuse retained daemon instances. Workspace discovery uses
+`.wirecmd/config.kdl` and `.wirecmd/secrets.json.age`; the former top-level
+workspace filename is not part of discovery. The exact contract and
+qualification requirements are in the [age secrets plan](age-secrets-plan.md).
 
 ## Decision queue
 
@@ -106,7 +118,9 @@ that survives daemon restarts and refreshes on reload only through a new
 accepted contract. Bash/Zsh completion, service-manager integration, binary
 archives, package-manager distribution, Windows support, advanced OAuth modes,
 language-server catalogs, unsaved editor buffers, and file watching remain
-deferred unless promoted through a separate plan.
+deferred unless promoted through a separate plan. Arbitrary secret-provider
+commands, provider plugins, secret-file templating, and inherited-environment
+hardening are also deferred.
 
 ## Working rule
 

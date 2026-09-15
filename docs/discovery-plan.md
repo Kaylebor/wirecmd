@@ -24,8 +24,8 @@ When no `--config` option is present, the CLI builds an ordered source list:
 
 1. `$XDG_CONFIG_HOME/wirecmd/config.kdl` when `XDG_CONFIG_HOME` is absolute;
    otherwise `~/.config/wirecmd/config.kdl`;
-2. project `wirecmd.kdl` files from the nearest trusted workspace root down to
-   the caller's current directory.
+2. project `.wirecmd/config.kdl` files from the nearest trusted workspace root
+   down to the caller's current directory.
 
 The global source is weakest. Workspace sources are ordered from broadest to
 nearest, so later files override earlier files through the existing effective
@@ -45,6 +45,11 @@ project files must be regular, non-symlink files.
 Any repeated `--config PATH` options replace discovery completely. Their
 absolute paths are passed to the existing ordered `LoadEffective` composition,
 and trust checks do not apply to explicitly selected files.
+
+The automatic workspace filename is fixed. Discovery neither probes a
+top-level `wirecmd.kdl` nor provides a compatibility fallback or migration
+output for it. Age-store discovery is specified separately in the
+[age secrets plan](age-secrets-plan.md).
 
 ## Trust administration
 

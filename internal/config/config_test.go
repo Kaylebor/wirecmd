@@ -292,9 +292,12 @@ func TestLoadEffectiveUsesOrderedPathsAndIdentifiesFailures(t *testing.T) {
 func TestDiscoveredWorkspaceLoadRejectsSymlinkWithoutChangingExplicitLoad(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target.kdl")
-	link := filepath.Join(dir, "wirecmd.kdl")
+	link := filepath.Join(dir, ".wirecmd", "config.kdl")
 	source := `wirecmd { mcp "helper" { scope "workspace"; stdio "helper" } }`
 	if err := os.WriteFile(target, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, link); err != nil {
@@ -309,7 +312,10 @@ func TestDiscoveredWorkspaceLoadRejectsSymlinkWithoutChangingExplicitLoad(t *tes
 }
 
 func TestDiscoveredWorkspaceLoadRejectsFIFO(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "wirecmd.kdl")
+	path := filepath.Join(t.TempDir(), ".wirecmd", "config.kdl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := syscall.Mkfifo(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -800,8 +806,9 @@ func TestParseSecretReferences(t *testing.T) {
 		want  string
 	}{
 		{name: "unknown annotation", value: `(runtime)"TOKEN"`, want: "unsupported value annotation"},
-		{name: "unqualified secret", value: `(secret)"TOKEN"`, want: "secret reference must be env://NAME"},
-		{name: "empty environment name", value: `(secret)"env://"`, want: "secret reference must be env://NAME"},
+		{name: "unqualified secret", value: `(secret)"TOKEN"`, want: "secret reference must use SCHEME://LOCATOR"},
+		{name: "empty locator", value: `(secret)"env://"`, want: "secret reference must use SCHEME://LOCATOR"},
+		{name: "invalid scheme", value: `(secret)"1age://TOKEN"`, want: "secret reference must use SCHEME://LOCATOR"},
 		{name: "secret command", value: `(secret)"env://COMMAND"`, want: "value annotation"},
 	}
 	for _, test := range tests {
@@ -820,23 +827,87 @@ func TestParseSecretReferences(t *testing.T) {
 	}
 }
 
-func TestResolveEnvDistinguishesMissingAndEmpty(t *testing.T) {
-	secret := Value{Kind: ValueSecretReference, Text: "env://TOKEN", Provenance: Provenance{Path: `wirecmd.mcp["memory"].stdio.env["TOKEN"]`}}
-	empty, err := secret.ResolveEnv(func(name string) (string, bool) {
-		if name != "TOKEN" {
-			t.Fatalf("lookup name = %q", name)
-		}
-		return "", true
-	})
+func TestParseAcceptsProviderQualifiedSecretReferences(t *testing.T) {
+	source, err := ParseString("test.kdl", `wirecmd { mcp "memory" { stdio "memory" { env TOKEN=(secret)"AgE://project.token" } } }`)
 	if err != nil {
-		t.Fatalf("ResolveEnv(empty) error = %v", err)
+		t.Fatalf("ParseString() error = %v", err)
 	}
-	if empty.Text != "" || !empty.Sensitive {
-		t.Fatalf("ResolveEnv(empty) = %#v", empty)
+	value := source.Servers[0].Stdio.Env[0].Value
+	if value.Kind != ValueSecretReference || value.Text != "AgE://project.token" {
+		t.Fatalf("parsed secret = %#v", value)
 	}
-	_, err = secret.ResolveEnv(func(string) (string, bool) { return "", false })
-	if err == nil || !strings.Contains(err.Error(), "is not set") {
-		t.Fatalf("ResolveEnv(missing) error = %v", err)
+}
+
+func TestComposeAgeIdentitiesReplaceOnlyWithNonEmptyStrongerList(t *testing.T) {
+	global, err := ParseString("global.kdl", `wirecmd {
+        secrets { age { identity "/global/first"; identity "/global/second"; } }
+        mcp "memory" { stdio "memory" }
+    }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyWorkspace, err := ParseString("empty-workspace.kdl", `wirecmd { secrets { age } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := Compose(global, emptyWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := identityPaths(config.Secrets.Age.Identities), []string{"/global/first", "/global/second"}; !sameStrings(got, want) {
+		t.Fatalf("empty workspace identities = %#v, want %#v", got, want)
+	}
+
+	workspace, err := ParseString("workspace.kdl", `wirecmd { secrets { age { identity "/workspace/identity" } } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err = Compose(global, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Secrets.Age == nil || config.Secrets.Age.Provenance != (Provenance{File: "workspace.kdl", Path: "wirecmd.secrets.age"}) {
+		t.Fatalf("age configuration = %#v", config.Secrets.Age)
+	}
+	if got, want := identityPaths(config.Secrets.Age.Identities), []string{"/workspace/identity"}; !sameStrings(got, want) {
+		t.Fatalf("workspace identities = %#v, want %#v", got, want)
+	}
+	if got := config.Secrets.Age.Identities[0].Provenance; got != (Provenance{File: "workspace.kdl", Path: "wirecmd.secrets.age.identity[0]"}) {
+		t.Fatalf("identity provenance = %#v", got)
+	}
+}
+
+func TestComposeValidatesEffectiveAgeIdentities(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "empty", source: `wirecmd { secrets { age { identity "" } }; mcp "memory" { stdio "memory" } }`, want: "identity path must not be empty"},
+		{name: "relative", source: `wirecmd { secrets { age { identity "relative.identity" } }; mcp "memory" { stdio "memory" } }`, want: "identity path must be absolute"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source, err := ParseString("test.kdl", test.source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Compose(source); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("Compose() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+
+	weaker, err := ParseString("weaker.kdl", `wirecmd { secrets { age { identity "relative.identity" } }; mcp "memory" { stdio "memory" } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stronger, err := ParseString("stronger.kdl", `wirecmd { secrets { age { identity "/valid/identity" } } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Compose(weaker, stronger); err != nil {
+		t.Fatalf("Compose() with override error = %v", err)
 	}
 }
 
@@ -851,6 +922,14 @@ func valueTexts(values []Value) []string {
 	result := make([]string, len(values))
 	for i, value := range values {
 		result[i] = value.Text
+	}
+	return result
+}
+
+func identityPaths(values []AgeIdentity) []string {
+	result := make([]string, len(values))
+	for i, value := range values {
+		result[i] = value.Path
 	}
 	return result
 }

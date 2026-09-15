@@ -1,6 +1,6 @@
 ---
 name: wirecmd
-description: Discover and compose Wirecmd capabilities from the shell, including trusted workspace configuration, focused help, native LSP navigation and inspection, projected arguments, lossless JSON calls, and transparent OAuth-backed HTTP servers.
+description: Discover and compose Wirecmd capabilities from the shell, including trusted workspace configuration, age-backed secrets, focused help, native LSP navigation and inspection, projected arguments, lossless JSON calls, and transparent OAuth-backed HTTP servers.
 ---
 
 # Wirecmd
@@ -30,10 +30,10 @@ guessing administrative syntax. Do not replace a user's daemon without approval.
 
 When `--config` is omitted, Wirecmd loads the global KDL file at
 an absolute `$XDG_CONFIG_HOME/wirecmd/config.kdl`, falling back to
-`~/.config/wirecmd/config.kdl`, then composes trusted workspace `wirecmd.kdl`
-files from the trusted root to the current directory. Repeated `--config PATH`
-options replace discovery completely and preserve their weakest-to-strongest
-order.
+`~/.config/wirecmd/config.kdl`, then composes trusted workspace
+`.wirecmd/config.kdl` files from the trusted root to the current directory.
+Repeated `--config PATH` options replace discovery completely and preserve
+their weakest-to-strongest order; explicit files can use any filename.
 
 Manage trust explicitly when a workspace is not yet approved:
 
@@ -131,25 +131,29 @@ Streamable HTTP endpoints can declare structural query and header values:
 ```kdl
 http "https://example.test/mcp" {
     query tenant="acme"
-    query token=(secret)"env://API_TOKEN"
-    header X-API-Key=(secret)"env://API_KEY"
+    query token=(secret)"age://API_TOKEN"
+    header X-API-Key=(secret)"age://API_KEY"
     header Authorization=(secret)"env://AUTHORIZATION"
 }
 ```
 
-Unannotated values are literals. `(secret)"env://NAME"` reads an environment
-value when the selected server is executed. Query names are case-sensitive;
-header names are case-insensitive. A stronger source replaces a matching key
-without moving it and appends new keys. Existing endpoint query parameters are
-preserved unless a structural query entry has the same key. The
-`Authorization` value is complete, for example `Bearer ...`. Templates and
-dynamic per-request headers are not part of this slice. HTTP and MCP
-transport-owned headers are reserved and rejected; see the [HTTP values
-plan](../../docs/http-values-plan.md) for the complete list.
+Unannotated values are literals. Secret references use either
+`(secret)"env://NAME"` or `(secret)"age://NAME"`. `env` reads the invoking
+CLI environment; `age` reads the configured encrypted store only when the
+selected server executes. Query names are case-sensitive; header names are
+case-insensitive. A stronger source replaces a matching key without moving it
+and appends new keys. Existing endpoint query parameters are preserved unless a
+structural query entry has the same key. The `Authorization` value is complete,
+for example `Bearer ...`. Templates and dynamic per-request headers are not
+part of this slice. HTTP and MCP transport-owned headers are reserved and
+rejected; see the [HTTP values plan](../../docs/http-values-plan.md) for the
+complete list.
 
-Listing and help do not resolve secrets for unselected servers. In daemon mode,
-resolved startup credentials distinguish retained instances, so one server
-definition cannot reuse an instance started with different credentials.
+Listing, completion, and LSP status do no secret work. In daemon mode, resolved
+startup credentials distinguish retained instances, so one server definition
+cannot reuse an instance started with different credentials. See [age
+secrets](../../docs/age-secrets-plan.md) for encrypted-store discovery,
+hardware prompts, and the threat boundary.
 
 ## Authenticate protected HTTP servers
 
@@ -162,7 +166,7 @@ one:
 http "https://example.test/mcp" {
     oauth {
         client-id "wirecmd-client"
-        client-secret (secret)"env://OAUTH_CLIENT_SECRET"
+        client-secret (secret)"age://OAUTH_CLIENT_SECRET"
         redirect-uri "http://127.0.0.1:8765/callback"
     }
 }
@@ -187,8 +191,9 @@ sessions. OAuth URLs and browser diagnostics go to stderr, never stdout.
 
 When stdin and stderr are TTYs, an ordinary protected call may open a browser
 and wait for authorization. Set `WIRECMD_NONINTERACTIVE=1` for scripts, CI,
-and other callers that must receive `authorization_required` instead. Explicit
-login also requires a local interactive terminal.
+and other callers that must receive `authorization_required` instead. This does
+not suppress local hardware authorization needed by a selected `age://` value.
+Explicit login also requires a local interactive terminal.
 
 Wirecmd stores encrypted OAuth state using a random master key held by the
 native keyring through `go-keyring`; there is no plaintext fallback. The MCP
@@ -275,10 +280,11 @@ wirecmd --config PATH mcp SERVER '{"tool":"TOOL","arguments":{"query":"text"}}'
 Pipe ordinary JSON results through standard shell tools when it makes the next
 step clearer. Calls are non-interactive unless both stdin and stderr are TTYs
 and `WIRECMD_NONINTERACTIVE` is not `1`; in that interactive case protected
-HTTP calls may open a browser for OAuth. Inspect the structured error envelope
-and exit status when one fails; its category, code, and action indicate
-whether to correct invocation, configuration, authentication, transport, or an
-upstream tool failure.
+HTTP calls may open a browser for OAuth. A selected hardware-backed `age://`
+value may separately request local authorization. Inspect the structured error
+envelope and exit status when one fails; its category, code, and action
+indicate whether to correct invocation, configuration, authentication,
+transport, or an upstream tool failure.
 
 Normal calls require the local daemon. Use `--direct` only for deliberate
 one-shot testing or diagnostics; it does not retain server state between

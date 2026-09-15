@@ -252,7 +252,7 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 			case errors.As(err, &untrusted):
 				return nil, userActionError("workspace_untrusted", err.Error(), "run wirecmd config trust "+shellQuote(untrusted.Workspace))
 			case errors.As(err, &notFound):
-				return nil, configurationError("config_not_found", err.Error(), "create a global or workspace wirecmd.kdl, or supply --config PATH")
+				return nil, configurationError("config_not_found", err.Error(), "create a global config.kdl or trusted workspace .wirecmd/config.kdl, or supply --config PATH")
 			default:
 				return nil, configurationError("config_discovery_failed", err.Error(), "check Wirecmd configuration and trust state")
 			}
@@ -292,6 +292,11 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	if !ok {
 		return nil, configurationError("server_not_found", fmt.Sprintf("configured server %q was not found", req.server), "list configured servers and choose one by name")
 	}
+	selectedValues := serverSecretValues(server)
+	secretStores, storesErr := selectedSecretStores(cwd, configPaths, discovered, selectedValues)
+	if storesErr != nil {
+		return nil, storesErr
+	}
 	if isAuthAdmin {
 		if server.HTTP == nil || server.HTTP.Kind == config.HTTPTransportSSE || hasAuthorizationHeader(*server.HTTP) {
 			return nil, authServerError(server)
@@ -299,17 +304,23 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		secrets := selectedSecretInputs(server, os.LookupEnv)
 		if !opts.direct {
 			daemonRequest := daemonRequestFromConfig(req, cfg, cwd, configPaths, discovered, secrets)
+			daemonRequest.SecretStores = secretStores
 			daemonRequest.Auth = authAdmin.command
 			daemonRequest.Interactive = isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
 			daemonClient.event = browserEventHandler(errOut, daemonEventRedactor(server, secrets, errOut))
 			result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequest, errOut)
 			return result, appErr
 		}
-		return runDirectAuth(ctx, authAdmin, server, cfg.Root, cwd, in, errOut)
+		resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, nil, selectedValues, os.LookupEnv)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		return runDirectAuth(ctx, authAdmin, server, cfg.Root, cwd, resolved.lookup, in, errOut)
 	}
 	if !opts.direct {
 		secrets := selectedSecretInputs(server, os.LookupEnv)
 		daemonRequest := daemonRequestFromConfig(req, cfg, cwd, configPaths, discovered, secrets)
+		daemonRequest.SecretStores = secretStores
 		daemonRequest.Interactive = isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
 		daemonClient.event = browserEventHandler(errOut, daemonEventRedactor(server, secrets, errOut))
 		result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequest, errOut)
@@ -322,7 +333,11 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		return result, nil
 	}
 
-	target, secrets, targetErr := makeTarget(server, cfg.Root, cwd, os.LookupEnv)
+	resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, nil, selectedValues, os.LookupEnv)
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
+	target, secrets, targetErr := makeTarget(server, cfg.Root, cwd, resolved.lookup)
 	if targetErr != nil {
 		return nil, targetErr
 	}
@@ -331,7 +346,7 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	if server.HTTP != nil && server.HTTP.Kind != config.HTTPTransportSSE {
 		interactive := isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
 		var oauthSecrets []string
-		target, oauthSecrets, targetErr = attachOAuth(target, server.Name, *server.HTTP, os.LookupEnv, interactive, false, browserEventHandler(errOut, redactor))
+		target, oauthSecrets, targetErr = attachOAuth(target, server.Name, *server.HTTP, resolved.lookup, interactive, false, browserEventHandler(errOut, redactor))
 		if targetErr != nil {
 			return nil, targetErr
 		}
@@ -982,9 +997,9 @@ func makeHTTPTarget(transport config.HTTP, lookup func(string) (string, bool)) (
 	}
 	secrets := make([]string, 0, len(transport.Query)+len(transport.Headers))
 	resolve := func(value config.Value) (config.ResolvedValue, *appError) {
-		resolved, err := value.ResolveEnv(lookup)
+		resolved, err := resolveConfiguredValue(value, lookup)
 		if err != nil {
-			return config.ResolvedValue{}, configurationError("secret_not_available", err.Error(), "set the required environment variable before invoking Wirecmd")
+			return config.ResolvedValue{}, configurationError("secret_not_available", err.Error(), "provide the required configured secret before invoking Wirecmd")
 		}
 		if !utf8.ValidString(resolved.Text) {
 			return config.ResolvedValue{}, configurationError("invalid_http_value", "HTTP query and header values must be valid UTF-8", "correct the configured or resolved HTTP value")
@@ -1087,9 +1102,9 @@ func makeStdioCommand(stdio config.Stdio, root *config.Root, callerCWD string, l
 	arguments := make([]string, 0, len(stdio.Args))
 	secrets := make([]string, 0, len(stdio.Env)+len(stdio.Args))
 	for _, arg := range stdio.Args {
-		value, err := arg.ResolveEnv(lookup)
+		value, err := resolveConfiguredValue(arg, lookup)
 		if err != nil {
-			return nil, nil, configurationError("secret_not_available", err.Error(), "set the required environment variable before invoking Wirecmd")
+			return nil, nil, configurationError("secret_not_available", err.Error(), "provide the required configured secret before invoking Wirecmd")
 		}
 		arguments = append(arguments, value.Text)
 		if value.Sensitive && value.Text != "" {
@@ -1098,9 +1113,9 @@ func makeStdioCommand(stdio config.Stdio, root *config.Root, callerCWD string, l
 	}
 	env := os.Environ()
 	for _, assignment := range stdio.Env {
-		value, err := assignment.Value.ResolveEnv(lookup)
+		value, err := resolveConfiguredValue(assignment.Value, lookup)
 		if err != nil {
-			return nil, nil, configurationError("secret_not_available", err.Error(), "set the required environment variable before invoking Wirecmd")
+			return nil, nil, configurationError("secret_not_available", err.Error(), "provide the required configured secret before invoking Wirecmd")
 		}
 		env = replaceEnvironment(env, assignment.Name, value.Text)
 		if value.Sensitive && value.Text != "" {

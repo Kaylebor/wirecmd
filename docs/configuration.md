@@ -11,18 +11,24 @@ security boundaries.
 wirecmd {
     root "."
 
+    secrets {
+        age {
+            identity "/absolute/path/to/hardware-backed.identity"
+        }
+    }
+
     mcp "local" {
         stdio "local-mcp-server" {
             arg "--stdio"
             env LOG_LEVEL="warn"
-            env API_TOKEN=(secret)"env://LOCAL_MCP_TOKEN"
+            env API_TOKEN=(secret)"age://LOCAL_MCP_TOKEN"
         }
     }
 
     mcp "remote" {
         http "https://example.test/mcp" {
             query tenant="example"
-            header X-API-Key=(secret)"env://REMOTE_API_KEY"
+            header X-API-Key=(secret)"age://REMOTE_API_KEY"
         }
     }
 
@@ -52,8 +58,8 @@ Without `--config`, Wirecmd composes these files from weakest to strongest:
 1. `$XDG_CONFIG_HOME/wirecmd/config.kdl`, or
    `~/.config/wirecmd/config.kdl` when `XDG_CONFIG_HOME` is unset or not
    absolute;
-2. `wirecmd.kdl` files from the nearest trusted workspace root down to the
-   caller's current directory.
+2. `.wirecmd/config.kdl` files from the nearest trusted workspace root down to
+   the caller's current directory.
 
 Trust a workspace before its discovered configuration can execute commands:
 
@@ -75,6 +81,8 @@ wirecmd --config /path/to/base.kdl --config ./local.kdl mcp
 
 Paths are composed in command-line order, weakest first. After changing an
 effective configuration used by the daemon, run `wirecmd daemon reload`.
+An explicit path may have any filename; only automatic workspace discovery uses
+the `.wirecmd/config.kdl` name.
 
 ## Root and workspace behavior
 
@@ -103,19 +111,20 @@ transport. The name is the `SERVER` used by `wirecmd mcp SERVER ...`.
 mcp "local" {
     stdio "executable" {
         arg "first-argument"
-        arg (secret)"env://SECRET_ARGUMENT"
+        arg (secret)"age://SECRET_ARGUMENT"
         env MODE="local"
-        env TOKEN=(secret)"env://SERVER_TOKEN"
+        env TOKEN=(secret)"age://SERVER_TOKEN"
     }
 }
 ```
 
 In direct mode, the child inherits the invoking CLI process environment. In
 daemon-backed mode, it inherits the environment from when the daemon was
-started. Configured `env` entries are then applied; secret references are
-resolved for each call and forwarded to the daemon. A present-but-empty value
-remains distinct from an absent value. Arguments retain their configured
-order. The same inheritance boundary applies to LSP stdio processes.
+started. Configured `env` entries are then applied. The CLI supplies selected
+`env://` values privately to the daemon, while the daemon resolves selected
+`age://` values locally. A present-but-empty value remains distinct from an
+absent value. Arguments retain their configured order. The same inheritance
+boundary applies to LSP stdio processes.
 
 ### Streamable HTTP
 
@@ -123,8 +132,8 @@ order. The same inheritance boundary applies to LSP stdio processes.
 mcp "remote" {
     http "https://example.test/mcp?existing=value" {
         query tenant="acme"
-        query token=(secret)"env://QUERY_TOKEN"
-        header X-API-Key=(secret)"env://API_KEY"
+        query token=(secret)"age://QUERY_TOKEN"
+        header X-API-Key=(secret)"age://API_KEY"
         header Authorization=(secret)"env://AUTHORIZATION"
     }
 }
@@ -146,7 +155,7 @@ mcp "remote" {
     http "https://example.test/mcp" {
         oauth {
             client-id "wirecmd-client"
-            client-secret (secret)"env://OAUTH_CLIENT_SECRET"
+            client-secret (secret)"age://OAUTH_CLIENT_SECRET"
             redirect-uri "http://127.0.0.1:8765/callback"
         }
     }
@@ -165,7 +174,7 @@ mutually exclusive.
 mcp "legacy" {
     sse "https://example.test/sse" {
         query tenant="acme"
-        header Authorization=(secret)"env://LEGACY_AUTHORIZATION"
+        header Authorization=(secret)"age://LEGACY_AUTHORIZATION"
     }
 }
 ```
@@ -209,11 +218,34 @@ env PUBLIC_MODE="development"
 env ACCESS_TOKEN=(secret)"env://ACCESS_TOKEN"
 ```
 
-`env://NAME` is the only implemented secret provider. Only references needed
-by the selected MCP or LSP definition are resolved. An unset variable is an
-error; a variable set to an empty string is present. Resolved values are
-redacted from Wirecmd-controlled output and never included as plaintext in
-configuration fingerprints.
+Wirecmd has two built-in secret schemes: `env://NAME` and `age://NAME`. The
+scheme name is case-insensitive; `age` names must match
+`[A-Za-z_][A-Za-z0-9_.-]*`. `env://NAME` reads only the invoking CLI
+environment, preserving the distinction between an unset and an empty value.
+`age://NAME` resolves from encrypted stores described below. Only references
+needed by the selected MCP or LSP definition are resolved; static listing,
+completion, and LSP status do no secret discovery or resolution. Resolved
+values are redacted from Wirecmd-controlled output and never included as
+plaintext in configuration fingerprints.
+
+Configure the fixed external `age` executable with one or more absolute,
+user-managed identity paths. A non-empty stronger identity list replaces the
+weaker list during composition:
+
+```kdl
+wirecmd {
+    secrets {
+        age {
+            identity "/absolute/path/to/first.identity"
+            identity "/absolute/path/to/second.identity"
+        }
+    }
+}
+```
+
+`age` is optional unless an `age://` reference is selected. For the complete
+store format, lookup order, hardware-prompt behavior, and threat boundary, see
+the [age secrets plan](age-secrets-plan.md).
 
 ## Composition rules
 
@@ -230,10 +262,11 @@ and the effective result is validated:
   does not inherit endpoint values or credentials;
 - winning values retain file and semantic-path provenance for diagnostics.
 
-There are no tombstones, includes, explicit-empty argument replacement, or
-generic templates. A source can inherit omitted fields, but the final effective
-configuration must be complete.
+There are no tombstones, includes, explicit-empty argument replacement,
+generic templates, or arbitrary secret-provider commands. A source can inherit
+omitted fields, but the final effective configuration must be complete.
 
 For the underlying decisions and security boundaries, see the
 [discovery](discovery-plan.md), [HTTP values](http-values-plan.md),
-[OAuth](oauth-plan.md), [SSE](sse-plan.md), and [LSP](lsp-plan.md) milestones.
+[OAuth](oauth-plan.md), [age secrets](age-secrets-plan.md), [SSE](sse-plan.md),
+and [LSP](lsp-plan.md) milestones.

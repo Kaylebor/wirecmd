@@ -23,7 +23,8 @@ Wirecmd currently provides:
 - MCP tools and resources over stdio, Streamable HTTP, and legacy HTTP+SSE;
 - SDK-backed OAuth for protected Streamable HTTP servers;
 - native, selector-routed LSP navigation and read-only inspection;
-- KDL 2 configuration with automatic discovery and workspace trust; and
+- KDL 2 configuration with automatic discovery, workspace trust, and optional
+  age-backed secret stores; and
 - a foreground local daemon that retains upstream sessions between commands.
 
 Normal commands use the daemon and fail clearly when it is unavailable.
@@ -50,8 +51,12 @@ for the qualification boundary and runtime prerequisites.
 
 ## First call
 
-Save a minimal configuration as `wirecmd.kdl`, replacing the command with an
-installed stdio MCP server executable and its actual arguments:
+Save a minimal workspace configuration as `.wirecmd/config.kdl`, replacing the
+command with an installed stdio MCP server executable and its actual arguments:
+
+```sh
+mkdir -p .wirecmd
+```
 
 ```kdl
 wirecmd {
@@ -59,6 +64,12 @@ wirecmd {
         stdio "/absolute/path/to/mcp-server"
     }
 }
+```
+
+Trust the workspace once before automatic discovery can use its configuration:
+
+```sh
+wirecmd config trust .
 ```
 
 For a locally buildable example with `set_value` and `read_value` tools, follow
@@ -77,11 +88,11 @@ the login session normally configures it.
 Then discover the configured server and invoke its tools from another:
 
 ```sh
-wirecmd --config ./wirecmd.kdl mcp
-wirecmd --config ./wirecmd.kdl mcp local
-wirecmd --config ./wirecmd.kdl --help mcp local tool set_value
-wirecmd --config ./wirecmd.kdl mcp local tool set_value --value hello
-wirecmd --config ./wirecmd.kdl mcp local tool read_value
+wirecmd mcp
+wirecmd mcp local
+wirecmd --help mcp local tool set_value
+wirecmd mcp local tool set_value --value hello
+wirecmd mcp local tool read_value
 ```
 
 The daemon retains initialized sessions, so the example value survives across
@@ -90,9 +101,10 @@ help for other configurations.
 
 ## Configuration
 
-Wirecmd can compose a global configuration with trusted `wirecmd.kdl` files in
-the current workspace. Repeated `--config PATH` options instead provide the
-complete ordered source list and bypass automatic discovery and trust checks.
+Wirecmd can compose a global configuration with trusted
+`.wirecmd/config.kdl` files in the current workspace. Repeated `--config PATH`
+options instead provide the complete ordered source list and bypass automatic
+discovery and trust checks; an explicit path may use any filename.
 After changing configuration used by the daemon, run:
 
 ```sh
@@ -144,6 +156,8 @@ contacts the daemon, resolves secrets, or opens OAuth.
 
 - [Configuration reference](docs/configuration.md): practical setup and exact
   configuration behavior.
+- [Age secrets](docs/age-secrets-plan.md): encrypted secret stores and their
+  security boundary.
 - [Product thesis](docs/product-thesis.md): product direction and boundaries.
 - [Current roadmap](docs/roadmap.md): shipped baseline and open decision queue.
 - [LSP plan](docs/lsp-plan.md): native navigation and inspection contract.

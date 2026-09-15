@@ -28,10 +28,11 @@ import (
 	"github.com/Kaylebor/wirecmd/internal/buildinfo"
 	"github.com/Kaylebor/wirecmd/internal/config"
 	"github.com/Kaylebor/wirecmd/internal/lspclient"
+	secretpkg "github.com/Kaylebor/wirecmd/internal/secrets"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 10
+const daemonProtocol = 11
 
 type daemonAdmin struct {
 	command string
@@ -110,7 +111,8 @@ type daemonRequest struct {
 	Discovered            bool                   `json:"discovered,omitempty"`
 	Fingerprint           string                 `json:"fingerprint,omitempty"`
 	Execution             string                 `json:"execution_fingerprint,omitempty"`
-	Secrets               map[string]secretInput `json:"secrets,omitempty"`
+	EnvSecrets            map[string]secretInput `json:"env_secrets,omitempty"`
+	SecretStores          []string               `json:"secret_stores,omitempty"`
 	Admin                 string                 `json:"admin,omitempty"`
 	Auth                  string                 `json:"auth,omitempty"`
 	Interactive           bool                   `json:"interactive,omitempty"`
@@ -154,10 +156,10 @@ func absoluteConfigPaths(cwd string, paths []string) ([]string, error) {
 }
 
 func daemonRequestFromConfig(req request, cfg *config.Config, cwd string, paths []string, discovered bool, secrets map[string]secretInput) daemonRequest {
-	request := daemonRequest{Operation: req.operation, Server: req.server, Tool: req.tool, URI: req.uri, Arguments: req.arguments, Projected: req.projected, Overlay: req.overlay, Help: req.help, CWD: cwd, Configs: paths, Discovered: discovered, Fingerprint: configFingerprint(cfg, cwd), Secrets: secrets}
+	request := daemonRequest{Operation: req.operation, Server: req.server, Tool: req.tool, URI: req.uri, Arguments: req.arguments, Projected: req.projected, Overlay: req.overlay, Help: req.help, CWD: cwd, Configs: paths, Discovered: discovered, Fingerprint: configFingerprint(cfg, cwd), EnvSecrets: secrets}
 	if req.operation != listServers {
 		if server, ok := findServer(cfg, req.server); ok {
-			request.Execution = executionFingerprint(server, cfg.Root, cwd)
+			request.Execution = serverExecutionFingerprint(server, cfg.Root, cwd, cfg.Secrets)
 		}
 	}
 	return request
@@ -169,7 +171,10 @@ func selectedSecretInputs(server config.Server, lookup func(string) (string, boo
 		if !value.IsSecret() {
 			return
 		}
-		name := strings.TrimPrefix(value.Text, "env://")
+		name, env := isEnvReference(value.Text)
+		if !env {
+			return
+		}
 		if _, exists := result[name]; exists {
 			return
 		}
@@ -208,7 +213,26 @@ func configFingerprint(cfg *config.Config, cwd string) string {
 	for _, definition := range cfg.LSPs {
 		lsps = append(lsps, semanticLSP(definition))
 	}
-	return fingerprint(map[string]any{"v": 2, "root": root, "servers": servers, "lsps": lsps})
+	return fingerprint(map[string]any{"v": 3, "root": root, "secrets": semanticSecrets(cfg.Secrets), "servers": servers, "lsps": lsps})
+}
+
+func semanticSecrets(configured config.Secrets) any {
+	identities := []string(nil)
+	if configured.Age != nil {
+		identities = make([]string, len(configured.Age.Identities))
+		for index, identity := range configured.Age.Identities {
+			identities[index] = identity.Path
+		}
+	}
+	return map[string]any{"age_identities": identities}
+}
+
+func serverExecutionFingerprint(server config.Server, root *config.Root, cwd string, configured config.Secrets) string {
+	return fingerprint(map[string]any{"v": 1, "execution": executionFingerprint(server, root, cwd), "secrets": semanticSecrets(configured)})
+}
+
+func matchedLSPExecutionFingerprint(matches []lspMatch, root *config.Root, cwd string, configured config.Secrets) string {
+	return fingerprint(map[string]any{"v": 1, "execution": lspMatchesExecutionFingerprint(matches, root, cwd), "secrets": semanticSecrets(configured)})
 }
 
 func lspExecutionFingerprint(definition config.LSP, root *config.Root, cwd string) string {
@@ -368,11 +392,17 @@ type daemon struct {
 	closing     bool
 	hmacKey     []byte
 	authFlows   map[string]struct{}
+	secretCache map[string]secretCacheEntry
 }
 
 type daemonConfig struct {
 	config      *config.Config
 	fingerprint string
+}
+
+type secretCacheEntry struct {
+	snapshot string
+	poolKeys map[string]string
 }
 
 type poolEntry struct {
@@ -466,7 +496,7 @@ func newDaemon(stderr io.Writer) (*daemon, *appError) {
 		return nil, transportError("daemon_randomness_failed", err.Error(), "restart Wirecmd after system randomness is available")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &daemon{listener: listener, socket: socket, lock: lock, stderr: stderr, ctx: ctx, cancel: cancel, configs: map[string]*daemonConfig{}, pools: map[string]*poolEntry{}, retiring: map[*retainedInstance]struct{}{}, connections: map[net.Conn]struct{}{}, hmacKey: key, authFlows: map[string]struct{}{}}, nil
+	return &daemon{listener: listener, socket: socket, lock: lock, stderr: stderr, ctx: ctx, cancel: cancel, configs: map[string]*daemonConfig{}, pools: map[string]*poolEntry{}, retiring: map[*retainedInstance]struct{}{}, connections: map[net.Conn]struct{}{}, hmacKey: key, authFlows: map[string]struct{}{}, secretCache: map[string]secretCacheEntry{}}, nil
 }
 
 func (d *daemon) close() {
@@ -793,6 +823,11 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 			return errorReply(configurationError("daemon_context_invalid", "daemon configuration paths must be absolute", "use the Wirecmd CLI"))
 		}
 	}
+	for _, path := range request.SecretStores {
+		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+			return errorReply(configurationError("daemon_context_invalid", "daemon secret-store paths must be absolute and clean", "use the Wirecmd CLI"))
+		}
+	}
 	generation := d.currentGeneration()
 	key := daemonConfigKey(request.CWD, request.Configs, request.Discovered, generation)
 	d.mu.Lock()
@@ -838,18 +873,56 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	if !ok {
 		return errorReplyWithWarnings(configurationError("config_mismatch", fmt.Sprintf("cached configuration has no server %q", request.Server), "run wirecmd daemon reload and retry"), warnings)
 	}
-	if request.Fingerprint != cached.fingerprint && request.Execution != executionFingerprint(server, cached.config.Root, request.CWD) {
+	if request.Fingerprint != cached.fingerprint && request.Execution != serverExecutionFingerprint(server, cached.config.Root, request.CWD, cached.config.Secrets) {
 		return errorReplyWithWarnings(configurationError("config_mismatch", "selected server execution configuration differs from the daemon cache", "run wirecmd daemon reload and retry"), warnings)
 	}
-	if err := validateSecretInputs(server, request.Secrets); err != nil {
+	if err := validateSecretInputs(server, request.EnvSecrets); err != nil {
 		return errorReplyWithWarnings(err, warnings)
 	}
-	if request.Auth != "" {
-		return d.executeAuth(ctx, request, server, cached.config.Root, warnings, emitURL)
+	envLookup := func(name string) (string, bool) {
+		value, ok := request.EnvSecrets[name]
+		return value.Value, ok && value.Present
 	}
-	instance, appErr := d.acquire(ctx, server, cached.config.Root, request.CWD, request.Secrets, generation, request.Interactive, emitURL)
-	if appErr != nil {
-		return errorReplyWithWarnings(appErr, warnings)
+	selectedValues := serverSecretValues(server)
+	ageReferences := selectedAgeReferences(selectedValues)
+	var instance *retainedInstance
+	var metadataKey, snapshotIdentity string
+	var storeSnapshot *secretpkg.StoreSnapshot
+	if request.Auth == "" && len(ageReferences) != 0 {
+		var snapshotErr *appError
+		storeSnapshot, snapshotErr = captureAgeStores(request.SecretStores)
+		if snapshotErr != nil {
+			return errorReplyWithWarnings(snapshotErr, warnings)
+		}
+		snapshotIdentity = storeSnapshot.Identity()
+		metadataKey = d.serverSecretCacheKey(server, cached.config.Root, request.CWD, cached.config.Secrets, request.EnvSecrets, ageReferences, request.SecretStores, generation)
+		var reused bool
+		instance, reused, _ = d.cachedInstance(ctx, metadataKey, snapshotIdentity, server.Name, generation, false)
+		if !reused {
+			instance = nil
+		}
+	}
+	var resolved resolvedSecretSet
+	if instance == nil || request.Auth != "" {
+		var resolveErr *appError
+		resolved, resolveErr = resolveSelectedSecrets(ctx, cached.config.Secrets, request.SecretStores, storeSnapshot, selectedValues, envLookup)
+		if resolveErr != nil {
+			return errorReplyWithWarnings(resolveErr, warnings)
+		}
+	}
+	if request.Auth != "" {
+		return d.executeAuth(ctx, request, server, cached.config.Root, resolved.lookup, warnings, emitURL)
+	}
+	if instance == nil {
+		var appErr *appError
+		instance, appErr = d.acquire(ctx, server, cached.config.Root, request.CWD, resolved, generation, request.Interactive, emitURL)
+		if appErr != nil {
+			return errorReplyWithWarnings(appErr, warnings)
+		}
+		if metadataKey != "" {
+			auth := d.resolvedAuthIdentity(server, resolved.lookup)
+			d.rememberSecretPools(metadataKey, snapshotIdentity, map[string]string{server.Name: mcpPoolKey(server, cached.config.Root, request.CWD, generation, auth)})
+		}
 	}
 	defer d.release(instance)
 	if instance.oauthRun != nil {
@@ -1008,12 +1081,55 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 			return errorReplyWithWarnings(appErr, warnings)
 		}
 	}
-	if request.Fingerprint != cached.fingerprint && request.Execution != lspMatchesExecutionFingerprint(matches, cached.config.Root, request.CWD) {
+	if request.Fingerprint != cached.fingerprint && request.Execution != matchedLSPExecutionFingerprint(matches, cached.config.Root, request.CWD, cached.config.Secrets) {
 		return errorReplyWithWarnings(configurationError("config_mismatch", "selected LSP execution configuration differs from the daemon cache", "run wirecmd daemon reload and retry"), warnings)
 	}
 	for _, match := range matches {
-		if appErr := validateLSPSecretInputs(match.Definition, request.Secrets); appErr != nil {
+		if appErr := validateLSPSecretInputs(match.Definition, request.EnvSecrets); appErr != nil {
 			return errorReplyWithWarnings(appErr, warnings)
+		}
+	}
+	envLookup := func(name string) (string, bool) {
+		value, ok := request.EnvSecrets[name]
+		return value.Value, ok && value.Present
+	}
+	selectedValues := lspSecretValues(matches)
+	ageReferences := selectedAgeReferences(selectedValues)
+	instances := make([]*retainedInstance, len(matches))
+	var metadataKey, snapshotIdentity string
+	var storeSnapshot *secretpkg.StoreSnapshot
+	allCached := len(ageReferences) != 0
+	if allCached {
+		var snapshotErr *appError
+		storeSnapshot, snapshotErr = captureAgeStores(request.SecretStores)
+		if snapshotErr != nil {
+			return errorReplyWithWarnings(snapshotErr, warnings)
+		}
+		snapshotIdentity = storeSnapshot.Identity()
+		metadataKey = d.lspSecretCacheKey(matches, cached.config.Root, request.CWD, cached.config.Secrets, request.EnvSecrets, ageReferences, request.SecretStores, generation)
+		for index, match := range matches {
+			instance, reused, _ := d.cachedInstance(ctx, metadataKey, snapshotIdentity, match.Definition.Name, generation, true)
+			if !reused {
+				allCached = false
+				break
+			}
+			instances[index] = instance
+		}
+		if !allCached {
+			for index, instance := range instances {
+				if instance != nil {
+					d.release(instance)
+					instances[index] = nil
+				}
+			}
+		}
+	}
+	var resolved resolvedSecretSet
+	if !allCached {
+		var resolveErr *appError
+		resolved, resolveErr = resolveSelectedSecrets(ctx, cached.config.Secrets, request.SecretStores, storeSnapshot, selectedValues, envLookup)
+		if resolveErr != nil {
+			return errorReplyWithWarnings(resolveErr, warnings)
 		}
 	}
 	lspReq := lspRequest{Operation: request.LSPOperation, File: request.LSPFile, Line: request.LSPLine, Column: request.LSPColumn, Query: request.LSPQuery, QuerySet: request.LSPQuerySet, IncludeDeclaration: request.LSPIncludeDeclaration}
@@ -1021,15 +1137,27 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 		return errorReplyWithWarnings(appErr, warnings)
 	}
 	results := make([]lspProviderRun, len(matches))
+	newPoolKeys := make(map[string]string, len(matches))
+	var poolKeysMu sync.Mutex
 	var wait sync.WaitGroup
 	for index, match := range matches {
 		wait.Add(1)
 		go func(index int, match lspMatch) {
 			defer wait.Done()
-			instance, appErr := d.acquireLSP(ctx, match.Definition, cached.config.Root, request.CWD, request.Secrets, generation)
-			if appErr != nil {
-				results[index].Err = appErr
-				return
+			instance := instances[index]
+			if instance == nil {
+				var appErr *appError
+				instance, appErr = d.acquireLSP(ctx, match.Definition, cached.config.Root, request.CWD, resolved, generation)
+				if appErr != nil {
+					results[index].Err = appErr
+					return
+				}
+				if metadataKey != "" {
+					auth := d.lspResolvedAuthIdentity(match.Definition, resolved.lookup)
+					poolKeysMu.Lock()
+					newPoolKeys[match.Definition.Name] = lspPoolKey(match.Definition, cached.config.Root, request.CWD, generation, auth)
+					poolKeysMu.Unlock()
+				}
 			}
 			defer d.release(instance)
 			instance.mu.Lock()
@@ -1064,6 +1192,9 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 		}(index, match)
 	}
 	wait.Wait()
+	if metadataKey != "" && !allCached && len(newPoolKeys) == len(matches) {
+		d.rememberSecretPools(metadataKey, snapshotIdentity, newPoolKeys)
+	}
 	result, appErr := aggregateLSPRequestResults(lspReq, workspace, request.LSPFile, matches, results)
 	if appErr != nil {
 		return errorReplyWithWarnings(appErr, warnings)
@@ -1144,12 +1275,16 @@ func validateLSPSecretInputs(definition config.LSP, inputs map[string]secretInpu
 	return nil
 }
 
-func (d *daemon) acquireLSP(ctx context.Context, definition config.LSP, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64) (*retainedInstance, *appError) {
+func lspPoolKey(definition config.LSP, root *config.Root, cwd string, generation uint64, auth string) string {
 	workspace := cwd
 	if root != nil {
 		workspace = resolveRoot(*root)
 	}
-	key := strings.Join([]string{"lsp", definition.Name, workspace, lspExecutionFingerprint(definition, root, cwd), fmt.Sprint(generation), d.lspAuthIdentity(definition, inputs)}, "\x00")
+	return strings.Join([]string{"lsp", definition.Name, workspace, lspExecutionFingerprint(definition, root, cwd), fmt.Sprint(generation), auth}, "\x00")
+}
+
+func (d *daemon) acquireLSP(ctx context.Context, definition config.LSP, root *config.Root, cwd string, resolved resolvedSecretSet, generation uint64) (*retainedInstance, *appError) {
+	key := lspPoolKey(definition, root, cwd, generation, d.lspResolvedAuthIdentity(definition, resolved.lookup))
 	d.mu.Lock()
 	if d.closing || d.generation != generation {
 		d.mu.Unlock()
@@ -1163,7 +1298,7 @@ func (d *daemon) acquireLSP(ctx context.Context, definition config.LSP, root *co
 	d.pools[key] = entry
 	d.wg.Add(1)
 	d.mu.Unlock()
-	go d.startLSPInstance(entry, key, definition, root, cwd, inputs, generation)
+	go d.startLSPInstance(entry, key, definition, root, cwd, resolved, generation)
 	return d.waitForLSPInstance(ctx, entry, generation, true)
 }
 
@@ -1175,10 +1310,9 @@ func (d *daemon) waitForLSPInstance(ctx context.Context, entry *poolEntry, gener
 	return instance, appErr
 }
 
-func (d *daemon) startLSPInstance(entry *poolEntry, key string, definition config.LSP, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64) {
+func (d *daemon) startLSPInstance(entry *poolEntry, key string, definition config.LSP, root *config.Root, cwd string, resolved resolvedSecretSet, generation uint64) {
 	defer d.wg.Done()
-	lookup := func(name string) (string, bool) { value, ok := inputs[name]; return value.Value, ok && value.Present }
-	command, secrets, appErr := makeStdioCommand(definition.Stdio, root, cwd, lookup)
+	command, secrets, appErr := makeStdioCommand(definition.Stdio, root, cwd, resolved.lookup)
 	var started *retainedInstance
 	if appErr == nil {
 		redactor := newRedactor(secrets, d.stderr)
@@ -1214,15 +1348,26 @@ func (d *daemon) startLSPInstance(entry *poolEntry, key string, definition confi
 }
 
 func (d *daemon) lspAuthIdentity(definition config.LSP, inputs map[string]secretInput) string {
+	lookup := func(reference string) (string, bool) {
+		name, env := isEnvReference(reference)
+		if !env {
+			return "", false
+		}
+		input, ok := inputs[name]
+		return input.Value, ok && input.Present
+	}
+	return d.lspResolvedAuthIdentity(definition, lookup)
+}
+
+func (d *daemon) lspResolvedAuthIdentity(definition config.LSP, lookup func(string) (string, bool)) string {
 	mac := hmac.New(sha256.New, d.hmacKey)
 	items := make([]string, 0)
 	add := func(destination string, value config.Value) {
 		if !value.IsSecret() {
 			return
 		}
-		name := strings.TrimPrefix(value.Text, "env://")
-		input := inputs[name]
-		items = append(items, fmt.Sprintf("%s\x00%t\x00%s", destination, input.Present, input.Value))
+		resolved, present := lookup(value.Text)
+		items = append(items, fmt.Sprintf("%s\x00%t\x00%s", destination, present, resolved))
 	}
 	for index, value := range definition.Stdio.Args {
 		add(fmt.Sprintf("arg[%d]", index), value)
@@ -1237,13 +1382,121 @@ func (d *daemon) lspAuthIdentity(definition config.LSP, inputs map[string]secret
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-func (d *daemon) acquire(ctx context.Context, server config.Server, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64, interactive bool, emitURL func(string) error) (*retainedInstance, *appError) {
+func captureAgeStores(paths []string) (*secretpkg.StoreSnapshot, *appError) {
+	stores := make([]secretpkg.Store, len(paths))
+	for index, path := range paths {
+		stores[index] = secretpkg.Store{Path: path}
+	}
+	snapshot, err := secretpkg.CaptureStores(stores)
+	if err != nil {
+		return nil, secretResolutionError(err)
+	}
+	return snapshot, nil
+}
+
+func (d *daemon) serverSecretCacheKey(server config.Server, root *config.Root, cwd string, configured config.Secrets, inputs map[string]secretInput, references, stores []string, generation uint64) string {
+	return strings.Join([]string{
+		"mcp", fmt.Sprint(generation), serverExecutionFingerprint(server, root, cwd, configured),
+		d.authIdentity(server, inputs), fingerprint(map[string]any{"references": references, "stores": stores}),
+	}, "\x00")
+}
+
+func (d *daemon) lspSecretCacheKey(matches []lspMatch, root *config.Root, cwd string, configured config.Secrets, inputs map[string]secretInput, references, stores []string, generation uint64) string {
+	envIdentities := make([]string, len(matches))
+	for index, match := range matches {
+		envIdentities[index] = match.Definition.Name + "\x00" + d.lspAuthIdentity(match.Definition, inputs)
+	}
+	sort.Strings(envIdentities)
+	return strings.Join([]string{
+		"lsp", fmt.Sprint(generation), matchedLSPExecutionFingerprint(matches, root, cwd, configured),
+		fingerprint(envIdentities), fingerprint(map[string]any{"references": references, "stores": stores}),
+	}, "\x00")
+}
+
+func (d *daemon) cachedInstance(ctx context.Context, metadataKey, snapshot, name string, generation uint64, lsp bool) (*retainedInstance, bool, *appError) {
+	d.mu.Lock()
+	metadata, ok := d.secretCache[metadataKey]
+	poolKey := metadata.poolKeys[name]
+	entry := d.pools[poolKey]
+	valid := ok && metadata.snapshot == snapshot && poolKey != "" && entry != nil && !entry.broken && !entry.retiring
+	d.mu.Unlock()
+	if !valid {
+		return nil, false, nil
+	}
+	var instance *retainedInstance
+	var appErr *appError
+	if lsp {
+		instance, appErr = d.waitForLSPInstance(ctx, entry, generation, false)
+	} else {
+		instance, appErr = d.waitForInstance(ctx, entry, generation, false)
+	}
+	if appErr != nil {
+		d.mu.Lock()
+		delete(d.secretCache, metadataKey)
+		d.mu.Unlock()
+		return nil, false, nil
+	}
+	return instance, true, nil
+}
+
+func (d *daemon) rememberSecretPools(metadataKey, snapshot string, poolKeys map[string]string) {
+	toClose := make([]*retainedInstance, 0)
+	displaced := map[string]struct{}{}
+	d.mu.Lock()
+	previous := d.secretCache[metadataKey]
+	for name, previousKey := range previous.poolKeys {
+		if nextKey := poolKeys[name]; previousKey != "" && previousKey != nextKey {
+			d.retirePoolKeyLocked(previousKey, displaced, &toClose)
+		}
+	}
+	copyKeys := make(map[string]string, len(poolKeys))
+	for name, poolKey := range poolKeys {
+		copyKeys[name] = poolKey
+	}
+	d.secretCache[metadataKey] = secretCacheEntry{snapshot: snapshot, poolKeys: copyKeys}
+	d.mu.Unlock()
+	for _, instance := range toClose {
+		instance.mu.Lock()
+		instance.close()
+		instance.mu.Unlock()
+		d.mu.Lock()
+		delete(d.retiring, instance)
+		d.mu.Unlock()
+	}
+}
+
+func (d *daemon) retirePoolKeyLocked(key string, displaced map[string]struct{}, toClose *[]*retainedInstance) {
+	if _, seen := displaced[key]; seen {
+		return
+	}
+	displaced[key] = struct{}{}
+	entry := d.pools[key]
+	if entry == nil {
+		return
+	}
+	delete(d.pools, key)
+	entry.retiring = true
+	if entry.instance == nil {
+		return
+	}
+	entry.instance.retiring = true
+	d.retiring[entry.instance] = struct{}{}
+	if entry.instance.active == 0 {
+		*toClose = append(*toClose, entry.instance)
+	}
+}
+
+func mcpPoolKey(server config.Server, root *config.Root, cwd string, generation uint64, auth string) string {
 	workspace := cwd
 	if root != nil {
 		workspace = resolveRoot(*root)
 	}
-	auth := d.authIdentity(server, inputs)
-	key := strings.Join([]string{"mcp", server.Name, workspace, executionFingerprint(server, root, cwd), fmt.Sprint(generation), auth}, "\x00")
+	return strings.Join([]string{"mcp", server.Name, workspace, executionFingerprint(server, root, cwd), fmt.Sprint(generation), auth}, "\x00")
+}
+
+func (d *daemon) acquire(ctx context.Context, server config.Server, root *config.Root, cwd string, resolved resolvedSecretSet, generation uint64, interactive bool, emitURL func(string) error) (*retainedInstance, *appError) {
+	auth := d.resolvedAuthIdentity(server, resolved.lookup)
+	key := mcpPoolKey(server, root, cwd, generation, auth)
 	d.mu.Lock()
 	if d.closing || d.generation != generation {
 		d.mu.Unlock()
@@ -1260,7 +1513,7 @@ func (d *daemon) acquire(ctx context.Context, server config.Server, root *config
 	d.pools[key] = entry
 	d.wg.Add(1)
 	d.mu.Unlock()
-	go d.startInstance(ctx, entry, key, server, root, cwd, inputs, generation, interactive, emitURL)
+	go d.startInstance(ctx, entry, key, server, root, cwd, resolved, generation, interactive, emitURL)
 	return d.waitForInstance(ctx, entry, generation, true)
 }
 
@@ -1310,18 +1563,20 @@ func (d *daemon) waitForInstance(ctx context.Context, entry *poolEntry, generati
 	return instance, nil
 }
 
-func (d *daemon) startInstance(clientCtx context.Context, entry *poolEntry, key string, server config.Server, root *config.Root, cwd string, inputs map[string]secretInput, generation uint64, interactive bool, emitURL func(string) error) {
+func (d *daemon) startInstance(clientCtx context.Context, entry *poolEntry, key string, server config.Server, root *config.Root, cwd string, resolved resolvedSecretSet, generation uint64, interactive bool, emitURL func(string) error) {
 	defer d.wg.Done()
-	lookup := func(name string) (string, bool) { value, ok := inputs[name]; return value.Value, ok && value.Present }
-	target, secrets, appErr := makeTarget(server, root, cwd, lookup)
+	target, secrets, appErr := makeTarget(server, root, cwd, resolved.lookup)
+	redactor := newRedactor(secrets, d.stderr)
+	redactor.ProtectEndpoint(target.endpoint)
 	if appErr == nil && server.HTTP != nil && server.HTTP.Kind != config.HTTPTransportSSE {
 		var oauthSecrets []string
-		target, oauthSecrets, appErr = attachOAuth(target, server.Name, *server.HTTP, lookup, interactive, false, func(raw string) {
+		target, oauthSecrets, appErr = attachOAuth(target, server.Name, *server.HTTP, resolved.lookup, interactive, false, func(raw string) {
 			if emitURL != nil {
-				_ = emitURL(raw)
+				_ = emitURL(redactor.Redact(raw))
 			}
 		})
 		secrets = append(secrets, oauthSecrets...)
+		redactor.ProtectSecrets(oauthSecrets...)
 		if target.oauthRun != nil && entry.authStarted != nil {
 			target.oauthRun.initialCtx = clientCtx
 			target.oauthRun.onFlowStart = func() error {
@@ -1333,11 +1588,9 @@ func (d *daemon) startInstance(clientCtx context.Context, entry *poolEntry, key 
 	}
 	var started *retainedInstance
 	if appErr == nil {
-		redactor := newRedactor(secrets, d.stderr)
 		if target.oauthRun != nil {
 			target.oauthRun.setRedactor(redactor)
 		}
-		redactor.ProtectEndpoint(target.endpoint)
 		session, connectErr := connectTarget(d.ctx, target, redactor)
 		if connectErr != nil {
 			if target.oauthRun != nil {
@@ -1351,6 +1604,8 @@ func (d *daemon) startInstance(clientCtx context.Context, entry *poolEntry, key 
 			}
 			started = &retainedInstance{session: session, redactor: redactor, breakOnRequestCancel: target.endpoint != "", toolsPrimed: target.sse, oauthRun: target.oauthRun}
 		}
+	} else {
+		redactor.FlushTo(d.stderr)
 	}
 	d.mu.Lock()
 	if appErr == nil && (entry.retiring || d.closing || d.generation != generation) {
@@ -1375,6 +1630,18 @@ func (d *daemon) startInstance(clientCtx context.Context, entry *poolEntry, key 
 }
 
 func (d *daemon) authIdentity(server config.Server, inputs map[string]secretInput) string {
+	lookup := func(reference string) (string, bool) {
+		name, env := isEnvReference(reference)
+		if !env {
+			return "", false
+		}
+		input, ok := inputs[name]
+		return input.Value, ok && input.Present
+	}
+	return d.resolvedAuthIdentity(server, lookup)
+}
+
+func (d *daemon) resolvedAuthIdentity(server config.Server, lookup func(string) (string, bool)) string {
 	items := make([]string, 0)
 	seen := map[string]struct{}{}
 	mac := hmac.New(sha256.New, d.hmacKey)
@@ -1382,13 +1649,12 @@ func (d *daemon) authIdentity(server config.Server, inputs map[string]secretInpu
 		if !value.IsSecret() {
 			return
 		}
-		name := strings.TrimPrefix(value.Text, "env://")
 		if _, ok := seen[destination]; ok {
 			return
 		}
 		seen[destination] = struct{}{}
-		input := inputs[name]
-		items = append(items, destination+"\x00"+input.Value)
+		resolved, _ := lookup(value.Text)
+		items = append(items, destination+"\x00"+resolved)
 	}
 	if server.HTTP != nil {
 		for _, field := range server.HTTP.Query {
@@ -1503,6 +1769,7 @@ func (d *daemon) executeAdmin(command string) daemonReply {
 		}
 		d.configs = map[string]*daemonConfig{}
 		d.pools = map[string]*poolEntry{}
+		d.secretCache = map[string]secretCacheEntry{}
 		d.generation++
 		d.mu.Unlock()
 		for _, instance := range toClose {

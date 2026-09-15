@@ -483,12 +483,12 @@ func oauthStoreError(err error) *appError {
 	return &appError{category: "internal", code: "credential_store_failed", message: err.Error(), action: "check the Wirecmd state directory and native keyring", exitCode: exitInternal}
 }
 
-func runDirectAuth(ctx context.Context, admin authAdmin, server config.Server, root *config.Root, cwd string, in io.Reader, errOut io.Writer) (any, *appError) {
-	target, secrets, appErr := makeTarget(server, root, cwd, os.LookupEnv)
+func runDirectAuth(ctx context.Context, admin authAdmin, server config.Server, root *config.Root, cwd string, lookup func(string) (string, bool), in io.Reader, errOut io.Writer) (any, *appError) {
+	target, secrets, appErr := makeTarget(server, root, cwd, lookup)
 	if appErr != nil {
 		return nil, appErr
 	}
-	clientSecret, secretValues, appErr := resolveOAuthClientSecret(*server.HTTP, os.LookupEnv)
+	clientSecret, secretValues, appErr := resolveOAuthClientSecret(*server.HTTP, lookup)
 	if appErr != nil {
 		return nil, appErr
 	}
@@ -534,7 +534,7 @@ func runDirectAuth(ctx context.Context, admin authAdmin, server config.Server, r
 		}
 		redactor := newRedactor(secrets, errOut)
 		redactor.ProtectEndpoint(target.endpoint)
-		target, oauthSecrets, appErr := attachOAuth(target, server.Name, *server.HTTP, os.LookupEnv, true, true, browserEventHandler(errOut, redactor))
+		target, oauthSecrets, appErr := attachOAuth(target, server.Name, *server.HTTP, lookup, true, true, browserEventHandler(errOut, redactor))
 		if appErr != nil {
 			return nil, appErr
 		}
@@ -572,9 +572,9 @@ func resolveOAuthClientSecret(transport config.HTTP, lookup func(string) (string
 	if transport.OAuth == nil || transport.OAuth.ClientSecret == nil {
 		return "", nil, nil
 	}
-	resolved, err := transport.OAuth.ClientSecret.ResolveEnv(lookup)
+	resolved, err := resolveConfiguredValue(*transport.OAuth.ClientSecret, lookup)
 	if err != nil {
-		return "", nil, configurationError("secret_not_available", err.Error(), "set the required environment variable before invoking Wirecmd")
+		return "", nil, configurationError("secret_not_available", err.Error(), "provide the required configured secret before invoking Wirecmd")
 	}
 	secrets := []string(nil)
 	if resolved.Sensitive && resolved.Text != "" {
@@ -583,13 +583,9 @@ func resolveOAuthClientSecret(transport config.HTTP, lookup func(string) (string
 	return resolved.Text, secrets, nil
 }
 
-func (d *daemon) executeAuth(ctx context.Context, request daemonRequest, server config.Server, root *config.Root, warnings []string, emitURL func(string) error) daemonReply {
+func (d *daemon) executeAuth(ctx context.Context, request daemonRequest, server config.Server, root *config.Root, lookup func(string) (string, bool), warnings []string, emitURL func(string) error) daemonReply {
 	if server.HTTP == nil || server.HTTP.Kind == config.HTTPTransportSSE || hasAuthorizationHeader(*server.HTTP) {
 		return errorReplyWithWarnings(authServerError(server), warnings)
-	}
-	lookup := func(name string) (string, bool) {
-		value, ok := request.Secrets[name]
-		return value.Value, ok && value.Present
 	}
 	target, secrets, appErr := makeTarget(server, root, request.CWD, lookup)
 	if appErr != nil {
@@ -640,20 +636,22 @@ func (d *daemon) executeAuth(ctx context.Context, request daemonRequest, server 
 		if err != nil {
 			return errorReplyWithWarnings(oauthStoreError(err), warnings)
 		}
+		redactor := newRedactor(secrets, d.stderr)
+		redactor.ProtectEndpoint(target.endpoint)
 		target, oauthSecrets, appErr = attachOAuth(target, server.Name, *server.HTTP, lookup, true, true, func(raw string) {
 			if emitURL != nil {
-				_ = emitURL(raw)
+				_ = emitURL(redactor.Redact(raw))
 			}
 		})
 		if appErr != nil {
+			redactor.FlushTo(d.stderr)
 			return errorReplyWithWarnings(appErr, warnings)
 		}
 		target.oauthRun.onFlowStart = func() error { return d.beginOAuthFlow(target.oauthRun) }
 		target.oauthRun.onFlowEnd = func() { d.endOAuthFlow(target.oauthRun) }
 		defer target.oauthRun.Close()
-		redactor := newRedactor(append(secrets, oauthSecrets...), d.stderr)
+		redactor.ProtectSecrets(oauthSecrets...)
 		target.oauthRun.setRedactor(redactor)
-		redactor.ProtectEndpoint(target.endpoint)
 		defer redactor.FlushTo(d.stderr)
 		session, appErr := connectTarget(ctx, target, redactor)
 		if appErr != nil {

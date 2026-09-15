@@ -5,6 +5,8 @@
 - `README.md` is the short public orientation.
 - `docs/configuration.md` is the practical reference for the implemented KDL
   surface, discovery order, composition, transports, secrets, and LSP selectors.
+- `docs/age-secrets-plan.md` is authoritative for age-backed secret-store
+  discovery, resolution, reuse, and its security boundary.
 - `docs/onboarding-plan.md` defines administrative help and private Fish
   completion. Completion must remain local, read-only, secret-free and must not
   contact the daemon or upstream servers. MCP help and execution use the `mcp`
