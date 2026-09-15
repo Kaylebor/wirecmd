@@ -470,17 +470,26 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 	if appErr := validateLSPRequestInput(file, request, matches); appErr != nil {
 		return nil, appErr
 	}
+	selectedValues := lspSecretValues(matches)
+	secretStores, storesErr := selectedSecretStores(cwd, paths, discovered, selectedValues)
+	if storesErr != nil {
+		return nil, storesErr
+	}
 	if !opts.direct {
 		secrets := selectedLSPMatchesSecretInputs(matches, os.LookupEnv)
 		daemonOperation := inspectLSP
 		if isLSPNavigation(request.Operation) {
 			daemonOperation = navigateLSP
 		}
-		rpc := daemonRequest{Operation: daemonOperation, CWD: cwd, Configs: paths, Discovered: discovered, Fingerprint: configFingerprint(cfg, cwd), Execution: lspMatchesExecutionFingerprint(matches, cfg.Root, cwd), Secrets: secrets, LSPFile: file, LSPLine: request.Line, LSPColumn: request.Column, LSPQuery: request.Query, LSPQuerySet: request.QuerySet, LSPOperation: request.Operation, LSPIncludeDeclaration: request.IncludeDeclaration}
+		rpc := daemonRequest{Operation: daemonOperation, CWD: cwd, Configs: paths, Discovered: discovered, Fingerprint: configFingerprint(cfg, cwd), Execution: matchedLSPExecutionFingerprint(matches, cfg.Root, cwd, cfg.Secrets), EnvSecrets: secrets, SecretStores: secretStores, LSPFile: file, LSPLine: request.Line, LSPColumn: request.Column, LSPQuery: request.Query, LSPQuerySet: request.QuerySet, LSPOperation: request.Operation, LSPIncludeDeclaration: request.IncludeDeclaration}
 		result, callErr, _ := daemonRequestCallWithClient(client, rpc, errOut)
 		return result, callErr
 	}
-	return runDirectLSPMatches(ctx, cfg.Root, cwd, workspace, file, request, matches, errOut)
+	resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, nil, selectedValues, os.LookupEnv)
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
+	return runDirectLSPMatches(ctx, cfg.Root, cwd, workspace, file, request, matches, resolved.lookup, errOut)
 }
 
 func allLSPDefinitions(definitions []config.LSP) []lspMatch {
@@ -525,7 +534,7 @@ func lspConfigPaths(cwd string, configured []string) ([]string, bool, *appError)
 	case errors.As(err, &untrusted):
 		return nil, true, userActionError("workspace_untrusted", err.Error(), "run wirecmd config trust "+shellQuote(untrusted.Workspace))
 	case errors.As(err, &notFound):
-		return nil, true, configurationError("config_not_found", err.Error(), "create a global or workspace wirecmd.kdl, or supply --config PATH")
+		return nil, true, configurationError("config_not_found", err.Error(), "create a global config.kdl or trusted workspace .wirecmd/config.kdl, or supply --config PATH")
 	default:
 		return nil, true, configurationError("config_discovery_failed", err.Error(), "check Wirecmd configuration and trust state")
 	}
@@ -584,7 +593,10 @@ func selectedStdioSecretInputs(stdio config.Stdio, lookup func(string) (string, 
 		if !value.IsSecret() {
 			return
 		}
-		name := strings.TrimPrefix(value.Text, "env://")
+		name, env := isEnvReference(value.Text)
+		if !env {
+			return
+		}
 		if _, exists := result[name]; exists {
 			return
 		}
@@ -610,7 +622,7 @@ func selectedLSPMatchesSecretInputs(matches []lspMatch, lookup func(string) (str
 	return result
 }
 
-func runDirectLSPMatches(ctx context.Context, root *config.Root, cwd, workspace, file string, request lspRequest, matches []lspMatch, errOut io.Writer) (any, *appError) {
+func runDirectLSPMatches(ctx context.Context, root *config.Root, cwd, workspace, file string, request lspRequest, matches []lspMatch, lookup func(string) (string, bool), errOut io.Writer) (any, *appError) {
 	results := make([]lspProviderRun, len(matches))
 	var wait sync.WaitGroup
 	var stderrMu sync.Mutex
@@ -623,7 +635,7 @@ func runDirectLSPMatches(ctx context.Context, root *config.Root, cwd, workspace,
 		wait.Add(1)
 		go func(index int, match lspMatch) {
 			defer wait.Done()
-			command, secrets, appErr := makeStdioCommand(match.Definition.Stdio, root, cwd, os.LookupEnv)
+			command, secrets, appErr := makeStdioCommand(match.Definition.Stdio, root, cwd, lookup)
 			if appErr != nil {
 				results[index].Err = appErr
 				return

@@ -911,26 +911,6 @@ func TestComposeValidatesEffectiveAgeIdentities(t *testing.T) {
 	}
 }
 
-func TestResolveEnvDistinguishesMissingAndEmpty(t *testing.T) {
-	secret := Value{Kind: ValueSecretReference, Text: "env://TOKEN", Provenance: Provenance{Path: `wirecmd.mcp["memory"].stdio.env["TOKEN"]`}}
-	empty, err := secret.ResolveEnv(func(name string) (string, bool) {
-		if name != "TOKEN" {
-			t.Fatalf("lookup name = %q", name)
-		}
-		return "", true
-	})
-	if err != nil {
-		t.Fatalf("ResolveEnv(empty) error = %v", err)
-	}
-	if empty.Text != "" || !empty.Sensitive {
-		t.Fatalf("ResolveEnv(empty) = %#v", empty)
-	}
-	_, err = secret.ResolveEnv(func(string) (string, bool) { return "", false })
-	if err == nil || !strings.Contains(err.Error(), "is not set") {
-		t.Fatalf("ResolveEnv(missing) error = %v", err)
-	}
-}
-
 func TestParseUsesKDL2Only(t *testing.T) {
 	_, err := ParseString("test.kdl", `wirecmd { mcp "memory" { stdio "go" { env FLAG=true } } }`)
 	if err == nil {

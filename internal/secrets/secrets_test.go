@@ -40,6 +40,16 @@ func TestRegistryParsesCanonicalReferences(t *testing.T) {
 	}
 }
 
+func TestParseReferenceLeavesProviderLocatorOpaque(t *testing.T) {
+	reference, err := ParseReference("OP://vault/item/field")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (Reference{Scheme: "op", Locator: "vault/item/field"}); reference != want {
+		t.Fatalf("reference = %#v, want %#v", reference, want)
+	}
+}
+
 func TestRegistryRejectsDuplicateProviders(t *testing.T) {
 	first := &recordingProvider{scheme: "test"}
 	second := &recordingProvider{scheme: "TEST"}
@@ -112,6 +122,63 @@ func TestEnvProviderPreservesEmptyValue(t *testing.T) {
 	}
 	if !reflect.DeepEqual(result.Missing, []string{"MISSING"}) {
 		t.Fatalf("missing = %#v", result.Missing)
+	}
+}
+
+func TestSnapshotStoresTracksMissingAppearanceAndContent(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "secrets.json.age")
+	stores := []Store{{Path: path}}
+	missing, err := SnapshotStores(stores)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("first ciphertext"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := SnapshotStores(stores)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("second ciphertext"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := SnapshotStores(stores)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing == first || first == second || missing == second {
+		t.Fatalf("snapshots did not distinguish missing and changed stores")
+	}
+}
+
+func TestAgeProviderDecryptsCapturedStoreBytes(t *testing.T) {
+	fake := writeFakeAge(t)
+	t.Setenv("AGE_TEST_VERSION", "1.3.2")
+	path := writeStore(t, `{"TOKEN":"captured"}`)
+	stores := []Store{{Path: path}}
+	snapshot, err := CaptureStores(stores)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"TOKEN":"changed"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	provider, err := NewAgeProvider(AgeProviderOptions{
+		Command:    fake,
+		Identities: []string{testIdentity(t)},
+		Stores:     stores,
+		Snapshot:   snapshot,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := provider.Resolve(context.Background(), Scope("workspace"), []string{"TOKEN"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := result.Values["TOKEN"]; got != "captured" {
+		t.Fatalf("resolved value = %q, want captured snapshot value", got)
 	}
 }
 

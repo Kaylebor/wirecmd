@@ -3,8 +3,11 @@ package secrets
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +37,62 @@ type Store struct {
 	Path string
 }
 
+type capturedStore struct {
+	path       string
+	exists     bool
+	ciphertext []byte
+}
+
+// StoreSnapshot binds a candidate-list identity to the exact ciphertext bytes
+// that will be decrypted. It is operation-local and must not be retained as a
+// daemon cache value.
+type StoreSnapshot struct {
+	identity string
+	stores   []capturedStore
+}
+
+// Identity returns the ciphertext-only deterministic snapshot identity.
+func (s *StoreSnapshot) Identity() string {
+	if s == nil {
+		return ""
+	}
+	return s.identity
+}
+
+// CaptureStores safely reads each candidate once. The returned ciphertext is
+// consumed by AgeProvider so cache identity and decryption cannot observe
+// different file versions.
+func CaptureStores(stores []Store) (*StoreSnapshot, error) {
+	digest := sha256.New()
+	_, _ = digest.Write([]byte("wirecmd-age-stores-v1\x00"))
+	captured := make([]capturedStore, len(stores))
+	for index, store := range stores {
+		ciphertext, exists, err := readAgeStore(store.Path, maxCiphertextSize)
+		if err != nil {
+			return nil, err
+		}
+		captured[index] = capturedStore{path: store.Path, exists: exists, ciphertext: ciphertext}
+		_, _ = fmt.Fprintf(digest, "%d:%s\x00%t\x00", len(store.Path), store.Path, exists)
+		if exists {
+			storeDigest := sha256.Sum256(ciphertext)
+			_, _ = digest.Write(storeDigest[:])
+		}
+	}
+	return &StoreSnapshot{identity: hex.EncodeToString(digest.Sum(nil)), stores: captured}, nil
+}
+
+// SnapshotStores returns a deterministic ciphertext-only identity for a
+// strongest-to-weakest candidate list. Missing candidates participate so a
+// later appearance changes the snapshot. It retains no ciphertext or decoded
+// values.
+func SnapshotStores(stores []Store) (string, error) {
+	snapshot, err := CaptureStores(stores)
+	if err != nil {
+		return "", err
+	}
+	return snapshot.Identity(), nil
+}
+
 // AgeProviderOptions defines the fixed age command and effective store inputs
 // for one configured scope. Command is primarily injectable for tests; normal
 // construction leaves it empty to use age from PATH.
@@ -43,6 +102,7 @@ type AgeProviderOptions struct {
 	Stores       []Store
 	Timeout      time.Duration
 	MaxPlaintext int64
+	Snapshot     *StoreSnapshot
 }
 
 // AgeProvider decrypts JSON stores with the external age command. It retains
@@ -53,6 +113,7 @@ type AgeProvider struct {
 	stores       []Store
 	timeout      time.Duration
 	maxPlaintext int64
+	snapshot     *StoreSnapshot
 }
 
 // NewAgeProvider validates effective age configuration. Identity paths must
@@ -88,7 +149,7 @@ func NewAgeProvider(options AgeProviderOptions) (*AgeProvider, error) {
 			return nil, &Error{Code: CodeProviderInvalid, Message: "age secret store path is empty"}
 		}
 	}
-	return &AgeProvider{command: command, identities: identities, stores: stores, timeout: timeout, maxPlaintext: maxPlaintext}, nil
+	return &AgeProvider{command: command, identities: identities, stores: stores, timeout: timeout, maxPlaintext: maxPlaintext, snapshot: options.Snapshot}, nil
 }
 
 func (*AgeProvider) Scheme() string { return "age" }
@@ -114,7 +175,8 @@ func (p *AgeProvider) Resolve(ctx context.Context, _ Scope, locators []string) (
 	if len(p.identities) == 0 {
 		return BatchResult{}, &Error{Code: CodeProviderInvalid, Message: "age secret provider requires at least one identity"}
 	}
-	if err := p.qualify(ctx); err != nil {
+	command, err := p.qualify(ctx)
+	if err != nil {
 		return BatchResult{}, err
 	}
 
@@ -123,18 +185,18 @@ func (p *AgeProvider) Resolve(ctx context.Context, _ Scope, locators []string) (
 		requested[locator] = struct{}{}
 	}
 	result := BatchResult{Values: make(map[string]string, len(locators))}
-	for _, store := range p.stores {
+	stores, err := p.snapshotStores()
+	if err != nil {
+		return BatchResult{}, err
+	}
+	for _, store := range stores {
 		if len(result.Values) == len(requested) {
 			break
 		}
-		ciphertext, exists, err := readAgeStore(store.Path, maxCiphertextSize)
-		if err != nil {
-			return BatchResult{}, err
-		}
-		if !exists {
+		if !store.exists {
 			continue
 		}
-		plaintext, err := p.decrypt(ctx, ciphertext)
+		plaintext, err := p.decrypt(ctx, command, store.ciphertext)
 		if err != nil {
 			return BatchResult{}, err
 		}
@@ -160,25 +222,40 @@ func (p *AgeProvider) Resolve(ctx context.Context, _ Scope, locators []string) (
 	return result, nil
 }
 
-func (p *AgeProvider) qualify(ctx context.Context) error {
+func (p *AgeProvider) snapshotStores() ([]capturedStore, error) {
+	if p.snapshot != nil {
+		return p.snapshot.stores, nil
+	}
+	stores := make([]capturedStore, 0, len(p.stores))
+	for _, store := range p.stores {
+		ciphertext, exists, err := readAgeStore(store.Path, maxCiphertextSize)
+		if err != nil {
+			return nil, err
+		}
+		stores = append(stores, capturedStore{path: store.Path, exists: exists, ciphertext: ciphertext})
+	}
+	return stores, nil
+}
+
+func (p *AgeProvider) qualify(ctx context.Context) (string, error) {
 	command, err := exec.LookPath(p.command)
 	if err != nil {
-		return &Error{Code: CodeAgeUnavailable, Message: "age executable is unavailable"}
+		return "", &Error{Code: CodeAgeUnavailable, Message: "age executable is unavailable"}
 	}
 	operation, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
 	output, exceeded, err := runAge(operation, command, []string{"--version"}, nil, 1024)
 	if errors.Is(operation.Err(), context.DeadlineExceeded) {
-		return &Error{Code: CodeAgeUnavailable, Message: "age version check timed out"}
+		return "", &Error{Code: CodeAgeUnavailable, Message: "age version check timed out"}
 	}
 	if err != nil || exceeded {
-		return &Error{Code: CodeAgeUnavailable, Message: "age executable could not be queried"}
+		return "", &Error{Code: CodeAgeUnavailable, Message: "age executable could not be queried"}
 	}
 	match := ageVersionRE.FindStringSubmatch(strings.TrimSpace(string(output)))
 	if match == nil || versionLessThan(match[1], match[2], match[3], 1, 3, 0) {
-		return &Error{Code: CodeAgeVersionUnsupported, Message: "age 1.3.0 or newer is required"}
+		return "", &Error{Code: CodeAgeVersionUnsupported, Message: "age 1.3.0 or newer is required"}
 	}
-	return nil
+	return command, nil
 }
 
 func versionLessThan(major, minor, patch string, wantMajor, wantMinor, wantPatch int) bool {
@@ -194,11 +271,7 @@ func versionLessThan(major, minor, patch string, wantMajor, wantMinor, wantPatch
 	return gotPatch < wantPatch
 }
 
-func (p *AgeProvider) decrypt(ctx context.Context, ciphertext []byte) ([]byte, error) {
-	command, err := exec.LookPath(p.command)
-	if err != nil {
-		return nil, &Error{Code: CodeAgeUnavailable, Message: "age executable is unavailable"}
-	}
+func (p *AgeProvider) decrypt(ctx context.Context, command string, ciphertext []byte) ([]byte, error) {
 	arguments := make([]string, 0, 1+len(p.identities)*2)
 	arguments = append(arguments, "--decrypt")
 	for _, identity := range p.identities {

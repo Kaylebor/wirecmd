@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	secretref "github.com/Kaylebor/wirecmd/internal/secrets"
 	"github.com/bmatcuk/doublestar/v4"
 	kdl "github.com/njreid/gokdl2"
 	"github.com/njreid/gokdl2/document"
@@ -59,25 +60,6 @@ func (v Value) IsSecret() bool {
 type ResolvedValue struct {
 	Text      string
 	Sensitive bool
-}
-
-// ResolveEnv resolves the only first-slice secret provider, env://. lookup
-// must preserve os.LookupEnv's distinction between an unset name and a name
-// set to the empty string.
-func (v Value) ResolveEnv(lookup func(string) (string, bool)) (ResolvedValue, error) {
-	if v.Kind == ValueLiteral {
-		return ResolvedValue{Text: v.Text}, nil
-	}
-	if lookup == nil {
-		return ResolvedValue{}, fmt.Errorf("%s: no environment lookup", v.Path)
-	}
-
-	name := strings.TrimPrefix(v.Text, "env://")
-	resolved, ok := lookup(name)
-	if !ok {
-		return ResolvedValue{}, fmt.Errorf("%s: environment variable %q is not set", v.Path, name)
-	}
-	return ResolvedValue{Text: resolved, Sensitive: true}, nil
 }
 
 // Environment assigns a value to a child process environment name.
@@ -1325,35 +1307,13 @@ func parseValue(value *document.Value, p Provenance) (Value, error) {
 	case "":
 		return Value{Kind: ValueLiteral, Text: text, Provenance: p}, nil
 	case "secret":
-		if !validSecretReference(text) {
+		if _, err := secretref.ParseReference(text); err != nil {
 			return Value{}, fmt.Errorf("%s: secret reference must use SCHEME://LOCATOR", p.Path)
 		}
 		return Value{Kind: ValueSecretReference, Text: text, Provenance: p}, nil
 	default:
 		return Value{}, fmt.Errorf("%s: unsupported value annotation %q", p.Path, value.Type)
 	}
-}
-
-func validSecretReference(text string) bool {
-	scheme, locator, found := strings.Cut(text, "://")
-	return found && locator != "" && validSecretScheme(scheme)
-}
-
-func validSecretScheme(scheme string) bool {
-	if scheme == "" {
-		return false
-	}
-	for index := 0; index < len(scheme); index++ {
-		character := scheme[index]
-		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') {
-			continue
-		}
-		if index != 0 && ((character >= '0' && character <= '9') || character == '+' || character == '-' || character == '.') {
-			continue
-		}
-		return false
-	}
-	return true
 }
 
 func plainNode(node *document.Node, path string) error {

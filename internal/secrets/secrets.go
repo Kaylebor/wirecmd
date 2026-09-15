@@ -100,13 +100,9 @@ func NewRegistry(providers ...Provider) (*Registry, error) {
 
 // Parse validates raw SCHEME://LOCATOR input and returns its canonical form.
 func (r *Registry) Parse(raw string) (Reference, error) {
-	index := strings.Index(raw, "://")
-	if index <= 0 || index == len(raw)-3 {
-		return Reference{}, &Error{Code: CodeInvalidReference, Message: "secret reference must use SCHEME://LOCATOR"}
-	}
-	reference := Reference{Scheme: normalizeScheme(raw[:index]), Locator: raw[index+3:]}
-	if !validScheme(reference.Scheme) {
-		return Reference{}, &Error{Code: CodeInvalidReference, Message: "secret reference scheme is invalid"}
+	reference, err := ParseReference(raw)
+	if err != nil {
+		return Reference{}, err
 	}
 	provider, ok := r.providers[reference.Scheme]
 	if !ok {
@@ -114,6 +110,21 @@ func (r *Registry) Parse(raw string) (Reference, error) {
 	}
 	if err := provider.ValidateLocator(reference.Locator); err != nil {
 		return Reference{}, providerError(err, CodeInvalidReference, "secret reference locator is invalid")
+	}
+	return reference, nil
+}
+
+// ParseReference validates provider-independent SCHEME://LOCATOR syntax and
+// returns its canonical representation. A Registry additionally verifies that
+// the scheme exists and applies the provider's locator grammar.
+func ParseReference(raw string) (Reference, error) {
+	index := strings.Index(raw, "://")
+	if index <= 0 || index == len(raw)-3 {
+		return Reference{}, &Error{Code: CodeInvalidReference, Message: "secret reference must use SCHEME://LOCATOR"}
+	}
+	reference := Reference{Scheme: normalizeScheme(raw[:index]), Locator: raw[index+3:]}
+	if !validScheme(reference.Scheme) {
+		return Reference{}, &Error{Code: CodeInvalidReference, Message: "secret reference scheme is invalid"}
 	}
 	return reference, nil
 }
