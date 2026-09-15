@@ -25,7 +25,7 @@ release with:
 go install github.com/Kaylebor/wirecmd@latest
 ```
 
-After v0.4.0 is published, its reproducible installation will be:
+The reproducible v0.4.0 installation is:
 
 ```sh
 go install github.com/Kaylebor/wirecmd@v0.4.0
@@ -35,13 +35,13 @@ Linux and macOS are supported. Apple Silicon has native CI and maintainer M2
 smoke evidence; Intel macOS is CI-qualified without a physical-device claim.
 Windows remains unsupported.
 
-The v0.4.0 release candidate implements the public CLI, KDL configuration,
+The v0.4.0 release supports the public CLI, KDL configuration,
 structured result and error contracts, daemon/direct split, stdio and
 Streamable HTTP and legacy HTTP+SSE MCP transports, SDK-backed OAuth for
 Streamable HTTP, MCP resources, and the documented native LSP operations.
 Modern and legacy initialized stdio and Streamable HTTP are qualified, as is
 legacy HTTP+SSE through stable SDK v1.8.0. Transparent OAuth for legacy SSE
-remains deferred under the [SSE milestone](sse-plan.md). The candidate also
+remains deferred under the [SSE milestone](sse-plan.md). The release also
 supports optional age-backed secret resolution under the
 [age secrets plan](age-secrets-plan.md).
 
@@ -103,8 +103,11 @@ For a release that includes age-backed secrets, additionally qualify a
 non-secret sentinel store in direct and daemon-backed modes on Linux with the
 maintainer's TPM identity and on a physical Apple Silicon Mac with the Secure
 Enclave identity. Record first-start prompting, unchanged retained reuse,
-reload, direct execution, and cancellation. The physical Mac result is a
-release gate for that feature.
+reload, direct execution, and cancellation. Physical Mac qualification is
+normally a release gate for that feature. v0.4.0 was explicitly authorized for
+publication first so the tagged release could be used for that test; until the
+result is recorded, Secure Enclave-backed age resolution has no physical-device
+qualification claim.
 
 ## Manual release procedure
 

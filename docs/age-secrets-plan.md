@@ -146,4 +146,7 @@ equivalence, unchanged daemon reuse, reload replacement, and LSP fan-out. A
 release using this feature also requires a non-secret sentinel exercise with
 the Linux TPM-backed identity and on a physical Apple Silicon Mac with the
 Secure Enclave identity, recording first-start authorization, retained reuse,
-reload, direct execution, and cancellation.
+reload, direct execution, and cancellation. v0.4.0 is an explicitly authorized
+exception: it was published before the physical Mac run so the tagged build
+could be used for that test. Until the result is recorded, no physical-device
+qualification is claimed for the Secure Enclave-backed path.

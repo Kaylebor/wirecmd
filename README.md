@@ -33,15 +33,14 @@ never falls back to it silently.
 
 ## Install
 
-Wirecmd requires Go 1.26 or newer. This checkout documents the upcoming
-v0.4.0 release; after it is published, install the latest release with:
+Wirecmd requires Go 1.26 or newer. Install the latest release with:
 
 ```sh
 go install github.com/Kaylebor/wirecmd@latest
 wirecmd --version
 ```
 
-After publication, install v0.4.0 exactly with:
+To install v0.4.0 exactly:
 
 ```sh
 go install github.com/Kaylebor/wirecmd@v0.4.0
