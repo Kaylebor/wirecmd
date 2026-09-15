@@ -53,7 +53,7 @@ behavior may require a documented exception.
 configuration discovery, daemon connection, keyring access, or upstream
 request. Tagged module installations report their module version; local
 development builds report `dev`. `wirecmd version` is not reserved and may
-address a configured server named `version`.
+address a configured server named `version` through `wirecmd mcp version`.
 
 ## Runtime prerequisites
 
@@ -128,8 +128,9 @@ Publication remains an explicit maintainer action:
    version and exercise the release smoke operations.
 
 Every tag and GitHub Release requires a separate explicit release action.
-`v0.1.0` was published on 2026-09-08, `v0.2.0` on 2026-09-10, and `v0.3.0` on
-2026-09-14 after their exact release commits passed the gates above.
+`v0.1.0` was published on 2026-09-08, `v0.2.0` on 2026-09-10, `v0.3.0` on
+2026-09-14, and `v0.3.1` on 2026-09-15 after their exact release commits passed
+the gates above.
 
 ## Deferred
 
