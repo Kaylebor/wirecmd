@@ -18,6 +18,7 @@ import (
 	"github.com/Kaylebor/wirecmd/internal/config"
 	"github.com/Kaylebor/wirecmd/internal/discovery"
 	"github.com/Kaylebor/wirecmd/internal/lspclient"
+	secretpkg "github.com/Kaylebor/wirecmd/internal/secrets"
 	"github.com/bmatcuk/doublestar/v4"
 	"go.lsp.dev/jsonrpc2"
 )
@@ -207,6 +208,8 @@ type lspRuntimeStatus struct {
 
 type lspDefinitionStatus struct {
 	Name             string              `json:"name"`
+	Scope            string              `json:"scope"`
+	Root             string              `json:"root"`
 	ImplementationID string              `json:"implementation_id,omitempty"`
 	Executable       string              `json:"executable"`
 	Selectors        []lspStatusSelector `json:"selectors"`
@@ -228,6 +231,7 @@ type lspStatusEnvelope struct {
 type lspMatch struct {
 	Definition config.LSP
 	LanguageID string
+	Context    providerRuntimeContext
 }
 
 type lspProviderRun struct {
@@ -449,7 +453,7 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 	}
 	if request.Operation == lspStatus {
 		if opts.direct {
-			return makeLSPStatusEnvelope(cfg.LSPs, workspace, file, nil), nil
+			return makeLSPStatusEnvelope(cfg.LSPs, providerContext, file, nil), nil
 		}
 		rpc := daemonRequest{Operation: statusLSP, CWD: cwd, ProjectRoot: workspace, GlobalRoot: providerContext.GlobalRoot, TrustedBoundary: providerContext.TrustedBoundary, WorkspaceConfig: providerContext.WorkspaceConfig, WorkspaceDirectory: providerContext.WorkspaceDirectory, Configs: providerContext.Configs, Discovered: providerContext.Discovered, Fingerprint: configFingerprint(cfg), LSPFile: file, LSPOperation: lspStatus}
 		result, callErr, _ := daemonRequestCallWithClient(client, rpc, errOut)
@@ -457,36 +461,67 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 	}
 	var matches []lspMatch
 	if request.Operation == lspWorkspaceSymbols {
-		matches = allLSPDefinitions(cfg.LSPs)
+		matches, appErr = allLSPDefinitionsForContext(cfg.LSPs, providerContext)
 	} else {
-		matches, appErr = matchLSPDefinitions(cfg.LSPs, workspace, file)
-		if appErr != nil {
-			return nil, appErr
-		}
+		matches, appErr = matchLSPDefinitionsForContext(cfg.LSPs, providerContext, file)
+	}
+	if appErr != nil {
+		return nil, appErr
 	}
 	if appErr := validateLSPRequestInput(file, request, matches); appErr != nil {
 		return nil, appErr
 	}
-	selectedValues := lspSecretValues(matches)
-	secretStores, storesErr := selectedSecretStores(cwd, providerContext.Configs, providerContext.Discovered, selectedValues)
-	if storesErr != nil {
-		return nil, storesErr
+	scopeMatches := lspMatchesByScope(matches)
+	secretScopes := make(map[string]secretScopeInput, len(scopeMatches))
+	for _, scope := range lspScopeOrder(scopeMatches) {
+		scopedMatches := scopeMatches[scope]
+		selectedValues := lspSecretValues(scopedMatches)
+		secretStores, storesErr := selectedSecretStores(cwd, providerContext.Configs, providerContext.Discovered, scope, providerContext.GlobalRoot, selectedValues)
+		if storesErr != nil {
+			return nil, storesErr
+		}
+		secretScopes[string(scope)] = secretScopeInput{EnvSecrets: selectedLSPMatchesSecretInputs(scopedMatches, os.LookupEnv), SecretStores: secretStores}
 	}
 	if !opts.direct {
-		secrets := selectedLSPMatchesSecretInputs(matches, os.LookupEnv)
 		daemonOperation := inspectLSP
 		if isLSPNavigation(request.Operation) {
 			daemonOperation = navigateLSP
 		}
-		rpc := daemonRequest{Operation: daemonOperation, CWD: cwd, ProjectRoot: workspace, GlobalRoot: providerContext.GlobalRoot, TrustedBoundary: providerContext.TrustedBoundary, WorkspaceConfig: providerContext.WorkspaceConfig, WorkspaceDirectory: providerContext.WorkspaceDirectory, Configs: providerContext.Configs, Discovered: providerContext.Discovered, Fingerprint: configFingerprint(cfg), Execution: matchedLSPExecutionFingerprint(matches, nil, workspace, cfg.Secrets), EnvSecrets: secrets, SecretStores: secretStores, LSPFile: file, LSPLine: request.Line, LSPColumn: request.Column, LSPQuery: request.Query, LSPQuerySet: request.QuerySet, LSPOperation: request.Operation, LSPIncludeDeclaration: request.IncludeDeclaration}
+		rpc := daemonRequest{Operation: daemonOperation, CWD: cwd, ProjectRoot: workspace, GlobalRoot: providerContext.GlobalRoot, TrustedBoundary: providerContext.TrustedBoundary, WorkspaceConfig: providerContext.WorkspaceConfig, WorkspaceDirectory: providerContext.WorkspaceDirectory, Configs: providerContext.Configs, Discovered: providerContext.Discovered, Fingerprint: configFingerprint(cfg), Execution: matchedLSPExecutionFingerprint(matches, nil, workspace, cfg.Secrets), SecretScopes: secretScopes, LSPFile: file, LSPLine: request.Line, LSPColumn: request.Column, LSPQuery: request.Query, LSPQuerySet: request.QuerySet, LSPOperation: request.Operation, LSPIncludeDeclaration: request.IncludeDeclaration}
 		result, callErr, _ := daemonRequestCallWithClient(client, rpc, errOut)
 		return result, callErr
 	}
-	resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, providerContext.Discovered, nil, selectedValues, os.LookupEnv)
-	if resolveErr != nil {
-		return nil, resolveErr
+	resolvedByScope := make(map[config.Scope]resolvedSecretSet, len(scopeMatches))
+	ageSession := secretpkg.NewAgeSession()
+	for _, scope := range lspScopeOrder(scopeMatches) {
+		scopedMatches := scopeMatches[scope]
+		input := secretScopes[string(scope)]
+		resolved, resolveErr := resolveSelectedSecretsWithAgeSession(ctx, scope, cfg.Secrets, input.SecretStores, providerContext.Discovered && scope == config.ScopeWorkspace, nil, lspSecretValues(scopedMatches), os.LookupEnv, ageSession)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		resolvedByScope[scope] = resolved
 	}
-	return runDirectLSPMatches(ctx, nil, workspace, workspace, file, request, matches, resolved.lookup, errOut)
+	return runDirectLSPMatches(ctx, workspace, file, request, matches, resolvedByScope, errOut)
+}
+
+func lspMatchesByScope(matches []lspMatch) map[config.Scope][]lspMatch {
+	grouped := make(map[config.Scope][]lspMatch)
+	for _, match := range matches {
+		scope := normalizedScope(match.Definition.Scope)
+		grouped[scope] = append(grouped[scope], match)
+	}
+	return grouped
+}
+
+func lspScopeOrder(grouped map[config.Scope][]lspMatch) []config.Scope {
+	order := make([]config.Scope, 0, 2)
+	for _, scope := range []config.Scope{config.ScopeWorkspace, config.ScopeGlobal} {
+		if len(grouped[scope]) != 0 {
+			order = append(order, scope)
+		}
+	}
+	return order
 }
 
 func allLSPDefinitions(definitions []config.LSP) []lspMatch {
@@ -495,6 +530,18 @@ func allLSPDefinitions(definitions []config.LSP) []lspMatch {
 		matches[index] = lspMatch{Definition: definition}
 	}
 	return matches
+}
+
+func allLSPDefinitionsForContext(definitions []config.LSP, context invocationContext) ([]lspMatch, *appError) {
+	matches := make([]lspMatch, len(definitions))
+	for index, definition := range definitions {
+		runtimeContext, appErr := lspRuntimeContext(definition, context)
+		if appErr != nil {
+			return nil, appErr
+		}
+		matches[index] = lspMatch{Definition: definition, Context: runtimeContext}
+	}
+	return matches, nil
 }
 
 func validateLSPRequestInput(file string, request lspRequest, matches []lspMatch) *appError {
@@ -552,13 +599,25 @@ func effectiveLSPWorkspace(root *config.Root, cwd string) string {
 }
 
 func matchLSPDefinitions(definitions []config.LSP, workspace, file string) ([]lspMatch, *appError) {
-	relative, err := filepath.Rel(workspace, file)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return nil, configurationError("lsp_no_matching_provider", "the requested file is outside the effective workspace", "run Wirecmd in the intended workspace or configure its root")
-	}
-	relative = filepath.ToSlash(relative)
+	return matchLSPDefinitionsForContext(definitions, invocationContext{ProjectRoot: workspace}, file)
+}
+
+func matchLSPDefinitionsForContext(definitions []config.LSP, context invocationContext, file string) ([]lspMatch, *appError) {
 	matches := make([]lspMatch, 0)
 	for _, definition := range definitions {
+		root := providerRootForScope(definition.Scope, context)
+		if root == "" {
+			continue
+		}
+		relative, err := filepath.Rel(root, file)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			continue
+		}
+		runtimeContext, appErr := lspRuntimeContext(definition, context)
+		if appErr != nil {
+			return nil, appErr
+		}
+		relative = filepath.ToSlash(relative)
 		languageID := ""
 		for _, selector := range definition.Selectors {
 			matched, _ := doublestar.Match(selector.Pattern, relative)
@@ -571,11 +630,11 @@ func matchLSPDefinitions(definitions []config.LSP, workspace, file string) ([]ls
 			languageID = selector.LanguageID
 		}
 		if languageID != "" {
-			matches = append(matches, lspMatch{Definition: definition, LanguageID: languageID})
+			matches = append(matches, lspMatch{Definition: definition, LanguageID: languageID, Context: runtimeContext})
 		}
 	}
 	if len(matches) == 0 {
-		return nil, configurationError("lsp_no_matching_provider", fmt.Sprintf("no configured LSP selector matches %q", relative), "add or correct a selector pattern for this file")
+		return nil, configurationError("lsp_no_matching_provider", fmt.Sprintf("no configured LSP selector matches %q", file), "add or correct a selector pattern for this file")
 	}
 	return matches, nil
 }
@@ -619,7 +678,7 @@ func selectedLSPMatchesSecretInputs(matches []lspMatch, lookup func(string) (str
 	return result
 }
 
-func runDirectLSPMatches(ctx context.Context, root *config.Root, cwd, workspace, file string, request lspRequest, matches []lspMatch, lookup func(string) (string, bool), errOut io.Writer) (any, *appError) {
+func runDirectLSPMatches(ctx context.Context, workspace, file string, request lspRequest, matches []lspMatch, resolvedByScope map[config.Scope]resolvedSecretSet, errOut io.Writer) (any, *appError) {
 	results := make([]lspProviderRun, len(matches))
 	var wait sync.WaitGroup
 	var stderrMu sync.Mutex
@@ -632,14 +691,16 @@ func runDirectLSPMatches(ctx context.Context, root *config.Root, cwd, workspace,
 		wait.Add(1)
 		go func(index int, match lspMatch) {
 			defer wait.Done()
-			command, secrets, appErr := makeStdioCommand(match.Definition.Stdio, root, cwd, lookup)
+			scope := normalizedScope(match.Definition.Scope)
+			lookup := resolvedByScope[scope].lookup
+			command, secrets, appErr := makeStdioCommand(match.Definition.Stdio, nil, match.Context.Root, lookup)
 			if appErr != nil {
 				results[index].Err = appErr
 				return
 			}
 			redactor := newRedactor(secrets, lockedErr)
 			defer redactor.FlushTo(lockedErr)
-			session, err := lspclient.Start(ctx, lspclient.Command{Path: command.Path, Args: command.Args[1:], Env: command.Env, Dir: command.Dir, Stderr: redactor}, effectiveLSPWorkspace(root, cwd), buildinfo.Version())
+			session, err := lspclient.Start(ctx, lspclient.Command{Path: command.Path, Args: command.Args[1:], Env: command.Env, Dir: command.Dir, Stderr: redactor}, match.Context.Root, buildinfo.Version())
 			if err != nil {
 				results[index].Err = lspOperationError(err, "initialize").redacted(redactor)
 				return
@@ -991,14 +1052,15 @@ func bodyFromAppError(value *appError) *errorBody {
 	return &errorBody{Category: value.category, Code: value.code, Message: value.message, Action: value.action}
 }
 
-func makeLSPStatusEnvelope(definitions []config.LSP, workspace, file string, runtime map[string]lspRuntimeStatus) lspStatusEnvelope {
+func makeLSPStatusEnvelope(definitions []config.LSP, context invocationContext, file string, runtime map[string]lspRuntimeStatus) lspStatusEnvelope {
 	providers := make([]lspDefinitionStatus, 0, len(definitions))
 	for _, definition := range definitions {
+		root := providerRootForScope(definition.Scope, context)
 		selectors := make([]lspStatusSelector, 0, len(definition.Selectors))
 		for _, selector := range definition.Selectors {
 			item := lspStatusSelector{LanguageID: selector.LanguageID, Pattern: selector.Pattern}
 			if file != "" {
-				relative, err := filepath.Rel(workspace, file)
+				relative, err := filepath.Rel(root, file)
 				matched := false
 				if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 					matched, _ = doublestar.Match(selector.Pattern, filepath.ToSlash(relative))
@@ -1011,9 +1073,9 @@ func makeLSPStatusEnvelope(definitions []config.LSP, workspace, file string, run
 		if value, ok := runtime[definition.Name]; ok {
 			state = value
 		}
-		providers = append(providers, lspDefinitionStatus{Name: definition.Name, ImplementationID: definition.ImplementationID, Executable: definition.Stdio.Command, Selectors: selectors, Runtime: state})
+		providers = append(providers, lspDefinitionStatus{Name: definition.Name, Scope: string(definition.Scope), Root: root, ImplementationID: definition.ImplementationID, Executable: definition.Stdio.Command, Selectors: selectors, Runtime: state})
 	}
-	return lspStatusEnvelope{OK: true, LSP: lspStatusResult{Operation: lspStatus, Workspace: workspace, File: file, Providers: providers}}
+	return lspStatusEnvelope{OK: true, LSP: lspStatusResult{Operation: lspStatus, Workspace: context.ProjectRoot, File: file, Providers: providers}}
 }
 
 func lspOperationError(err error, operation string) *appError {

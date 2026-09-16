@@ -260,7 +260,7 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	cfg := loaded.Config
 	if req.operation == listServers {
 		if !opts.direct {
-			result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, sourceContext, nil), errOut)
+			result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, sourceContext), errOut)
 			return result, appErr
 		}
 		return serverList(cfg), nil
@@ -273,8 +273,12 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	if contextErr != nil {
 		return nil, contextErr
 	}
+	runtimeContext, runtimeErr := serverRuntimeContext(server, providerContext)
+	if runtimeErr != nil {
+		return nil, runtimeErr
+	}
 	selectedValues := serverSecretValues(server)
-	secretStores, storesErr := selectedSecretStores(providerContext.CWD, providerContext.Configs, providerContext.Discovered, selectedValues)
+	secretStores, storesErr := selectedSecretStores(providerContext.CWD, providerContext.Configs, providerContext.Discovered, server.Scope, providerContext.GlobalRoot, selectedValues)
 	if storesErr != nil {
 		return nil, storesErr
 	}
@@ -284,30 +288,34 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		}
 		secrets := selectedSecretInputs(server, os.LookupEnv)
 		if !opts.direct {
-			daemonRequest := daemonRequestFromConfig(req, cfg, providerContext.configContext, secrets)
+			daemonRequest := daemonRequestFromConfig(req, cfg, providerContext.configContext)
 			daemonRequest.ProjectRoot = providerContext.ProjectRoot
 			daemonRequest.GlobalRoot = providerContext.GlobalRoot
-			daemonRequest.Execution = serverExecutionFingerprint(server, nil, providerContext.ProjectRoot, cfg.Secrets)
-			daemonRequest.SecretStores = secretStores
+			daemonRequest.ProviderRoot = runtimeContext.Root
+			daemonRequest.ScopeOwner = runtimeContext.Owner
+			daemonRequest.Execution = serverExecutionFingerprint(server, nil, runtimeContext.Root, cfg.Secrets)
+			daemonRequest.SecretScopes = map[string]secretScopeInput{string(server.Scope): {EnvSecrets: secrets, SecretStores: secretStores}}
 			daemonRequest.Auth = authAdmin.command
 			daemonRequest.Interactive = isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
 			daemonClient.event = browserEventHandler(errOut, daemonEventRedactor(server, secrets, errOut))
 			result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequest, errOut)
 			return result, appErr
 		}
-		resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, providerContext.Discovered, nil, selectedValues, os.LookupEnv)
+		resolved, resolveErr := resolveSelectedSecrets(ctx, server.Scope, cfg.Secrets, secretStores, providerContext.Discovered && server.Scope == config.ScopeWorkspace, nil, selectedValues, os.LookupEnv)
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
-		return runDirectAuth(ctx, authAdmin, server, nil, providerContext.ProjectRoot, resolved.lookup, in, errOut)
+		return runDirectAuth(ctx, authAdmin, server, nil, runtimeContext.Root, resolved.lookup, in, errOut)
 	}
 	if !opts.direct {
 		secrets := selectedSecretInputs(server, os.LookupEnv)
-		daemonRequest := daemonRequestFromConfig(req, cfg, providerContext.configContext, secrets)
+		daemonRequest := daemonRequestFromConfig(req, cfg, providerContext.configContext)
 		daemonRequest.ProjectRoot = providerContext.ProjectRoot
 		daemonRequest.GlobalRoot = providerContext.GlobalRoot
-		daemonRequest.Execution = serverExecutionFingerprint(server, nil, providerContext.ProjectRoot, cfg.Secrets)
-		daemonRequest.SecretStores = secretStores
+		daemonRequest.ProviderRoot = runtimeContext.Root
+		daemonRequest.ScopeOwner = runtimeContext.Owner
+		daemonRequest.Execution = serverExecutionFingerprint(server, nil, runtimeContext.Root, cfg.Secrets)
+		daemonRequest.SecretScopes = map[string]secretScopeInput{string(server.Scope): {EnvSecrets: secrets, SecretStores: secretStores}}
 		daemonRequest.Interactive = isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
 		daemonClient.event = browserEventHandler(errOut, daemonEventRedactor(server, secrets, errOut))
 		result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequest, errOut)
@@ -320,11 +328,11 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		return result, nil
 	}
 
-	resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, providerContext.Discovered, nil, selectedValues, os.LookupEnv)
+	resolved, resolveErr := resolveSelectedSecrets(ctx, server.Scope, cfg.Secrets, secretStores, providerContext.Discovered && server.Scope == config.ScopeWorkspace, nil, selectedValues, os.LookupEnv)
 	if resolveErr != nil {
 		return nil, resolveErr
 	}
-	target, secrets, targetErr := makeTarget(server, nil, providerContext.ProjectRoot, resolved.lookup)
+	target, secrets, targetErr := makeTarget(server, nil, runtimeContext.Root, resolved.lookup)
 	if targetErr != nil {
 		return nil, targetErr
 	}

@@ -415,7 +415,9 @@ Prefix flags (before the command path; availability depends on command):
   --colour auto|always|never         alias for --color
 
 Without --config, discover global configuration and trusted workspace files.
-Workspace calls share a resolved project root. Configuration may disable the
+Workspace calls share a resolved project root. MCP and LSP definitions may use
+scope "global" for global lifecycle ownership; global stdio and LSP providers
+require Wirecmd's global configuration directory. Configuration may disable the
 optional Git project signal with the KDL 2 setting git-root #false.
 Normal capability calls are daemon-backed and never fall back to --direct.
 

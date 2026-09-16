@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -104,6 +105,24 @@ type AgeProviderOptions struct {
 	Timeout      time.Duration
 	MaxPlaintext int64
 	Snapshot     *StoreSnapshot
+	Session      *AgeSession
+}
+
+// AgeSession shares decrypted documents only within one caller-owned
+// resolution operation. Callers must discard it after the grouped operation.
+type AgeSession struct {
+	mu        sync.Mutex
+	documents map[string]ageSessionDocument
+}
+
+type ageSessionDocument struct {
+	values map[string]string
+	err    error
+}
+
+// NewAgeSession creates an operation-local age decryption session.
+func NewAgeSession() *AgeSession {
+	return &AgeSession{documents: map[string]ageSessionDocument{}}
 }
 
 // AgeProvider decrypts JSON stores with the external age command. It retains
@@ -115,6 +134,7 @@ type AgeProvider struct {
 	timeout      time.Duration
 	maxPlaintext int64
 	snapshot     *StoreSnapshot
+	session      *AgeSession
 }
 
 // NewAgeProvider validates effective age configuration. Identity paths must
@@ -150,7 +170,7 @@ func NewAgeProvider(options AgeProviderOptions) (*AgeProvider, error) {
 			return nil, &Error{Code: CodeProviderInvalid, Message: "age secret store path is empty"}
 		}
 	}
-	return &AgeProvider{command: command, identities: identities, stores: stores, timeout: timeout, maxPlaintext: maxPlaintext, snapshot: options.Snapshot}, nil
+	return &AgeProvider{command: command, identities: identities, stores: stores, timeout: timeout, maxPlaintext: maxPlaintext, snapshot: options.Snapshot, session: options.Session}, nil
 }
 
 func (*AgeProvider) Scheme() string { return "age" }
@@ -197,11 +217,7 @@ func (p *AgeProvider) Resolve(ctx context.Context, _ Scope, locators []string) (
 		if !store.exists {
 			continue
 		}
-		plaintext, err := p.decrypt(ctx, command, store.ciphertext)
-		if err != nil {
-			return BatchResult{}, err
-		}
-		values, err := decodeAgeDocument(plaintext)
+		values, err := p.document(ctx, command, store)
 		if err != nil {
 			return BatchResult{}, err
 		}
@@ -221,6 +237,30 @@ func (p *AgeProvider) Resolve(ctx context.Context, _ Scope, locators []string) (
 	}
 	sort.Strings(result.Missing)
 	return result, nil
+}
+
+func (p *AgeProvider) document(ctx context.Context, command string, store capturedStore) (map[string]string, error) {
+	if p.session == nil {
+		plaintext, err := p.decrypt(ctx, command, store.ciphertext)
+		if err != nil {
+			return nil, err
+		}
+		return decodeAgeDocument(plaintext)
+	}
+	digest := sha256.Sum256(store.ciphertext)
+	key := store.path + "\x00" + hex.EncodeToString(digest[:])
+	p.session.mu.Lock()
+	defer p.session.mu.Unlock()
+	if document, ok := p.session.documents[key]; ok {
+		return document.values, document.err
+	}
+	plaintext, err := p.decrypt(ctx, command, store.ciphertext)
+	var values map[string]string
+	if err == nil {
+		values, err = decodeAgeDocument(plaintext)
+	}
+	p.session.documents[key] = ageSessionDocument{values: values, err: err}
+	return values, err
 }
 
 func (p *AgeProvider) snapshotStores() ([]capturedStore, error) {

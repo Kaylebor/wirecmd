@@ -214,6 +214,35 @@ func TestAgeProviderUsesFixedCommandAndStorePrecedence(t *testing.T) {
 	}
 }
 
+func TestAgeSessionDecryptsSharedStoreOnceAcrossScopes(t *testing.T) {
+	directory := t.TempDir()
+	calls := filepath.Join(directory, "calls")
+	fake := filepath.Join(directory, "age")
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then printf 'v1.3.2\\n'; exit 0; fi\nprintf 'decrypt\\n' >> " + fmt.Sprintf("%q", calls) + "\ncat\n"
+	if err := os.WriteFile(fake, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store := writeStore(t, `{"TOKEN":"value"}`)
+	session := NewAgeSession()
+	for _, scope := range []Scope{"workspace", "global"} {
+		provider, err := NewAgeProvider(AgeProviderOptions{Command: fake, Identities: []string{testIdentity(t)}, Stores: []Store{{Path: store}}, Session: session})
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := provider.Resolve(context.Background(), scope, []string{"TOKEN"})
+		if err != nil || result.Values["TOKEN"] != "value" {
+			t.Fatalf("scope %s: result=%#v err=%v", scope, result, err)
+		}
+	}
+	data, err := os.ReadFile(calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(strings.Fields(string(data))); got != 1 {
+		t.Fatalf("decrypt calls = %d, want 1", got)
+	}
+}
+
 func TestAgeProviderRejectsUnsafeAndInvalidStores(t *testing.T) {
 	fake := writeFakeAge(t)
 	t.Setenv("AGE_TEST_VERSION", "1.3.2")

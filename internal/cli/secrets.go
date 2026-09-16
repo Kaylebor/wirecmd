@@ -23,7 +23,11 @@ func (s resolvedSecretSet) lookup(reference string) (string, bool) {
 	return value, ok
 }
 
-func resolveSelectedSecrets(ctx context.Context, configured config.Secrets, stores []string, automatic bool, snapshot *secretpkg.StoreSnapshot, values []config.Value, envLookup func(string) (string, bool)) (resolvedSecretSet, *appError) {
+func resolveSelectedSecrets(ctx context.Context, scope config.Scope, configured config.Secrets, stores []string, automatic bool, snapshot *secretpkg.StoreSnapshot, values []config.Value, envLookup func(string) (string, bool)) (resolvedSecretSet, *appError) {
+	return resolveSelectedSecretsWithAgeSession(ctx, scope, configured, stores, automatic, snapshot, values, envLookup, nil)
+}
+
+func resolveSelectedSecretsWithAgeSession(ctx context.Context, scope config.Scope, configured config.Secrets, stores []string, automatic bool, snapshot *secretpkg.StoreSnapshot, values []config.Value, envLookup func(string) (string, bool), session *secretpkg.AgeSession) (resolvedSecretSet, *appError) {
 	identities := []string(nil)
 	if configured.Age != nil {
 		identities = make([]string, len(configured.Age.Identities))
@@ -39,7 +43,7 @@ func resolveSelectedSecrets(ctx context.Context, configured config.Secrets, stor
 	if err != nil {
 		return resolvedSecretSet{}, secretResolutionError(err)
 	}
-	ageProvider, err := secretpkg.NewAgeProvider(secretpkg.AgeProviderOptions{Identities: identities, Stores: ageStores, Snapshot: snapshot})
+	ageProvider, err := secretpkg.NewAgeProvider(secretpkg.AgeProviderOptions{Identities: identities, Stores: ageStores, Snapshot: snapshot, Session: session})
 	if err != nil {
 		return resolvedSecretSet{}, secretResolutionError(err)
 	}
@@ -69,7 +73,7 @@ func resolveSelectedSecrets(ctx context.Context, configured config.Secrets, stor
 			references = append(references, reference)
 		}
 	}
-	resolved, err := registry.Resolve(ctx, secretpkg.Scope(config.ScopeWorkspace), references)
+	resolved, err := registry.Resolve(ctx, secretpkg.Scope(scope), references)
 	if err != nil {
 		return resolvedSecretSet{}, secretResolutionError(err)
 	}
@@ -190,9 +194,15 @@ func isEnvReference(raw string) (string, bool) {
 	return locator, ok && strings.EqualFold(scheme, "env") && locator != ""
 }
 
-func selectedSecretStores(cwd string, configPaths []string, discovered bool, values []config.Value) ([]string, *appError) {
+func selectedSecretStores(cwd string, configPaths []string, discovered bool, scope config.Scope, globalRoot string, values []config.Value) ([]string, *appError) {
 	if len(selectedAgeReferences(values)) == 0 {
 		return nil, nil
+	}
+	if scope == config.ScopeGlobal {
+		if globalRoot == "" {
+			return nil, nil
+		}
+		return []string{filepath.Join(globalRoot, "secrets.json.age")}, nil
 	}
 	stores, err := discovery.SecretStoreCandidates(cwd, configPaths, discovered)
 	if err != nil {

@@ -285,6 +285,133 @@ env WIRECMD_LSP_EXPECT_WORKSPACE=%s
 	}
 }
 
+func TestGlobalLSPUsesGlobalRootAndReusesAcrossProjects(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
+	configHome := t.TempDir()
+	globalRoot := filepath.Join(configHome, "wirecmd")
+	if err := os.Mkdir(globalRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	input := filepath.Join(globalRoot, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.kdl")
+	writeSource(t, configPath, fmt.Sprintf(`wirecmd {
+lsp "fixture" {
+scope "global"
+selector language-id="fixture" pattern="**/*.go"
+stdio %s {
+arg "-test.run=TestCLILSPHelperProcess"
+env WIRECMD_LSP_EXPECT_WORKSPACE=%s
+}
+}
+}
+`, strconv.Quote(os.Args[0]), strconv.Quote(canonicalPath(globalRoot))))
+
+	projects := []string{t.TempDir(), t.TempDir()}
+	t.Chdir(projects[0])
+	mustInvokeLSP(t, []string{"--direct", "--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2"})
+	startTestDaemon(t)
+	for _, project := range projects {
+		t.Chdir(project)
+		mustInvokeLSP(t, []string{"--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2"})
+	}
+	code, output, stderr := invoke(t, []string{"daemon", "status"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["daemon"].(map[string]any)["active_instances"].(json.Number).String() != "1" {
+		t.Fatalf("global LSP reuse: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	status := decodeOutput(t, mustInvokeLSP(t, []string{"--config", configPath, "lsp", "status", "--file", input}))["lsp"].(map[string]any)
+	provider := status["providers"].([]any)[0].(map[string]any)
+	if status["workspace"] != canonicalPath(projects[1]) || provider["scope"] != "global" || provider["root"] != canonicalPath(globalRoot) {
+		t.Fatalf("global LSP status = %#v", status)
+	}
+
+	projectFile := filepath.Join(projects[1], "main.go")
+	if err := os.WriteFile(projectFile, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, output, _ = invoke(t, []string{"--direct", "--config", configPath, "lsp", "definition", "--file", projectFile, "--line", "1", "--column", "2"})
+	if code != exitConfiguration || decodeOutput(t, output)["error"].(map[string]any)["code"] != "lsp_no_matching_provider" {
+		t.Fatalf("global LSP attached outside global root: code=%d output=%s", code, output)
+	}
+}
+
+func TestGlobalLSPReportsUnavailableRootOnlyWhenSelected(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	project := t.TempDir()
+	t.Chdir(project)
+	input := filepath.Join(project, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(project, "config.kdl")
+	writeSource(t, configPath, fmt.Sprintf(`wirecmd {
+lsp "workspace" { selector language-id="fixture" pattern="**/*.go"; stdio %s { arg "-test.run=TestCLILSPHelperProcess" } }
+lsp "global" { scope "global"; selector language-id="fixture" pattern="**/*.go"; stdio %s { arg "-test.run=TestCLILSPHelperProcess" } }
+}
+`, strconv.Quote(os.Args[0]), strconv.Quote(os.Args[0])))
+
+	status := decodeOutput(t, mustInvokeLSP(t, []string{"--direct", "--config", configPath, "lsp", "status", "--file", input}))["lsp"].(map[string]any)
+	if len(status["providers"].([]any)) != 2 {
+		t.Fatalf("static status providers = %#v", status["providers"])
+	}
+	output := decodeOutput(t, mustInvokeLSP(t, []string{"--direct", "--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2"}))["lsp"].(map[string]any)
+	if len(output["providers"].([]any)) != 1 || output["providers"].([]any)[0].(map[string]any)["name"] != "workspace" {
+		t.Fatalf("workspace selection with absent global root = %#v", output)
+	}
+
+	code, raw, _ := invoke(t, []string{"--direct", "--config", configPath, "lsp", "workspace-symbols", "--query", "call"})
+	if code != exitConfiguration || decodeOutput(t, raw)["error"].(map[string]any)["code"] != "global_root_unavailable" {
+		t.Fatalf("selected global LSP without root: code=%d output=%s", code, raw)
+	}
+}
+
+func TestMixedScopeLSPDecryptsEachUniqueStoreOnce(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	calls := filepath.Join(t.TempDir(), "age.calls")
+	t.Setenv("WIRECMD_FAKE_AGE_CALLS", calls)
+	writePassthroughFakeAge(t)
+	configHome := t.TempDir()
+	globalRoot := filepath.Join(configHome, "wirecmd")
+	if err := os.Mkdir(globalRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	if err := os.WriteFile(filepath.Join(globalRoot, "secrets.json.age"), []byte(`{"SHARED":".shared"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(globalRoot, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configDirectory := t.TempDir()
+	configPath := filepath.Join(configDirectory, "config.kdl")
+	identity := filepath.Join(configDirectory, "identity.age")
+	writeSource(t, configPath, fmt.Sprintf(`wirecmd {
+root %s
+secrets { age { identity %s } }
+lsp "workspace" { scope "workspace"; selector language-id="fixture" pattern="**/*.go"; stdio %s { arg "-test.run=TestCLILSPHelperProcess"; env WIRECMD_LSP_PROVIDER=(secret)"age://SHARED" } }
+lsp "global" { scope "global"; selector language-id="fixture" pattern="**/*.go"; stdio %s { arg "-test.run=TestCLILSPHelperProcess"; env WIRECMD_LSP_PROVIDER=(secret)"age://SHARED" } }
+}
+`, strconv.Quote(globalRoot), strconv.Quote(identity), strconv.Quote(os.Args[0]), strconv.Quote(os.Args[0])))
+	if err := os.WriteFile(filepath.Join(configDirectory, "secrets.json.age"), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	output := decodeOutput(t, mustInvokeLSP(t, []string{"--direct", "--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2"}))["lsp"].(map[string]any)
+	if len(output["providers"].([]any)) != 2 || len(output["locations"].([]any)) != 2 {
+		t.Fatalf("mixed-scope result = %#v", output)
+	}
+	if got := fakeAgeDecryptCount(t, calls); got != 2 {
+		t.Fatalf("mixed-scope decrypts = %d, want one per unique store (2)", got)
+	}
+}
+
 func TestLSPFingerprintAndSelectedSecrets(t *testing.T) {
 	source, err := config.ParseString("lsp.kdl", `wirecmd {
         lsp "fixture" {

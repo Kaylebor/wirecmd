@@ -5,8 +5,8 @@ implemented and qualified
 
 ## Objective
 
-Expose workspace-scoped Language Server Protocol navigation and read-only
-inspection through Wirecmd's shell and retained-daemon contract. Wirecmd owns
+Expose Language Server Protocol navigation and read-only inspection through
+Wirecmd's shell and retained-daemon contract. Wirecmd owns
 stable semantic commands, configuration, routing, normalization, and lifecycle.
 It does not supply a language-server catalog, infer executable names or file
 extensions, generate launch arguments, or contain server-specific behavior.
@@ -30,8 +30,8 @@ wirecmd --help lsp [OPERATION]
 
 Files resolve from the caller's current directory. Lines and columns are
 one-based at the CLI boundary and are converted to zero-based UTF-16 positions.
-Navigation rejects unreadable, non-UTF-8, out-of-range, outside-workspace, and
-unmatched files with actionable errors.
+Navigation rejects unreadable, non-UTF-8, out-of-range, outside the selected
+provider root, and unmatched files with actionable errors.
 
 The bare `wirecmd lsp` form and its help forms are static and start no process.
 Normal navigation uses retained daemon sessions; `--direct` uses one-shot
@@ -111,12 +111,15 @@ wirecmd {
 }
 ```
 
-Scope defaults to `workspace`; the provider root is the shared resolved project
-root defined by the [scope and invocation context plan](scope-context-plan.md). The stdio
-executable and at least one selector are mandatory. `implementation-id`, argv,
-and environment are optional. Each selector requires `language-id`; `pattern`
-defaults to `**/*`. Patterns are validated and matched with doublestar against
-slash-normalized paths relative to the effective workspace root.
+Scope defaults to `workspace`, whose provider root is the shared resolved
+project root defined by the [scope and invocation context plan](scope-context-plan.md).
+`scope "global"` uses the global Wirecmd root instead. A global provider's
+selectors, process CWD, initialization root, and pooling remain there; it does
+not attach to the caller's project. The stdio executable and at least one
+selector are mandatory. `implementation-id`, argv, and environment are
+optional. Each selector requires `language-id`; `pattern` defaults to `**/*`.
+Patterns are validated and matched with doublestar against slash-normalized
+paths relative to that provider's root.
 
 Selectors use OR semantics. A matching definition with different selected
 language IDs returns `lsp_selector_ambiguous`. All matching definitions are
@@ -136,10 +139,11 @@ appropriate.
 Each routed operation starts or acquires every matching provider and filters it
 using initialization capabilities. Distinct providers run concurrently, while
 operations for one retained instance remain serialized. Output is reordered to
-configuration order after fan-out. Initialization supplies the workspace root,
-one workspace folder, conservative implemented client capabilities, and UTF-16
-position support. Server name/version, capabilities, chosen encoding, and sync
-behavior are observed from initialization; none participates in launch routing.
+configuration order after fan-out. Initialization supplies each provider's
+resolved root, one workspace folder, conservative implemented client
+capabilities, and UTF-16 position support. Server name/version, capabilities,
+chosen encoding, and sync behavior are observed from initialization; none
+participates in launch routing.
 
 Documents open lazily with the selector's language ID. Retained sessions reuse
 unchanged content and increment versions when files change. Full-sync providers
@@ -149,12 +153,14 @@ completion, reload, retirement, and shutdown close documents and perform the
 standard LSP shutdown/exit sequence. Broken sessions remain unavailable until
 reload or daemon restart and requests are never replayed.
 
-Daemon instances are keyed by definition, resolved workspace root, selected
-execution configuration, daemon generation, and sensitive startup identity.
+Daemon instances are keyed by definition, scope owner, resolved provider root,
+selected execution configuration, daemon generation, and sensitive startup
+identity. Status retains the invocation project root at top level and reports
+each provider's scope and resolved root.
 The LSP slice introduced private daemon protocol version 6; the current client
-and daemon use version 12 after adding schema-aware trailing help, native LSP
-inspection and signature-help requests, MCP resources, age resolution, and the
-shared invocation context. Status
+and daemon use version 13 after adding schema-aware trailing help, native LSP
+inspection and signature-help requests, MCP resources, age resolution, shared
+invocation context, and scope-separated provider inputs. Status
 reports configured definitions, selectors, optional implementation metadata,
 executable, selector matches, and already-observed runtime identity and
 capabilities without starting a process.

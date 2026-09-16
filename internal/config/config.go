@@ -23,6 +23,8 @@ type Scope string
 const (
 	// ScopeWorkspace makes a server instance specific to its effective workspace.
 	ScopeWorkspace Scope = "workspace"
+	// ScopeGlobal makes a server instance specific to the same-user daemon namespace.
+	ScopeGlobal Scope = "global"
 )
 
 // ValueKind distinguishes public literals from references whose resolved value
@@ -487,8 +489,7 @@ func Compose(sources ...*Source) (*Config, error) {
 		}
 	}
 
-	// Scope is intentionally workspace-only in this milestone. An omitted scope
-	// is therefore a useful shorthand rather than an incomplete value.
+	// Omitted scope keeps the project-local lifecycle boundary as the default.
 	for index := range config.Servers {
 		server := &config.Servers[index]
 		if server.Scope == "" && server.ScopeProvenance == (Provenance{}) {
@@ -616,7 +617,7 @@ func validate(config *Config) error {
 	}
 	for _, server := range config.Servers {
 		path := serverPath(server.Name)
-		if server.Scope != ScopeWorkspace {
+		if server.Scope != ScopeWorkspace && server.Scope != ScopeGlobal {
 			return validationError(server.ScopeProvenance, path+".scope", "unsupported scope %q", server.Scope)
 		}
 		if server.HTTP != nil {
@@ -661,7 +662,7 @@ func validate(config *Config) error {
 	}
 	for _, lsp := range config.LSPs {
 		path := lspPath(lsp.Name)
-		if lsp.Scope != ScopeWorkspace {
+		if lsp.Scope != ScopeWorkspace && lsp.Scope != ScopeGlobal {
 			return validationError(lsp.ScopeProvenance, path+".scope", "unsupported scope %q", lsp.Scope)
 		}
 		if lsp.ImplementationIDProvenance != (Provenance{}) && lsp.ImplementationID == "" {

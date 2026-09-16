@@ -806,6 +806,64 @@ func TestDaemonRejectsMovedRelativeRootWithoutReload(t *testing.T) {
 	}
 }
 
+func TestGlobalStdioUsesGlobalRootAndReusesAcrossProjects(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	runtime := testRuntimeDirectory(t)
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	configHome := t.TempDir()
+	globalRoot := filepath.Join(configHome, "wirecmd")
+	if err := os.Mkdir(globalRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	startTestDaemon(t)
+
+	configPath := filepath.Join(t.TempDir(), "config.kdl")
+	writeSource(t, configPath, "wirecmd { mcp \"helper\" { scope \"global\"; stdio "+strconv.Quote(os.Args[0])+" { arg \"-test.run=TestHelperProcess\"; arg \"--\" } } }")
+	for _, project := range []string{t.TempDir(), t.TempDir()} {
+		t.Chdir(project)
+		code, output, stderr := invoke(t, []string{"--config", configPath, "helper", "working_directory"})
+		if code != exitOK || stderr != "" || callCWD(t, output) != canonicalPath(globalRoot) {
+			t.Fatalf("global call from %s: code=%d stderr=%q output=%s", project, code, stderr, output)
+		}
+	}
+	code, output, stderr := invoke(t, []string{"daemon", "status"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["daemon"].(map[string]any)["active_instances"].(json.Number).String() != "1" {
+		t.Fatalf("global reuse status: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+}
+
+func TestGlobalStdioReportsUnavailableRoot(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	configPath := filepath.Join(t.TempDir(), "config.kdl")
+	writeSource(t, configPath, "wirecmd { mcp \"helper\" { scope \"global\"; stdio "+strconv.Quote(os.Args[0])+" } }")
+	code, output, _ := invoke(t, []string{"--direct", "--config", configPath, "helper"})
+	if code != exitConfiguration || decodeOutput(t, output)["error"].(map[string]any)["code"] != "global_root_unavailable" {
+		t.Fatalf("missing global root: code=%d output=%s", code, output)
+	}
+}
+
+func TestGlobalHTTPReusesAcrossProjectsWithoutGlobalDirectory(t *testing.T) {
+	runtime := testRuntimeDirectory(t)
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	startTestDaemon(t)
+	fixture := newHTTPFixture(t)
+	configPath := writeConfig(t, "wirecmd { mcp \"remote\" { scope \"global\"; http "+strconv.Quote(fixture.URL)+" } }")
+
+	for _, project := range []string{t.TempDir(), t.TempDir()} {
+		t.Chdir(project)
+		code, output, stderr := invoke(t, []string{"--config", configPath, "remote"})
+		if code != exitOK || stderr != "" || len(decodeOutput(t, output)["tools"].([]any)) == 0 {
+			t.Fatalf("global HTTP from %s: code=%d stderr=%q output=%s", project, code, stderr, output)
+		}
+	}
+	code, output, stderr := invoke(t, []string{"daemon", "status"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["daemon"].(map[string]any)["active_instances"].(json.Number).String() != "1" {
+		t.Fatalf("global HTTP reuse status: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+}
+
 func TestDaemonCoalescesConcurrentStartup(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
 	runtime := testRuntimeDirectory(t)
