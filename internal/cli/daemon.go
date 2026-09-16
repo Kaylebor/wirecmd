@@ -1196,6 +1196,17 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 	}
 	states := make(map[config.Scope]*lspScopeState)
 	ageSession := secretpkg.NewAgeSession()
+	releaseSetupInstances := true
+	defer func() {
+		if !releaseSetupInstances {
+			return
+		}
+		for _, instance := range instances {
+			if instance != nil {
+				d.release(instance)
+			}
+		}
+	}()
 	groupedMatches := lspMatchesByScope(matches)
 	for _, scope := range lspScopeOrder(groupedMatches) {
 		scopedMatches := groupedMatches[scope]
@@ -1261,6 +1272,7 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 	if appErr := validateLSPRequestInput(request.LSPFile, lspReq, matches); appErr != nil {
 		return errorReplyWithWarnings(appErr, warnings)
 	}
+	releaseSetupInstances = false
 	results := make([]lspProviderRun, len(matches))
 	var poolKeysMu sync.Mutex
 	var wait sync.WaitGroup

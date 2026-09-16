@@ -412,6 +412,59 @@ lsp "global" { scope "global"; selector language-id="fixture" pattern="**/*.go";
 	}
 }
 
+func TestMixedScopeLSPSetupFailureReleasesCachedInstances(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
+	writePassthroughFakeAge(t)
+	configHome := t.TempDir()
+	globalRoot := filepath.Join(configHome, "wirecmd")
+	if err := os.Mkdir(globalRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	globalStore := filepath.Join(globalRoot, "secrets.json.age")
+	if err := os.WriteFile(globalStore, []byte(`{"GLOBAL":"global"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(globalRoot, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configDirectory := t.TempDir()
+	configPath := filepath.Join(configDirectory, "config.kdl")
+	workspacePID := filepath.Join(configDirectory, "workspace.pid")
+	globalPID := filepath.Join(configDirectory, "global.pid")
+	identity := filepath.Join(configDirectory, "identity.age")
+	writeSource(t, configPath, fmt.Sprintf(`wirecmd {
+root %s
+secrets { age { identity %s } }
+lsp "workspace" { selector language-id="fixture" pattern="**/*.go"; stdio %s { arg "-test.run=TestCLILSPHelperProcess"; env TOKEN=(secret)"age://WORKSPACE"; env WIRECMD_LSP_PID_FILE=%s } }
+lsp "global" { scope "global"; selector language-id="fixture" pattern="**/*.go"; stdio %s { arg "-test.run=TestCLILSPHelperProcess"; env TOKEN=(secret)"age://GLOBAL"; env WIRECMD_LSP_PID_FILE=%s } }
+}
+`, strconv.Quote(globalRoot), strconv.Quote(identity), strconv.Quote(os.Args[0]), strconv.Quote(workspacePID), strconv.Quote(os.Args[0]), strconv.Quote(globalPID)))
+	if err := os.WriteFile(filepath.Join(configDirectory, "secrets.json.age"), []byte(`{"WORKSPACE":"workspace"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	startTestDaemon(t)
+	mustInvokeLSP(t, []string{"--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2"})
+	workspaceProcess := childPIDs(t, workspacePID)[0]
+	globalProcess := childPIDs(t, globalPID)[0]
+
+	if err := os.WriteFile(globalStore, []byte(`{`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, output, _ := invoke(t, []string{"--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2"})
+	if code != exitConfiguration || decodeOutput(t, output)["error"].(map[string]any)["code"] != "secret_store_invalid" {
+		t.Fatalf("mixed-scope setup failure: code=%d output=%s", code, output)
+	}
+	code, output, stderr := invoke(t, []string{"daemon", "reload"})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("daemon reload: code=%d output=%s stderr=%q", code, output, stderr)
+	}
+	waitForProcessExit(t, workspaceProcess)
+	waitForProcessExit(t, globalProcess)
+}
+
 func TestLSPFingerprintAndSelectedSecrets(t *testing.T) {
 	source, err := config.ParseString("lsp.kdl", `wirecmd {
         lsp "fixture" {
@@ -686,6 +739,12 @@ lsp "only" { selector language-id="fixture"; stdio %s { arg "-test.run=TestCLILS
 func TestCLILSPHelperProcess(t *testing.T) {
 	if os.Getenv("WIRECMD_CLI_LSP_HELPER") == "" {
 		return
+	}
+	if pidFile := os.Getenv("WIRECMD_LSP_PID_FILE"); pidFile != "" {
+		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return
+		}
 	}
 	stream := jsonrpc2.NewStream(&cliLSPStdio{Reader: os.Stdin, Writer: os.Stdout})
 	delay, _ := strconv.Atoi(os.Getenv("WIRECMD_LSP_DELAY_MS"))
