@@ -230,6 +230,11 @@ func TestHelperProcess(t *testing.T) {
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{secret: map[string]any{"type": "string"}}},
 	}, semanticSecretTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "environment", Description: "read child environment"}, environmentTool)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "environment_matches",
+		Description: "compare child environment without returning values",
+		InputSchema: map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+	}, environmentMatchesTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "working_directory", Description: "read child working directory"}, workingDirectoryTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "secret", Description: "return configured secret"}, secretTool)
 	mcp.AddTool(server, &mcp.Tool{Name: "secret_keys", Description: "return configured secret keys"}, secretKeysTool)
@@ -464,6 +469,22 @@ func environmentTool(_ context.Context, _ *mcp.CallToolRequest, _ map[string]any
 		"inherited": os.Getenv("INHERITED"),
 		"empty":     os.Getenv("EMPTY"),
 	}, nil
+}
+
+func environmentMatchesTool(_ context.Context, request *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
+	var expected map[string]string
+	if err := json.Unmarshal(request.Params.Arguments, &expected); err != nil {
+		return nil, nil, err
+	}
+	matched := true
+	for name, want := range expected {
+		got, present := os.LookupEnv(name)
+		if !present || got != want {
+			matched = false
+			break
+		}
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "environment comparison"}}}, map[string]any{"matched": matched}, nil
 }
 
 func workingDirectoryTool(_ context.Context, _ *mcp.CallToolRequest, _ map[string]any) (*mcp.CallToolResult, any, error) {
@@ -1709,6 +1730,30 @@ func TestDirectExecutionEnvironmentRootAndRedaction(t *testing.T) {
 	data = decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)
 	if data["[REDACTED]"] != "second" || data["[REDACTED]#2"] != "first" {
 		t.Fatalf("key redaction collision = %#v", data)
+	}
+}
+
+func TestReplaceEnvironmentPrefersConfiguredValueAcrossDuplicates(t *testing.T) {
+	const name = "DBHUB_PASSWORD_PRD"
+	const configured = " configured value with spaces $%+=?/# 雪 "
+	env := replaceEnvironment([]string{
+		"PATH=/test/bin",
+		name + "=stale-first",
+		"OTHER=preserved",
+		name + "=stale-last",
+	}, name, configured)
+
+	command := exec.Command("ignored")
+	command.Env = env
+	effective := command.Environ()
+	var matched []string
+	for _, entry := range effective {
+		if strings.HasPrefix(entry, name+"=") {
+			matched = append(matched, entry)
+		}
+	}
+	if got, want := matched, []string{name + "=" + configured}; !slices.Equal(got, want) {
+		t.Fatalf("effective %s entries = %#v, want %#v", name, got, want)
 	}
 }
 

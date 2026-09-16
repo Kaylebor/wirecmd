@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -32,6 +33,24 @@ printf '%s' "$WIRECMD_FAKE_AGE_PLAINTEXT"
 	}
 	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("WIRECMD_FAKE_AGE_PLAINTEXT", plaintext)
+	return path
+}
+
+func writePassthroughFakeAge(t *testing.T) string {
+	t.Helper()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "age")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf '%s\n' 'v1.3.2'
+  exit 0
+fi
+cat
+`
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", directory+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return path
 }
 
@@ -113,6 +132,128 @@ func TestDirectAgeSecretResolvesAndRedacts(t *testing.T) {
 	code, output, stderr = invoke(t, []string{"--direct", "--config", configPath, "helper", "secret"})
 	if code != exitOK || strings.Contains(output, secret) || strings.Contains(stderr, secret) || fakeAgeDecryptCount(t, calls) != 2 {
 		t.Fatalf("second direct age call: code=%d stdout=%q stderr=%q decrypts=%d", code, output, stderr, fakeAgeDecryptCount(t, calls))
+	}
+}
+
+func TestDirectAgeEnvironmentPreservesExactValuesFromGlobalStore(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	t.Setenv("DBHUB_PASSWORD_PRD", "stale inherited value")
+	writePassthroughFakeAge(t)
+	configHome, _ := discoveryEnvironment(t)
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+
+	values := map[string]string{
+		"DBHUB_DSN":          `postgres://db.user:p%40ss%3Aword%2Fwith%3Fquery%23fragment%25plus+equals%3D@db.example.test:5432/app?sslmode=require&application_name=wirecmd`,
+		"DBHUB_PASSWORD_PRD": " p@ss:\"quote\"\\backslash $dollar =equals %percent +plus ?query #fragment /slash 'single 雪 ",
+		"DB_HOST":            "db.example.test",
+		"DB_USER":            `domain\\db.user`,
+		"DB_PASSWORD":        " p@ss:\"quote\"\\backslash $dollar =equals %percent +plus ?query #fragment /slash 'single 雪 ",
+		"DB_NAME":            "app",
+		"EMPTY_SECRET":       "",
+		"EDGE_WHITESPACE":    " leading\ttab\nline\rreturning ",
+	}
+	store, err := json.Marshal(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	names := []string{"DBHUB_DSN", "DBHUB_PASSWORD_PRD", "DB_HOST", "DB_USER", "DB_PASSWORD", "DB_NAME", "EMPTY_SECRET", "EDGE_WHITESPACE"}
+	var entries strings.Builder
+	for _, name := range names {
+		_, _ = entries.WriteString("env " + name + "=(secret)" + strconv.Quote("age://"+name) + "\n")
+	}
+	seed := ageHelperConfig(t, t.TempDir(), filepath.Join(t.TempDir(), "identity.age"), entries.String())
+	globalDirectory := filepath.Join(configHome, "wirecmd")
+	copyConfig(t, seed, filepath.Join(globalDirectory, "config.kdl"))
+	if err := os.WriteFile(filepath.Join(globalDirectory, "secrets.json.age"), store, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	assertDirectEnvironmentMatches(t, nil, values)
+}
+
+func TestDirectAgeEnvironmentSurvivesPOSIXShellExport(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	t.Setenv("DBHUB_PASSWORD_PRD", "stale inherited value")
+	writePassthroughFakeAge(t)
+	configHome, _ := discoveryEnvironment(t)
+	workspace := t.TempDir()
+	t.Chdir(workspace)
+
+	const value = " p@ss:\"quote\"\\backslash $dollar =equals %percent +plus ?query #fragment /slash 'single 雪 "
+	globalDirectory := filepath.Join(configHome, "wirecmd")
+	if err := os.MkdirAll(globalDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	identity := filepath.Join(t.TempDir(), "identity.age")
+	wrapper := `export DBHUB_PASSWORD_PRD="$WIRECMD_NATIVE_COMPARE"; exec "$@"`
+	source := "wirecmd {\n" +
+		"secrets { age { identity " + strconv.Quote(identity) + " } }\n" +
+		"mcp \"helper\" {\n" +
+		"stdio \"/bin/sh\" {\n" +
+		"arg \"-c\"\n" +
+		"arg " + strconv.Quote(wrapper) + "\n" +
+		"arg \"wirecmd-env-wrapper\"\n" +
+		"arg " + strconv.Quote(os.Args[0]) + "\n" +
+		"arg \"-test.run=TestHelperProcess\"\n" +
+		"arg \"--\"\n" +
+		"env WIRECMD_NATIVE_COMPARE=(secret)\"age://DBHUB_PASSWORD_PRD\"\n" +
+		"}\n}\n}\n"
+	if err := os.WriteFile(filepath.Join(globalDirectory, "config.kdl"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := json.Marshal(map[string]string{"DBHUB_PASSWORD_PRD": value})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(globalDirectory, "secrets.json.age"), store, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	assertDirectEnvironmentMatches(t, nil, map[string]string{
+		"DBHUB_PASSWORD_PRD":     value,
+		"WIRECMD_NATIVE_COMPARE": value,
+	})
+}
+
+func TestDirectAgeEnvironmentUsesExplicitSiblingBeforeGlobal(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	writePassthroughFakeAge(t)
+	configHome, _ := discoveryEnvironment(t)
+	globalDirectory := filepath.Join(configHome, "wirecmd")
+	if err := os.MkdirAll(globalDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(globalDirectory, "secrets.json.age"), []byte(`{"TOKEN":"global"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	directory := t.TempDir()
+	configPath := ageHelperConfig(t, directory, filepath.Join(directory, "identity.age"), `env TOKEN=(secret)"age://TOKEN"`)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(configPath), "secrets.json.age"), []byte(`{"TOKEN":"explicit-sibling"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	assertDirectEnvironmentMatches(t, []string{"--config", configPath}, map[string]string{"TOKEN": "explicit-sibling"})
+}
+
+func assertDirectEnvironmentMatches(t *testing.T, options []string, expected map[string]string) {
+	t.Helper()
+	payload, err := json.Marshal(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	arguments := []string{"--direct"}
+	arguments = append(arguments, options...)
+	arguments = append(arguments, "--json", string(payload), "helper", "environment_matches")
+	code, output, stderr := invoke(t, arguments)
+	if code != exitOK {
+		t.Fatalf("environment comparison: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	data := decodeOutput(t, output)["result"].(map[string]any)["data"].(map[string]any)
+	if matched, _ := data["matched"].(bool); !matched {
+		t.Fatal("age-backed child environment did not preserve expected values")
 	}
 }
 
