@@ -149,7 +149,7 @@ changing dependencies, configuration, or architecture.
 - MCP server/proxy mode and additional non-MCP upstream adapters.
 - Binary archives, distribution packaging, and automated release publication;
   the stable source-installation and manual release contract is recorded in
-  [release readiness](release-readiness.md).
+  [release readiness](../release-readiness.md).
 
 These remain valid future slices but are not prerequisites for the completed
 supported-protocol qualification or configuration-discovery milestone.

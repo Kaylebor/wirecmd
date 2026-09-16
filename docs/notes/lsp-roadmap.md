@@ -1,7 +1,7 @@
 # Native LSP navigation roadmap
 
 Status: non-authoritative working note; accepted direction recorded in
-[`docs/lsp-plan.md`](../lsp-plan.md)
+[`docs/plans/lsp-plan.md`](../plans/lsp-plan.md)
 
 This note captures the implementation shape discussed after the completed
 single-provider definition milestone. It is intentionally not a second

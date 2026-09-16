@@ -1,7 +1,7 @@
 # Contextual output validation
 
 Non-authoritative validation evidence, 2026-09-04. Contract:
-[contextual output](../output-plan.md). No real credentials or remote providers
+[contextual output](../plans/output-plan.md). No real credentials or remote providers
 were used, and no commit/release was made by this slice.
 
 ## Actual CLI smoke

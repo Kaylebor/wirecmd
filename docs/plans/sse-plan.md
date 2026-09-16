@@ -1,7 +1,7 @@
 # SDK 1.8 and legacy HTTP+SSE qualification
 
 Status: implemented, qualified, and released in v0.3.0 with stable SDK `v1.8.0`.
-See [local evidence](notes/sse-pre2-validation.md).
+See [local evidence](../notes/sse-pre2-validation.md).
 
 The historical server fixture stays pinned to v1.6.1. The main module uses
 stable SDK `v1.8.0`, which upstream declares equivalent to the previously

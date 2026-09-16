@@ -83,7 +83,7 @@ Presentation may adapt to stdout: terminals default to readable discovery,
 administration, and errors, and indented JSON tool results; pipes default to
 compact JSON. `--format json --color never` selects machine output even in a
 PTY. This does not change semantic envelopes, exit codes, or OAuth interaction
-rules. The [output contract](output-plan.md) defines this presentation boundary.
+rules. The [output contract](plans/output-plan.md) defines this presentation boundary.
 
 ### Non-interactive by default
 
@@ -167,7 +167,7 @@ return provider-aware structured outcomes and contextual status. Wirecmd
 provides standard JSON-RPC framing and lifecycle, conservative initialization,
 disk-backed document synchronization, UTF-16 position conversion, normalized
 locations, retained daemon sessions, and actionable errors. The authoritative
-contract and qualification boundaries are recorded in the [LSP plan](lsp-plan.md).
+contract and qualification boundaries are recorded in the [LSP plan](plans/lsp-plan.md).
 
 This is not a general LSP client commitment. Initialization options, unsaved
 buffers, language-specific behavior, dynamic registration, workspace settings,
@@ -190,15 +190,15 @@ they change an actual capability available to the caller.
 
 The first validation milestone found the shell interaction model viable. Legacy
 stdio, Streamable HTTP, and HTTP+SSE are qualified through the stable official
-SDK; see the [SSE milestone](sse-plan.md). SSE OAuth is explicitly deferred;
+SDK; see the [SSE milestone](plans/sse-plan.md). SSE OAuth is explicitly deferred;
 that transport supports unauthenticated or static-header access.
 Trusted global and
 workspace configuration discovery is complete. Typed query and header values
 for Streamable HTTP endpoints and transparent OAuth with encrypted credential
 persistence are complete; their contracts are recorded in the
-[HTTP values plan](http-values-plan.md) and [OAuth plan](oauth-plan.md).
+[HTTP values plan](plans/http-values-plan.md) and [OAuth plan](plans/oauth-plan.md).
 Age-backed secret resolution is specified separately in the
-[age secrets plan](age-secrets-plan.md). OAuth must use the official SDK's
+[age secrets plan](plans/age-secrets-plan.md). OAuth must use the official SDK's
 authorization surface, with Wirecmd adding only interaction, persistence,
 daemon coordination, redaction, and error mapping.
 

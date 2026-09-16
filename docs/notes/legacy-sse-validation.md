@@ -3,7 +3,7 @@
 Status: non-authoritative deferred-compatibility note, 2026-08-25
 
 Update 2026-09-04: upstream v1.8.0-pre.2 contains PRs #1127 and #1121. The
-approved [draft milestone](../sse-plan.md) permits branch-only qualification
+approved [draft milestone](../plans/sse-plan.md) permits branch-only qualification
 before stable release. The failure and stable-only decision below are the
 historical baseline, not the current draft-branch restriction.
 

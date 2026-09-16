@@ -1,7 +1,7 @@
 # Contextual CLI output and color
 
 Status: implemented and locally qualified; see the
-[validation evidence](notes/output-validation.md). Physical macOS terminal
+[validation evidence](../notes/output-validation.md). Physical macOS terminal
 qualification remains separate from the successful cross-build checks.
 This document supersedes earlier milestones' blanket always-JSON presentation
 wording, not their semantic envelopes, IPC, exits, or OAuth interaction rules.

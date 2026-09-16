@@ -173,7 +173,7 @@ provider fan-out and ordering, partial/all failures, direct/daemon equivalence,
 retained state, reload, broken sessions, status, and redaction. Real-server
 qualification uses an explicit disposable `gopls` configuration against this
 repository; exact evidence for navigation, signature help, hover, and symbols is recorded in
-the non-authoritative [validation note](notes/lsp-definition-validation.md).
+the non-authoritative [validation note](../notes/lsp-definition-validation.md).
 
 Earlier validation notes may show the pre-rename KDL collection spelling
 `server`; those historical commands remain unchanged and do not describe the

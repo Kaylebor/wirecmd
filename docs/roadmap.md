@@ -12,11 +12,11 @@ order in which open areas should be discussed; they do not authorize an
 unspecified design or commit the project to every candidate.
 
 The governing documents are the [product thesis](product-thesis.md),
-[LSP plan](lsp-plan.md), [MCP compatibility plan](compatibility-plan.md),
-[MCP resources plan](resources-plan.md),
-[age secrets plan](age-secrets-plan.md),
+[LSP plan](plans/lsp-plan.md), [MCP compatibility plan](plans/compatibility-plan.md),
+[MCP resources plan](plans/resources-plan.md),
+[age secrets plan](plans/age-secrets-plan.md),
 [release-readiness contract](release-readiness.md), and
-[macOS qualification plan](macos-plan.md). `AGENTS.md` is the complete index of
+[macOS qualification plan](plans/macos-plan.md). `AGENTS.md` is the complete index of
 authoritative milestone documents and their precedence.
 
 ## Current baseline
@@ -53,7 +53,7 @@ supports user-managed TPM and Secure Enclave identities, and keeps only
 metadata needed to reuse retained daemon instances. Workspace discovery uses
 `.wirecmd/config.kdl` and `.wirecmd/secrets.json.age`; the former top-level
 workspace filename is not part of discovery. The exact contract and
-qualification requirements are in the [age secrets plan](age-secrets-plan.md).
+qualification requirements are in the [age secrets plan](plans/age-secrets-plan.md).
 Physical Apple Silicon qualification of Secure Enclave-backed age resolution
 remains pending; v0.4.0 was explicitly published first to provide the tagged
 build for that test, so no physical-device qualification is claimed yet.
