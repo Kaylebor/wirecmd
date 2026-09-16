@@ -65,13 +65,20 @@ Trust a workspace before its discovered configuration can execute commands:
 
 ```sh
 wirecmd config trust /path/to/workspace
+wirecmd config untrust /path/to/workspace
 wirecmd config trust status /path/to/workspace
+wirecmd config trust list
 ```
 
 Trust is recursive. The nearest trusted ancestor is the discovery boundary;
 workspace files above it are ignored. A discovered project configuration with
 no matching trust root fails closed. The global user configuration is
 inherently trusted.
+
+Automatic discovery accepts only regular, non-symlink workspace configuration
+files, and every discovered workspace `.wirecmd` component must be a real
+directory, not a symlink. Wirecmd does not inspect or fall back to a top-level
+`wirecmd.kdl`.
 
 Repeated explicit paths replace discovery and trust evaluation completely:
 
@@ -144,6 +151,11 @@ information or fragment. Query names are case-sensitive; header names are
 case-insensitive. Structural query entries replace matching endpoint query
 keys. `Authorization` values are complete header values—Wirecmd does not add a
 scheme. Transport-owned HTTP and MCP headers cannot be configured.
+Header values must be valid UTF-8 and cannot contain CR or LF. The reserved
+HTTP names are `Host`, `Content-Length`, `Content-Type`, `Accept`, `Connection`,
+`Transfer-Encoding`, `Trailer`, `Upgrade`, and `Proxy-Connection`. The reserved
+MCP/session names are `Mcp-Protocol-Version`, `Mcp-Session-Id`, `Mcp-Method`,
+`Mcp-Name`, `Mcp-Param-*`, and `Last-Event-ID`; matching is case-insensitive.
 
 Without a configured `Authorization` header, a protected Streamable HTTP
 server may use the SDK-backed OAuth flow automatically. Most providers use
@@ -230,7 +242,8 @@ plaintext in configuration fingerprints.
 
 Configure the fixed external `age` executable with one or more absolute,
 user-managed identity paths. A non-empty stronger identity list replaces the
-weaker list during composition:
+weaker list during composition. An empty stronger `age` block inherits the
+weaker identity list rather than erasing it:
 
 ```kdl
 wirecmd {
@@ -254,8 +267,9 @@ and the effective result is validated:
 
 - scalar fields use the strongest value that is present;
 - MCP and LSP definitions merge by configured name;
-- environment, query, and header entries merge by key; an override retains
-  its position and a new entry appends in source order;
+- environment and query entries merge by case-sensitive key; header entries
+  merge case-insensitively. An override retains its position and a new entry
+  appends in source order;
 - a non-empty stronger argument list replaces the inherited list completely;
 - a non-empty stronger selector list replaces inherited selectors completely;
 - switching `stdio`, `http`, or `sse` replaces the entire prior transport and

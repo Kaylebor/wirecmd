@@ -69,8 +69,12 @@ is:
 ```
 
 Wirecmd never creates, encrypts, decrypts for display, edits, or re-encrypts a
-store. It rejects symlink and non-regular stores and reads bounded ciphertext
-through the opened file before giving it to `age` on standard input.
+store. It rejects symlink and non-regular store files. During automatic
+workspace discovery it also rejects a `.wirecmd` parent that is a symlink or
+not a directory. It reads bounded ciphertext through an opened file before
+giving it to `age` on standard input. On Linux and macOS, directory-relative
+opening and file-identity checks bind validation and use to the same store
+object.
 
 ## Resolution and lifecycle
 

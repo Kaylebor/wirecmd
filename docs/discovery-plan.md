@@ -40,7 +40,10 @@ no trusted root matches the caller, discovery fails closed with the structured
 `workspace_untrusted` error and exit code 8; its action is the exact
 `wirecmd config trust ...` command needed to approve the directory. A missing
 configuration source returns `config_not_found` with exit code 3. Discovered
-project files must be regular, non-symlink files.
+project files must be regular, non-symlink files. Each `.wirecmd` metadata
+component considered during automatic discovery must itself be a non-symlink
+directory; discovery fails closed if one is a symlink or a different file
+type.
 
 Any repeated `--config PATH` options replace discovery completely. Their
 absolute paths are passed to the existing ordered `LoadEffective` composition,
@@ -95,7 +98,8 @@ does not watch configuration files; after a file or trust change, run
   failures that do not broaden trust.
 - Untrusted workspace configuration fails before loading or executing a server;
   listing or error recovery does not start a configured process.
-- Missing-source, non-regular-file, nested-boundary, separate-CWD, daemon
-  reload, and direct/daemon equivalence cases have deterministic tests.
+- Missing-source, non-regular-file, symlinked-metadata-directory,
+  nested-boundary, separate-CWD, daemon reload, and direct/daemon equivalence
+  cases have deterministic tests.
 - The public `config` server name remains reachable through the lossless JSON
   invocation paths, and administrative commands remain non-interactive.
