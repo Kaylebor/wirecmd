@@ -1,247 +1,138 @@
-# Repository Guidance
+# Wirecmd Repository Guidance
 
-## Authority and document roles
+## What Wirecmd is
 
-- `README.md` is the short public orientation.
-- `docs/README.md` is the documentation map for users, contributors, and
-  maintainers.
-- `docs/configuration.md` is the practical reference for the implemented KDL
-  surface, discovery order, composition, transports, secrets, and LSP selectors.
-- `docs/plans/age-secrets-plan.md` is authoritative for age-backed secret-store
-  discovery, resolution, reuse, and its security boundary.
-- `docs/plans/onboarding-plan.md` defines administrative help and private Fish
-  completion. Completion must remain local, read-only, secret-free and must not
-  contact the daemon or upstream servers. MCP help and execution use the `mcp`
-  namespace; tool-side `--` retains raw-overlay ownership.
-- `docs/plans/help-metadata-plan.md` defines conventional suffix help. MCP server and
-  tool help is live: it needs the daemon or explicit `--direct` execution;
-  persistent MCP metadata is not retained for help or completion.
-- `docs/product-thesis.md` is authoritative for product direction and scope.
-- `docs/roadmap.md` is the authoritative current-state handoff and decision
-  queue. Its future candidates are not accepted implementation milestones;
-  each requires the corresponding deliberate plan and authorization.
-- `docs/plans/output-plan.md` is authoritative for contextual presentation and color;
-  it supersedes earlier milestones' always-JSON presentation wording.
-- `docs/plans/validation-plan.md` is the authoritative record of the completed first
-  validation milestone and its acceptance criteria.
-- `docs/plans/compatibility-plan.md` is the authoritative record of the completed
-  supported-protocol qualification, including legacy HTTP+SSE.
-- `docs/plans/resources-plan.md` is authoritative for the MCP resources slice and
-  its SDK-owned pagination, reading, normalization, and redaction boundary.
-- `docs/plans/sse-plan.md` is authoritative for stable SDK-backed legacy HTTP+SSE
-  qualification; transparent SSE OAuth remains deferred.
-- `docs/plans/discovery-plan.md` is authoritative for the completed automatic
-  configuration-discovery milestone and its acceptance criteria.
-- `docs/plans/http-values-plan.md` is authoritative for the completed typed HTTP
-  query/header configuration milestone and its acceptance criteria.
-- `docs/plans/oauth-plan.md` is authoritative for the completed transparent OAuth and
-  encrypted credential-persistence milestone and its acceptance criteria.
-- `docs/plans/lsp-plan.md` is authoritative for the completed server-neutral,
-  selector-routed multi-provider LSP navigation, signature-help, and inspection
-  milestone.
-- `docs/release-readiness.md` is authoritative for stable installation,
-  compatibility, qualification, versioning, and the manual publication
-  boundary.
-- `docs/plans/macos-plan.md` is authoritative for the current macOS Apple Silicon
-  qualification milestone, Intel CI boundary, and physical M2 release gate.
-- Files under `docs/notes/` are non-authoritative working material. Do not turn
-  an idea from those files into a requirement without promoting it explicitly
-  into an authoritative document.
-- When documents disagree, stop and resolve the product-level conflict before
-  encoding one interpretation in implementation.
+Wirecmd is a shell-native, configuration-driven capability runtime and local
+lifecycle broker. It gives shell-capable agents a stable way to discover,
+inspect, invoke, and compose capabilities without requiring native protocol
+support or eager tool injection from their harness.
 
-## Product alignment
+The immediate caller is usually an agent. A technical human commonly configures
+or supervises it, but a properly instructed agent may configure it too. Humans,
+agents, scripts, editors, and CI use the same semantic command, result, error,
+and exit-code contract.
 
-- Preserve the central boundary: the shell is the agent-facing capability
-  interface; MCP is initially an upstream adapter and implementation detail.
-- Optimize for lazy discovery and shell composition rather than eager schema
-  injection into a harness.
-- Treat deterministic non-interactive behavior as canonical. Ordinary calls
-  remain non-interactive when either stdin or stderr is not a TTY, or when
-  `WIRECMD_NONINTERACTIVE=1` is set. When both are TTYs, an ordinary protected
-  HTTP call may transparently open a browser for OAuth and wait for the
-  callback; this is the accepted interactive convenience and must remain
-  visible only through stderr diagnostics.
-- Keep human, agent, script, and CI invocation on the same public contract.
-- Normal operation is daemon-backed and must fail clearly when the daemon is
-  unavailable. `--direct` is the explicit daemonless path for testing,
-  diagnostics, and deliberate one-shot use; never fall back to it silently.
-- The CLI contract should remain behaviorally consistent across daemon-backed
-  and direct execution where continuity does not change the operation's
-  semantics.
-- Validate the daemon path early because currently deployed MCP servers often
-  depend on initialized sessions or persistent processes. Keep the first daemon
-  narrow: connection/process reuse and the minimum lifecycle needed to exercise
-  it, not a general service-management subsystem.
-- MCP proxy/server compatibility is optional. Do not let it shape or delay the
-  agent-facing shell contract.
-- Native LSP navigation and read-only inspection are the completed first
-  non-MCP capability. Keep them server-neutral: configuration owns executables,
-  arguments, environment, language IDs, selectors, and workspace selection;
-  Wirecmd must not add a language-server catalog, executable inference,
-  presets, or server-specific behavior.
+MCP and LSP are upstream capability families, not the definition of the
+product. Wirecmd may support other families when demonstrated needs justify
+them. The shell remains the workflow language; Wirecmd must not grow a
+competing workflow engine.
 
-## Scope discipline
+## Product model
 
-- Work toward the current authoritative milestone before expanding product
-  breadth.
-- Prefer the smallest coherent, reversible change that tests a stated
-  hypothesis or satisfies an accepted contract.
-- Do not pre-build marketplaces, generic plugin systems, configuration import
-  frameworks, policy engines, record/replay systems, advanced schedulers, or
-  future adapter families without current milestone evidence.
-- Do not mistake implementation convenience for product validation. A
-  successful MCP call is necessary but does not demonstrate that an agent can
-  discover and compose capabilities effectively.
-- Keep exploratory material in `docs/notes/` until evidence and an explicit
-  decision justify promotion.
-- If an accepted direction proves difficult, unsupported, or in tension with
-  another project goal, preserve the evidence and ask the user before changing,
-  weakening, bypassing, or substituting that direction. Difficulty is not
-  authorization to choose a different product contract, dependency, format,
-  workflow, or architecture.
+Keep these concepts separate:
 
-## Architecture and implementation
+- **Configuration sources** define reusable providers and compose global and
+  optional project-specific knowledge with explainable provenance.
+- **Invocation context** describes facts Wirecmd resolves for a call, such as
+  its current directory and project or global context.
+- **Resolved values** deliberately materialize context or secrets into fields
+  that a provider consumes.
+- **Instance scope** selects the ownership and reuse boundary for a live
+  process or connection. It does not determine where configuration was declared
+  or which contextual values exist.
+- **Materialized provider configuration** is the actual startup or request
+  input after composition and resolution.
+- **Authentication identity** describes the credentials or upstream principal
+  selected for an operation without exposing secret material.
+- **Retained-instance identity** combines scope, startup-affecting
+  configuration, and sensitive identity. Reuse is valid only when that identity
+  agrees.
 
-- Keep the agent-facing command and result contracts independent of MCP wire
-  revisions, transports, and SDK types.
-- Prefer the official Go MCP SDK for protocol behavior. Do not duplicate
-  negotiation, transport, authorization, or revision behavior it already
-  implements correctly.
-- When MCP behavior is needed, first assume the pinned official SDK supports it
-  and verify that assumption against its documentation, source, examples, and
-  tests. Use the highest-level supported API. Add a local MCP-specific shim only
-  for a confirmed SDK gap, keep it narrow, and record the exact limitation.
-- The official SDK also owns OAuth discovery, metadata, PKCE, registration,
-  token exchange, refresh, resource indicators, scopes, issuer validation, and
-  HTTP retry behavior. Wirecmd owns only the shell/daemon interaction,
-  persistence, redaction, and error mapping around those APIs. The pinned SDK
-  does not expose a separate stable resource/issuer identity for our storage
-  boundary, so the current credential identity is based on the resolved
-  endpoint and configured registration inputs; record evidence before adding a
-  compatibility shim or broader identity model.
-- Do not turn conceptual protocol eras into parallel local protocol stacks. The
-  full MVP targets modern `2026-07-28`, legacy initialized stdio/Streamable
-  HTTP, and legacy HTTP+SSE by exercising the official SDK from newest to
-  oldest.
-- Keep upstream adapters behind a narrow semantic boundary, but do not build
-  unused adapters or a speculative extension framework.
-- The native LSP client owns standard framing and lifecycle, conservative
-  initialization, disk-backed document synchronization, position conversion,
-  normalized results, selector routing, provider fan-out, contextual status,
-  and daemon retention. Keep its public command/result contract independent of
-  generated LSP SDK types. Do not add initialization options, unsaved buffers,
-  dynamic registration, workspace settings, edits, mutating operations,
-  dynamic completion, or raw protocol access without a separate accepted
-  milestone.
-- Preserve a lossless structured invocation path even when ergonomic flags are
-  projected from schemas.
-- Preserve structural argument ownership: client flags precede the
-  `mcp <server> tool <tool>` path, while arguments after the tool name belong to that
-  tool. The narrow trailing-help exception is schema-aware: an explicit
-  projected `help` property owns `--help`/`-h`, otherwise Wirecmd renders live
-  focused help. Only the live schema may decide that ownership. Handle other
-  rare projected-name collisions with warnings and a structurally distinct
-  exact-JSON invocation path. The `mcp` namespace keeps MCP-server names and
-  future MCP primitives separate from native administrative groups.
-- Keep stdout machine-composable. Send diagnostics to stderr and never print
-  secrets, tokens, credentials, or unredacted secret-bearing URLs.
-- Preserve compact JSON for non-terminal defaults and explicit
-  `--format json --color never`. Terminal defaults use contextual pretty
-  presentation without changing semantic envelopes or exit codes. Determine
-  presentation from stdout independently of OAuth's stdin/stderr checks.
-- Keep `wirecmd --version` independent of configuration, daemon, keyring, and
-  upstream state. Do not reserve the positional form `wirecmd version`.
-- Structured errors must distinguish user action, authentication, invocation,
-  upstream protocol, transport, configuration, and internal failures where an
-  agent would recover differently.
-- KDL 2 is the current preferred configuration direction, subject to deliberate
-  parser and usability qualification. Do not introduce another user-facing
-  configuration format, including as a supposedly temporary shortcut, without
-  first presenting the evidence and alternatives to the user and obtaining a
-  decision. Internal test construction that does not create a public or
-  persisted configuration contract is allowed.
-- Adding or removing a library requires a user decision. Before proposing it,
-  briefly inspect the current ecosystem and primary sources, then present the
-  concrete need, credible candidates, relevant maintenance and compatibility
-  evidence, and the smallest reasonable recommendation. Keep the query
-  proportional; dependencies are valid implementation choices, not presumed
-  failures of YAGNI. Do not edit dependency manifests or lockfiles to add or
-  remove a library until the user accepts the choice.
-- Reconsider a library only when a concrete current requirement shows that the
-  standard library or existing small implementation would duplicate substantial
-  maintained behavior, a second real use case forces an abstraction, correctness
-  is unusually security/protocol/parser/concurrency sensitive, ecosystem
-  interoperability requires a standard implementation, or local maintenance is
-  likely to cost more than integration and dependency tracking. Do not add a
-  framework for a deferred feature, one speculative consumer, or a small amount
-  of straightforward code. At each reconsideration point, show the demonstrated
-  limitation, current candidates, API fit, maintenance, license, Go-version and
-  transitive-dependency evidence, migration cost, and the smallest recommendation
-  before requesting approval.
+Global configuration should be able to define a provider once. Project
+configuration supplies defaults or overrides only when useful. If contextual
+materialization makes two nominally global providers start differently, honest
+identity may separate their instances; Wirecmd must not hide that distinction.
 
-## Verification
+Current code is evidence about implemented behavior, not automatic authority
+for the product model. When implementation coupling conflicts with this model
+or an accepted decision, preserve the evidence and resolve the conflict before
+building on it.
 
-- Tie tests and demonstrations to the acceptance criteria in
-  `docs/plans/validation-plan.md`.
-- Apply the release gates and manual publication boundary in
-  `docs/release-readiness.md`; passing preparation checks does not authorize a
-  tag or GitHub Release.
-- Treat macOS CI as necessary but insufficient for Apple Silicon support; the
-  physical checks and visibility gate are defined in `docs/plans/macos-plan.md`.
-- Exercise real agent-facing discovery and composition, not only unit tests or
-  direct SDK calls.
-- Record exact commands, server fixtures, observed outputs, latency conditions,
-  and token/context measurements used for comparisons.
-- Treat comparisons with existing clients and direct harness MCP exposure as
-  evidence, not as requirements to copy their feature sets.
-- Do not claim native LSP qualification from fixture tests alone. Record a
-  real configured-server demonstration before marking an LSP milestone
-  qualified; `gopls` is a test fixture, never a production dependency or
-  default.
-- Validate both one-shot and daemon-backed paths where the current milestone
-  requires them, including observable-contract equivalence and real continuity
-  across separate CLI invocations.
+## Ownership boundary
 
-## Multi-agent work
+Wirecmd owns generic discovery, composition, provenance, context resolution,
+explicit materialization, secret handling, process and connection lifecycle,
+protocol conformance, normalized output, redaction, and actionable recovery.
 
-- Proactively delegate substantial independent research, implementation,
-  testing, and review work. Do not delegate simple questions, single-file
-  edits, or routine validation merely to create parallel activity.
-- Assume a subagent receives only this repository guidance and the assignment
-  it is given. Brief it with the relevant product context, constraints, files,
-  expected evidence, and exact deliverable; never rely on conversational
-  context that was not included explicitly.
-- Give each subagent one bounded, non-overlapping responsibility. Prefer
-  independent read-heavy work and avoid concurrent edits unless file ownership
-  is unambiguous.
-- Use independent testing or adversarial review for consequential behavior and
-  architecture boundaries. Reconcile agent conclusions against current files,
-  primary sources, and direct runtime evidence before adopting them.
-- Reuse an existing suitable agent when practical, but provide the same
-  self-contained context in follow-up assignments.
+The configurator owns arbitrary provider semantics: executable, arguments,
+environment, opaque settings, selectors, and how available values are supplied
+to the upstream program. Trust the configurator to understand that program;
+validate Wirecmd's own syntax, safety boundaries, and lifecycle invariants.
 
-## Change hygiene
+Prefer official protocol SDKs for protocol behavior. Use their highest-level
+supported APIs and add a narrow local shim only for a confirmed gap. Do not
+duplicate negotiation, transport, authorization, or revision behavior an SDK
+already implements correctly.
 
-- Update authoritative documents when an accepted decision changes the product
-  boundary or current milestone.
-- Feature PRs do not edit `CHANGELOG.md`. Release preparation owns the manual
-  changelog update: freeze unrelated feature merges; curate `[Unreleased]`
-  against the intended release contents into a dated version entry; recreate
-  an empty `[Unreleased]` section; roll comparison links from
-  `vPREVIOUS...vX.Y.Z` to `vX.Y.Z...HEAD`; then commit and publish that
-  preparation through the normal reviewed PR/merge path. Use the same reviewed
-  summary for the GitHub Release. GitHub-generated notes are a draft, never an
-  authoritative replacement for that review. If an unrelated change lands
-  before that PR merges, re-curate against the new `main` before proceeding.
-  Changelog headings use `X.Y.Z`; tags, module versions, and binary versions
-  use `vX.Y.Z`.
-- After opening or updating a PR, leave it unmerged for at least five minutes
-  so automated Codex review notes can arrive, then inspect all PR comments,
-  reviews, and unresolved threads before merging. Bypass this hold only when
-  the user explicitly authorizes it for that PR.
-- Put unresolved alternatives, research fragments, and speculative mechanisms
-  in `docs/notes/` with an explicit non-authoritative label.
-- Do not commit generated artifacts, credentials, local runtime state, or test
-  tokens.
-- Do not commit or push unless explicitly requested.
+Known-provider conveniences may be added only after repeated evidence. They
+must compile down to the ordinary configuration model rather than create a
+second architecture or make the generic path incomplete.
+
+For an unfamiliar requirement, ask in order:
+
+1. Is it required by the upstream protocol?
+2. Is it a generic Wirecmd runtime or lifecycle invariant?
+3. Is it arbitrary provider behavior that belongs in user configuration?
+
+Encode the first two centrally. Preserve an expressive configuration path for
+the third instead of inferring server-specific policy.
+
+## Durable invariants
+
+- Preserve lazy, agent-directed discovery and ordinary shell composition.
+- Keep a lossless structured invocation path even when ergonomic projections
+  exist.
+- Keep stdout machine-composable. Diagnostics belong on stderr, and secrets,
+  tokens, credentials, and unredacted secret-bearing URLs must never appear in
+  output, logs, fingerprints, IPC metadata, or errors.
+- Normal operation is daemon-backed and fails clearly when the daemon is
+  unavailable. `--direct` is an explicit one-shot and diagnostic path; never
+  fall back to it silently.
+- Direct and daemon-backed execution must preserve the same observable contract
+  except where real continuity changes operation semantics.
+- Do not claim retained continuity after replacement, restart, or identity
+  change. Lost state must be reported honestly.
+- Keep public command and result contracts independent of upstream wire
+  revisions and generated SDK types.
+- Treat deterministic non-interactive behavior as canonical. Documented OAuth
+  interaction and hardware-backed identity prompts are narrow explicit
+  exceptions, not general permission for surprise interaction.
+- Prefer the smallest coherent change that preserves this model. Local
+  implementation simplicity does not justify collapsing configuration,
+  context, scope, or provider semantics.
+
+Wirecmd is not an IDE, agent harness, marketplace, provider catalog, policy
+engine, general plugin runtime, security sandbox for hostile same-user
+processes, or universal service manager.
+
+## Authority and current state
+
+- [The product thesis](docs/product-thesis.md) defines durable direction and
+  product boundaries.
+- [The roadmap](docs/roadmap.md) records shipped state and the current decision
+  queue; future candidates are not accepted milestones.
+- [The documentation index](docs/README.md) routes users and maintainers to
+  authoritative feature plans and non-authoritative working notes.
+- [The development guide](docs/development.md) defines repository workflow,
+  verification, dependency decisions, review, and change hygiene.
+- [Release readiness](docs/release-readiness.md) owns qualification, versioning,
+  changelog curation, tagging, and publication.
+
+Read the applicable accepted plan before changing a specialized feature.
+Files under `docs/notes/` are evidence and working material, never requirements
+until deliberately promoted. When authoritative documents disagree, stop and
+resolve the product conflict rather than selecting the convenient interpretation.
+
+## Essential working rules
+
+- Ask before a dependency change, new user-facing format, destructive action,
+  external publication, or material expansion of an accepted contract.
+- Do not commit or push unless explicitly requested. Never commit credentials,
+  generated artifacts, local runtime state, or test tokens.
+- Feature PRs do not edit `CHANGELOG.md`; release preparation owns changelog
+  curation under the release-readiness contract.
+- Verify changes proportionally and use independent review for consequential
+  behavior, architecture, security, concurrency, and release decisions.
+- After opening or updating a PR, leave it unmerged for at least five minutes,
+  then inspect all reviews, comments, and unresolved threads. Bypass that hold
+  only when the user explicitly authorizes it for that PR.
