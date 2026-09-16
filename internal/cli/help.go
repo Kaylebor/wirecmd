@@ -415,6 +415,8 @@ Prefix flags (before the command path; availability depends on command):
   --colour auto|always|never         alias for --color
 
 Without --config, discover global configuration and trusted workspace files.
+Workspace calls share a resolved project root. Configuration may disable the
+optional Git project signal with the KDL 2 setting git-root #false.
 Normal capability calls are daemon-backed and never fall back to --direct.
 
 Start here:

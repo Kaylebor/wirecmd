@@ -136,10 +136,18 @@ type Root struct {
 	Provenance
 }
 
+// GitRoot controls whether automatic invocation-context resolution may use
+// the current Git worktree as an implicit project-root candidate.
+type GitRoot struct {
+	Enabled bool
+	Provenance
+}
+
 // Source is one partially specified KDL configuration layer. It is valid for
 // a source to omit fields that are supplied by a weaker layer.
 type Source struct {
 	Root    *Root
+	GitRoot *GitRoot
 	Secrets *SecretsSource
 	Servers []ServerSource
 	LSPs    []LSPSource
@@ -250,6 +258,7 @@ type OAuthSource struct {
 // consumed by execution.
 type Config struct {
 	Root    *Root
+	GitRoot GitRoot
 	Secrets Secrets
 	Servers []Server
 	LSPs    []LSP
@@ -282,9 +291,10 @@ func Load(path string) (*Source, error) {
 	return source, nil
 }
 
-// loadDiscoveredProject rejects symlinks and pathname replacement before
-// parsing an automatically discovered workspace source.
-func loadDiscoveredProject(path string) (*Source, error) {
+// LoadDiscovered safely loads one automatically discovered workspace source.
+// It rejects symlinks and pathname replacement while retaining the opened file
+// descriptor used for parsing.
+func LoadDiscovered(path string) (*Source, error) {
 	directory := filepath.Dir(path)
 	root, err := os.OpenRoot(directory)
 	if err != nil {
@@ -328,18 +338,24 @@ func loadDiscoveredProject(path string) (*Source, error) {
 // LoadEffective loads paths from weakest to strongest, composes their partial
 // sources, and validates the resulting complete configuration.
 func LoadEffective(paths []string) (*Config, error) {
-	return loadEffective(paths, false)
+	config, _, err := LoadEffectiveSources(paths, false)
+	return config, err
 }
 
 // LoadEffectiveDiscovered validates workspace .wirecmd/config.kdl files without
 // changing the behavior of trusted global or explicitly supplied files.
 func LoadEffectiveDiscovered(paths []string) (*Config, error) {
-	return loadEffective(paths, true)
+	config, _, err := LoadEffectiveSources(paths, true)
+	return config, err
 }
 
-func loadEffective(paths []string, discovered bool) (*Config, error) {
+// LoadEffectiveSources loads and composes paths while also returning the exact
+// parsed sources from that same read. Runtime context resolution uses the
+// source list to distinguish the nearest workspace declaration from weaker
+// roots without reopening configuration files.
+func LoadEffectiveSources(paths []string, discovered bool) (*Config, []*Source, error) {
 	if len(paths) == 0 {
-		return nil, fmt.Errorf("configuration: at least one config file is required")
+		return nil, nil, fmt.Errorf("configuration: at least one config file is required")
 	}
 
 	sources := make([]*Source, 0, len(paths))
@@ -347,16 +363,20 @@ func loadEffective(paths []string, discovered bool) (*Config, error) {
 		var source *Source
 		var err error
 		if discovered && filepath.Base(path) == "config.kdl" && filepath.Base(filepath.Dir(path)) == ".wirecmd" {
-			source, err = loadDiscoveredProject(path)
+			source, err = LoadDiscovered(path)
 		} else {
 			source, err = Load(path)
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		sources = append(sources, source)
 	}
-	return Compose(sources...)
+	composed, err := Compose(sources...)
+	if err != nil {
+		return nil, nil, err
+	}
+	return composed, sources, nil
 }
 
 // Parse parses one possibly partial first-slice Wirecmd KDL 2 source from r.
@@ -378,7 +398,7 @@ func ParseString(file, source string) (*Source, error) {
 // environment entries retain first-introduction order while later sources
 // replace matching entries.
 func Compose(sources ...*Source) (*Config, error) {
-	config := &Config{}
+	config := &Config{GitRoot: GitRoot{Enabled: true}}
 	serverIndex := make(map[string]int)
 	lspIndex := make(map[string]int)
 
@@ -386,6 +406,10 @@ func Compose(sources ...*Source) (*Config, error) {
 		if source.Root != nil {
 			root := *source.Root
 			config.Root = &root
+		}
+		if source.GitRoot != nil {
+			gitRoot := *source.GitRoot
+			config.GitRoot = gitRoot
 		}
 		if source.Secrets != nil && source.Secrets.Age != nil && len(source.Secrets.Age.Identities) != 0 {
 			config.Secrets.Age = &AgeSecrets{
@@ -810,6 +834,15 @@ func parseDocument(file string, doc *document.Document) (*Source, error) {
 				return nil, err
 			}
 			source.Root = &configRoot
+		case "git-root":
+			if source.GitRoot != nil {
+				return nil, fmt.Errorf("wirecmd.git-root: duplicate git-root")
+			}
+			gitRoot, err := parseGitRoot(file, child)
+			if err != nil {
+				return nil, err
+			}
+			source.GitRoot = &gitRoot
 		case "secrets":
 			if source.Secrets != nil {
 				return nil, fmt.Errorf("wirecmd.secrets: duplicate secrets")
@@ -911,6 +944,25 @@ func parseRoot(file string, node *document.Node) (Root, error) {
 		return Root{}, err
 	}
 	return Root{Path: value, Provenance: provenance(file, path)}, nil
+}
+
+func parseGitRoot(file string, node *document.Node) (GitRoot, error) {
+	const path = "wirecmd.git-root"
+	if err := plainNode(node, path); err != nil {
+		return GitRoot{}, err
+	}
+	if len(node.Arguments) != 1 || len(node.Children) != 0 {
+		return GitRoot{}, fmt.Errorf("%s: expected one boolean", path)
+	}
+	value := node.Arguments[0]
+	if value.Type != "" {
+		return GitRoot{}, fmt.Errorf("%s: value annotation %q is not allowed here", path, value.Type)
+	}
+	enabled, ok := value.Value.(bool)
+	if !ok {
+		return GitRoot{}, fmt.Errorf("%s: expected a boolean value", path)
+	}
+	return GitRoot{Enabled: enabled, Provenance: provenance(file, path)}, nil
 }
 
 func parseServer(file string, node *document.Node) (ServerSource, error) {

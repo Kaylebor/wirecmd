@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -156,5 +157,78 @@ func TestDaemonDiscoveryKeepsCallerWorkspacesSeparate(t *testing.T) {
 	code, output, _ := invoke(t, []string{"daemon", "status"})
 	if code != exitOK || decodeOutput(t, output)["daemon"].(map[string]any)["cached_contexts"].(json.Number).String() != "2" {
 		t.Fatalf("daemon contexts: code=%d output=%s", code, output)
+	}
+}
+
+func TestWorkspaceContextReusesOneProjectAcrossCallerDirectories(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	discoveryEnvironment(t)
+	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
+	project := t.TempDir()
+	canonicalProject, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := filepath.Join(project, "src", "one")
+	second := filepath.Join(project, "src", "two")
+	if err := os.MkdirAll(first, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(second, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	source := helperConfig(t, "", "")
+	data, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), "wirecmd {", "wirecmd {\ngit-root #false", 1))
+	configPath := filepath.Join(project, ".wirecmd", "config.kdl")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, output, _ := invoke(t, []string{"config", "trust", project}); code != exitOK {
+		t.Fatalf("trust: code=%d output=%s", code, output)
+	}
+
+	t.Chdir(first)
+	code, output, stderr := invoke(t, []string{"--direct", "helper", "working_directory"})
+	if code != exitOK || stderr != "" || callCWD(t, output) != canonicalProject {
+		t.Fatalf("direct project root: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+
+	startTestDaemon(t)
+	for _, directory := range []string{first, second} {
+		t.Chdir(directory)
+		code, output, stderr = invoke(t, []string{"helper", "working_directory"})
+		if code != exitOK || stderr != "" || callCWD(t, output) != canonicalProject {
+			t.Fatalf("daemon project root from %s: code=%d stderr=%q output=%s", directory, code, stderr, output)
+		}
+	}
+	code, output, stderr = invoke(t, []string{"daemon", "status"})
+	if code != exitOK || stderr != "" {
+		t.Fatalf("daemon status: code=%d stderr=%q output=%s", code, stderr, output)
+	}
+	daemon := decodeOutput(t, output)["daemon"].(map[string]any)
+	if daemon["cached_contexts"].(json.Number).String() != "1" || daemon["active_instances"].(json.Number).String() != "1" {
+		t.Fatalf("daemon did not reuse project context: %s", output)
+	}
+}
+
+func TestServerListingDoesNotProbeGit(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	configPath := helperConfig(t, "", "")
+	original := runGitRoot
+	runGitRoot = func(context.Context, string) ([]byte, error) {
+		t.Fatal("static server listing probed Git")
+		return nil, nil
+	}
+	t.Cleanup(func() { runGitRoot = original })
+	code, output, stderr := invoke(t, []string{"--direct", "--config", configPath, "mcp"})
+	if code != exitOK || stderr != "" || !strings.Contains(output, `"helper"`) {
+		t.Fatalf("server listing: code=%d stderr=%q output=%s", code, stderr, output)
 	}
 }

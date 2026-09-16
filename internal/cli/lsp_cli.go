@@ -414,19 +414,11 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 	if err != nil {
 		return nil, transportError("caller_cwd_unavailable", err.Error(), "run Wirecmd from an accessible working directory")
 	}
-	paths, discovered, appErr := lspConfigPaths(cwd, opts.configs)
+	sourceContext, appErr := resolveConfigContext(cwd, opts.configs)
 	if appErr != nil {
 		return nil, appErr
 	}
-	// Discovery resolves trusted workspaces through symlinks. Keep the caller
-	// path in that same identity space so macOS aliases such as /var and
-	// /private/var cannot make an in-workspace file appear to be outside root.
-	if discovered {
-		cwd, err = filepath.EvalSymlinks(cwd)
-		if err != nil {
-			return nil, transportError("caller_cwd_unavailable", err.Error(), "run Wirecmd from an accessible working directory")
-		}
-	}
+	cwd = sourceContext.CWD
 	var client *daemonClient
 	if !opts.direct {
 		client, appErr = openDaemonClient(ctx)
@@ -435,26 +427,31 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 		}
 		defer client.Close()
 	}
-	cfg, err := loadLSPConfig(paths, discovered)
+	loaded, err := loadContextConfig(sourceContext)
 	if err != nil {
 		return nil, configurationError("config_invalid", err.Error(), "correct the supplied KDL configuration")
 	}
+	cfg := loaded.Config
 	if len(cfg.LSPs) == 0 {
 		return nil, configurationError("lsp_not_configured", "the effective workspace configuration has no LSP definition", "add a workspace lsp block with at least one selector")
 	}
-	workspace := effectiveLSPWorkspace(cfg.Root, cwd)
+	providerContext, contextErr := resolveInvocationContext(ctx, sourceContext, loaded)
+	if contextErr != nil {
+		return nil, contextErr
+	}
+	workspace := providerContext.ProjectRoot
 	file := request.File
 	if file != "" {
 		if !filepath.IsAbs(file) {
 			file = filepath.Join(cwd, file)
 		}
-		file = filepath.Clean(file)
+		file = canonicalPath(file)
 	}
 	if request.Operation == lspStatus {
 		if opts.direct {
 			return makeLSPStatusEnvelope(cfg.LSPs, workspace, file, nil), nil
 		}
-		rpc := daemonRequest{Operation: statusLSP, CWD: cwd, Configs: paths, Discovered: discovered, Fingerprint: configFingerprint(cfg, cwd), LSPFile: file, LSPOperation: lspStatus}
+		rpc := daemonRequest{Operation: statusLSP, CWD: cwd, ProjectRoot: workspace, GlobalRoot: providerContext.GlobalRoot, TrustedBoundary: providerContext.TrustedBoundary, WorkspaceConfig: providerContext.WorkspaceConfig, WorkspaceDirectory: providerContext.WorkspaceDirectory, Configs: providerContext.Configs, Discovered: providerContext.Discovered, Fingerprint: configFingerprint(cfg), LSPFile: file, LSPOperation: lspStatus}
 		result, callErr, _ := daemonRequestCallWithClient(client, rpc, errOut)
 		return result, callErr
 	}
@@ -471,7 +468,7 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 		return nil, appErr
 	}
 	selectedValues := lspSecretValues(matches)
-	secretStores, storesErr := selectedSecretStores(cwd, paths, discovered, selectedValues)
+	secretStores, storesErr := selectedSecretStores(cwd, providerContext.Configs, providerContext.Discovered, selectedValues)
 	if storesErr != nil {
 		return nil, storesErr
 	}
@@ -481,15 +478,15 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 		if isLSPNavigation(request.Operation) {
 			daemonOperation = navigateLSP
 		}
-		rpc := daemonRequest{Operation: daemonOperation, CWD: cwd, Configs: paths, Discovered: discovered, Fingerprint: configFingerprint(cfg, cwd), Execution: matchedLSPExecutionFingerprint(matches, cfg.Root, cwd, cfg.Secrets), EnvSecrets: secrets, SecretStores: secretStores, LSPFile: file, LSPLine: request.Line, LSPColumn: request.Column, LSPQuery: request.Query, LSPQuerySet: request.QuerySet, LSPOperation: request.Operation, LSPIncludeDeclaration: request.IncludeDeclaration}
+		rpc := daemonRequest{Operation: daemonOperation, CWD: cwd, ProjectRoot: workspace, GlobalRoot: providerContext.GlobalRoot, TrustedBoundary: providerContext.TrustedBoundary, WorkspaceConfig: providerContext.WorkspaceConfig, WorkspaceDirectory: providerContext.WorkspaceDirectory, Configs: providerContext.Configs, Discovered: providerContext.Discovered, Fingerprint: configFingerprint(cfg), Execution: matchedLSPExecutionFingerprint(matches, nil, workspace, cfg.Secrets), EnvSecrets: secrets, SecretStores: secretStores, LSPFile: file, LSPLine: request.Line, LSPColumn: request.Column, LSPQuery: request.Query, LSPQuerySet: request.QuerySet, LSPOperation: request.Operation, LSPIncludeDeclaration: request.IncludeDeclaration}
 		result, callErr, _ := daemonRequestCallWithClient(client, rpc, errOut)
 		return result, callErr
 	}
-	resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, discovered, nil, selectedValues, os.LookupEnv)
+	resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, providerContext.Discovered, nil, selectedValues, os.LookupEnv)
 	if resolveErr != nil {
 		return nil, resolveErr
 	}
-	return runDirectLSPMatches(ctx, cfg.Root, cwd, workspace, file, request, matches, resolved.lookup, errOut)
+	return runDirectLSPMatches(ctx, nil, workspace, workspace, file, request, matches, resolved.lookup, errOut)
 }
 
 func allLSPDefinitions(definitions []config.LSP) []lspMatch {

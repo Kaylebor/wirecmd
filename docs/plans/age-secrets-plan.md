@@ -107,8 +107,9 @@ hashes and opaque, daemon-keyed instance metadata to decide whether an unchanged
 retained process can be reused. A candidate-store appearance, removal, or
 content change requires fresh grouped resolution; the process is replaced only
 when the resolved startup values changed. Daemon reload clears that metadata
-and replaces retained processes. Scope remains `workspace`; no additional
-scopes are introduced by this milestone.
+and replaces retained processes. This milestone introduced only `workspace`;
+the later scope-separated behavior is governed by the
+[scope and invocation context plan](scope-context-plan.md).
 
 ## External age boundary and errors
 

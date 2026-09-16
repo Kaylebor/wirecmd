@@ -587,7 +587,7 @@ func (d *daemon) executeAuth(ctx context.Context, request daemonRequest, server 
 	if server.HTTP == nil || server.HTTP.Kind == config.HTTPTransportSSE || hasAuthorizationHeader(*server.HTTP) {
 		return errorReplyWithWarnings(authServerError(server), warnings)
 	}
-	target, secrets, appErr := makeTarget(server, root, request.CWD, lookup)
+	target, secrets, appErr := makeTarget(server, root, request.ProjectRoot, lookup)
 	if appErr != nil {
 		return errorReplyWithWarnings(appErr, warnings)
 	}

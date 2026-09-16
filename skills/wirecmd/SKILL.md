@@ -35,6 +35,13 @@ an absolute `$XDG_CONFIG_HOME/wirecmd/config.kdl`, falling back to
 Repeated `--config PATH` options replace discovery completely and preserve
 their weakest-to-strongest order; explicit files can use any filename.
 
+Workspace calls use one canonical project root. An explicit applicable `root`
+wins; otherwise Wirecmd chooses the deeper of the nearest project-config
+directory and the Git worktree, then falls back to the trusted boundary or
+caller CWD. A stronger `git-root #false` KDL 2 setting disables Git probing.
+Use this resolved root when reasoning about MCP child CWD, LSP selectors and
+initialization, and daemon reuse.
+
 Manage trust explicitly when a workspace is not yet approved:
 
 ```sh

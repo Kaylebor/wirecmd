@@ -35,9 +35,21 @@ type state struct {
 	Workspaces []string `json:"workspaces"`
 }
 
-// Paths returns configuration paths from weakest to strongest for cwd.
-func Paths(cwd string) ([]string, error) {
-	cwd, err := canonicalDirectory(cwd)
+// Result is the trusted automatic-discovery state for one invocation. Paths
+// are ordered from weakest to strongest. WorkspaceConfig and
+// WorkspaceDirectory describe the nearest discovered workspace configuration
+// within TrustedRoot; they are empty when automatic discovery is global-only.
+type Result struct {
+	CWD                string
+	Paths              []string
+	TrustedRoot        string
+	WorkspaceConfig    string
+	WorkspaceDirectory string
+}
+
+// Resolve returns trusted configuration-discovery metadata for cwd.
+func Resolve(cwd string) (*Result, error) {
+	canonicalCWD, err := canonicalDirectory(cwd)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +57,7 @@ func Paths(cwd string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	paths := make([]string, 0)
+	result := &Result{CWD: canonicalCWD}
 	global, err := globalConfigPath()
 	if err != nil {
 		return nil, err
@@ -53,24 +65,29 @@ func Paths(cwd string) ([]string, error) {
 	if exists, err := pathExists(global); err != nil {
 		return nil, err
 	} else if exists {
-		paths = append(paths, global)
+		canonical, err := filepath.EvalSymlinks(global)
+		if err != nil {
+			return nil, err
+		}
+		result.Paths = append(result.Paths, filepath.Clean(canonical))
 	}
 
-	root := nearestTrustedAncestor(cwd, trusted)
+	root := nearestTrustedAncestor(canonicalCWD, trusted)
+	result.TrustedRoot = root
 	if root == "" {
-		if workspace, err := nearestProjectConfig(cwd); err != nil {
+		if workspace, err := nearestProjectConfig(canonicalCWD); err != nil {
 			return nil, err
 		} else if workspace != "" {
 			return nil, &UntrustedError{Workspace: workspace}
 		}
-		if len(paths) == 0 {
+		if len(result.Paths) == 0 {
 			return nil, &NotFoundError{}
 		}
-		return paths, nil
+		return result, nil
 	}
 
 	dirs := []string{}
-	for dir := cwd; ; dir = filepath.Dir(dir) {
+	for dir := canonicalCWD; ; dir = filepath.Dir(dir) {
 		dirs = append(dirs, dir)
 		if dir == root {
 			break
@@ -91,12 +108,23 @@ func Paths(cwd string) ([]string, error) {
 		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 			return nil, fmt.Errorf("discovered config %q must be a regular non-symlink file", candidate)
 		}
-		paths = append(paths, candidate)
+		result.Paths = append(result.Paths, candidate)
+		result.WorkspaceConfig = candidate
+		result.WorkspaceDirectory = dirs[i]
 	}
-	if len(paths) == 0 {
+	if len(result.Paths) == 0 {
 		return nil, &NotFoundError{}
 	}
-	return paths, nil
+	return result, nil
+}
+
+// Paths returns configuration paths from weakest to strongest for cwd.
+func Paths(cwd string) ([]string, error) {
+	result, err := Resolve(cwd)
+	if err != nil {
+		return nil, err
+	}
+	return append([]string(nil), result.Paths...), nil
 }
 
 // SecretStoreCandidates returns encrypted age-store paths in strongest to

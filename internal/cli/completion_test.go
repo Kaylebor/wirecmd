@@ -12,6 +12,7 @@ import (
 
 func TestServerCompletionUsesEffectiveConfigOrderAndDoesNotResolveSecrets(t *testing.T) {
 	base := writeConfig(t, `wirecmd {
+git-root #false
 mcp "first" { scope "workspace"; stdio "not-started" }
 mcp "unsafe\tname" { scope "workspace"; stdio "not-started" }
 mcp "unsafe\nname" { scope "workspace"; stdio "not-started" }

@@ -64,7 +64,7 @@ func TestLSPDefinitionDirectAndDaemon(t *testing.T) {
 	}
 	lsp := decodeOutput(t, output)["lsp"].(map[string]any)
 	locations := lsp["locations"].([]any)
-	if len(locations) != 1 || locations[0].(map[string]any)["path"] != input+".definition" {
+	if len(locations) != 1 || locations[0].(map[string]any)["path"] != canonicalPath(input)+".definition" {
 		t.Fatalf("locations = %#v", locations)
 	}
 	code, output, stderr = invoke(t, args)
@@ -140,7 +140,7 @@ lsp "nonmatching" { selector language-id="html" pattern="**/*.html"; stdio %s { 
 		t.Fatalf("document symbols=%#v", document)
 	}
 	workspaceResult := decodeOutput(t, mustInvokeLSP(t, []string{"--direct", "--config", configPath, "lsp", "workspace-symbols", "--query", "Needle"}))["lsp"].(map[string]any)
-	if workspaceResult["query"] != "Needle" || workspaceResult["workspace"] != workspace || len(workspaceResult["providers"].([]any)) != 2 || workspaceResult["symbols"].([]any)[0].(map[string]any)["name"] != "Needle" {
+	if workspaceResult["query"] != "Needle" || workspaceResult["workspace"] != canonicalPath(workspace) || len(workspaceResult["providers"].([]any)) != 2 || workspaceResult["symbols"].([]any)[0].(map[string]any)["name"] != "Needle" {
 		t.Fatalf("workspace symbols=%#v", workspaceResult)
 	}
 }
@@ -229,6 +229,59 @@ func TestLSPDefinitionUsesTrustedWorkspaceComposition(t *testing.T) {
 	}
 	if decodeOutput(t, output)["lsp"].(map[string]any)["file"] != filepath.Join(canonicalWorkspace, "input.go") {
 		t.Fatalf("output = %s", output)
+	}
+}
+
+func TestLSPWorkspaceContextAgreesAcrossSiblingCallerDirectories(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	discoveryEnvironment(t)
+	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
+	project := t.TempDir()
+	canonicalProject, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := filepath.Join(project, "src", "one")
+	second := filepath.Join(project, "src", "two")
+	for _, path := range []string{first, second, filepath.Join(project, ".wirecmd")} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	input := filepath.Join(project, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(project, ".wirecmd", "config.kdl")
+	writeSource(t, configPath, fmt.Sprintf(`wirecmd {
+git-root #false
+lsp "fixture" {
+selector language-id="fixture" pattern="**/*.go"
+stdio %s {
+arg "-test.run=TestCLILSPHelperProcess"
+env WIRECMD_LSP_EXPECT_WORKSPACE=%s
+}
+}
+}
+`, strconv.Quote(os.Args[0]), strconv.Quote(canonicalProject)))
+	if code, output, _ := invoke(t, []string{"config", "trust", project}); code != exitOK {
+		t.Fatalf("trust: code=%d output=%s", code, output)
+	}
+
+	t.Chdir(first)
+	mustInvokeLSP(t, []string{"--direct", "lsp", "definition", "--file", input, "--line", "1", "--column", "2"})
+	startTestDaemon(t)
+	for _, directory := range []string{first, second} {
+		t.Chdir(directory)
+		mustInvokeLSP(t, []string{"lsp", "definition", "--file", input, "--line", "1", "--column", "2"})
+	}
+	code, output, stderr := invoke(t, []string{"daemon", "status"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["daemon"].(map[string]any)["active_instances"].(json.Number).String() != "1" {
+		t.Fatalf("LSP context was not reused: code=%d stdout=%s stderr=%q", code, output, stderr)
+	}
+	status := mustInvokeLSP(t, []string{"lsp", "status", "--file", input})
+	if got := decodeOutput(t, status)["lsp"].(map[string]any)["workspace"]; got != canonicalProject {
+		t.Fatalf("LSP status workspace = %v, want %s", got, canonicalProject)
 	}
 }
 
@@ -385,7 +438,7 @@ func TestLSPNavigationOperations(t *testing.T) {
 				t.Fatalf("%s daemon output differs: direct=%#v daemon=%#v", test.operation, direct, decoded)
 			}
 			location := decoded["lsp"].(map[string]any)["locations"].([]any)[0].(map[string]any)
-			if location["path"] != input+test.suffix {
+			if location["path"] != canonicalPath(input)+test.suffix {
 				t.Fatalf("%s location = %#v", test.operation, location)
 			}
 		}
@@ -531,7 +584,19 @@ type cliLSPServer struct {
 	active                  *atomic.Int32
 }
 
-func (server cliLSPServer) Initialize(context.Context, *protocol.InitializeParams) (*protocol.InitializeResult, error) {
+func (server cliLSPServer) Initialize(_ context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
+	if expected := os.Getenv("WIRECMD_LSP_EXPECT_WORKSPACE"); expected != "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+		if cwd != expected {
+			return nil, fmt.Errorf("process CWD %q does not match workspace %q", cwd, expected)
+		}
+		if params.RootURI == nil || string(*params.RootURI) != string(uri.File(expected)) {
+			return nil, fmt.Errorf("initialize root URI does not match workspace %q", expected)
+		}
+	}
 	kind, open := protocol.TextDocumentSyncKindIncremental, true
 	capabilities := protocol.ServerCapabilities{
 		TextDocumentSync: &protocol.TextDocumentSyncOptions{OpenClose: &open, Change: &kind},

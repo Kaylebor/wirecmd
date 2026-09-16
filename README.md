@@ -113,9 +113,10 @@ wirecmd daemon reload
 
 An MCP definition selects exactly one of stdio, Streamable HTTP, or legacy
 HTTP+SSE. LSP definitions supply their executable, arguments, environment,
-language IDs, and selectors; the top-level configuration supplies the
-workspace root. Wirecmd does not infer or install language servers. MCP and LSP
-definitions default to workspace scope, so `scope "workspace"` is optional.
+language IDs, and selectors. Wirecmd resolves one project root from an explicit
+`root`, the nearest project configuration, and optional Git discovery; it does
+not infer or install language servers. MCP and LSP definitions default to
+workspace scope, so `scope "workspace"` is optional.
 
 See the [configuration reference](docs/configuration.md) for the complete KDL
 surface, discovery and trust rules, transports, secrets, OAuth, and LSP setup.
@@ -165,6 +166,8 @@ contacts the daemon, resolves secrets, or opens OAuth.
 - [Development guide](docs/development.md): contributor workflow, verification,
   review, and change hygiene.
 - [LSP plan](docs/plans/lsp-plan.md): native navigation and inspection contract.
+- [Scope and context plan](docs/plans/scope-context-plan.md): project-root
+  resolution and lifecycle ownership.
 - [Output contract](docs/plans/output-plan.md): terminal, JSON, and color behavior.
 - [Onboarding and completion](docs/plans/onboarding-plan.md): help and Fish
   completion contracts.
