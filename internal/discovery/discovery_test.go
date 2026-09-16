@@ -90,7 +90,7 @@ func TestTrustedDiscoveryOrderAndBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{global, canonicalRootConfig, canonicalNearConfig}
+	want := []string{canonicalTestPath(t, global), canonicalRootConfig, canonicalNearConfig}
 	if !reflect.DeepEqual(paths, want) {
 		t.Fatalf("Paths() = %#v, want %#v", paths, want)
 	}
@@ -131,7 +131,7 @@ func TestResolveReturnsCanonicalContextAndNearestWorkspaceSource(t *testing.T) {
 	if got, want := result.TrustedRoot, canonicalTestPath(t, workspace); got != want {
 		t.Fatalf("TrustedRoot = %q, want %q", got, want)
 	}
-	if got, want := result.Paths, []string{global, canonicalTestPath(t, rootConfig), canonicalTestPath(t, nearestConfig)}; !reflect.DeepEqual(got, want) {
+	if got, want := result.Paths, []string{canonicalTestPath(t, global), canonicalTestPath(t, rootConfig), canonicalTestPath(t, nearestConfig)}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("Paths = %#v, want %#v", got, want)
 	}
 	if got, want := result.WorkspaceConfig, canonicalTestPath(t, nearestConfig); got != want {
@@ -309,7 +309,7 @@ func TestRelativeXDGValuesUseHomeFallback(t *testing.T) {
 	writeFile(t, global)
 	workspace := t.TempDir()
 	paths, err := Paths(workspace)
-	if err != nil || !reflect.DeepEqual(paths, []string{global}) {
+	if err != nil || !reflect.DeepEqual(paths, []string{canonicalTestPath(t, global)}) {
 		t.Fatalf("fallback Paths() = %#v, %v", paths, err)
 	}
 	if _, err := Trust(workspace); err != nil {

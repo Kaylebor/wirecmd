@@ -237,6 +237,10 @@ func TestLSPWorkspaceContextAgreesAcrossSiblingCallerDirectories(t *testing.T) {
 	discoveryEnvironment(t)
 	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
 	project := t.TempDir()
+	canonicalProject, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
 	first := filepath.Join(project, "src", "one")
 	second := filepath.Join(project, "src", "two")
 	for _, path := range []string{first, second, filepath.Join(project, ".wirecmd")} {
@@ -259,7 +263,7 @@ env WIRECMD_LSP_EXPECT_WORKSPACE=%s
 }
 }
 }
-`, strconv.Quote(os.Args[0]), strconv.Quote(project)))
+`, strconv.Quote(os.Args[0]), strconv.Quote(canonicalProject)))
 	if code, output, _ := invoke(t, []string{"config", "trust", project}); code != exitOK {
 		t.Fatalf("trust: code=%d output=%s", code, output)
 	}
@@ -276,8 +280,8 @@ env WIRECMD_LSP_EXPECT_WORKSPACE=%s
 		t.Fatalf("LSP context was not reused: code=%d stdout=%s stderr=%q", code, output, stderr)
 	}
 	status := mustInvokeLSP(t, []string{"lsp", "status", "--file", input})
-	if got := decodeOutput(t, status)["lsp"].(map[string]any)["workspace"]; got != project {
-		t.Fatalf("LSP status workspace = %v, want %s", got, project)
+	if got := decodeOutput(t, status)["lsp"].(map[string]any)["workspace"]; got != canonicalProject {
+		t.Fatalf("LSP status workspace = %v, want %s", got, canonicalProject)
 	}
 }
 

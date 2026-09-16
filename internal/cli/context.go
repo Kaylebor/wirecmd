@@ -97,7 +97,7 @@ func resolveInvocationContext(ctx context.Context, source configContext, loaded 
 	resolved := invocationContext{configContext: source, GlobalRoot: globalWirecmdRoot()}
 	declared := declaredProjectRoot(loaded.DeclaredRoot)
 	if declared != "" {
-		resolved.ProjectRoot = canonicalPathIfPresent(declared)
+		resolved.ProjectRoot = canonicalPath(declared)
 		return resolved, nil
 	}
 
@@ -150,12 +150,22 @@ func canonicalDirectory(path string) (string, error) {
 	return filepath.Clean(resolved), nil
 }
 
-func canonicalPathIfPresent(path string) string {
+func canonicalPath(path string) string {
 	clean := filepath.Clean(path)
-	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
-		return filepath.Clean(resolved)
+	suffix := make([]string, 0)
+	for candidate := clean; ; candidate = filepath.Dir(candidate) {
+		if resolved, err := filepath.EvalSymlinks(candidate); err == nil {
+			for index := len(suffix) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, suffix[index])
+			}
+			return filepath.Clean(resolved)
+		}
+		parent := filepath.Dir(candidate)
+		if parent == candidate {
+			return clean
+		}
+		suffix = append(suffix, filepath.Base(candidate))
 	}
-	return clean
 }
 
 func validProjectCandidate(cwd, candidate string) string {
@@ -235,7 +245,7 @@ func discoverGitRoot(ctx context.Context, cwd string) string {
 func globalWirecmdRoot() string {
 	if configured := os.Getenv("XDG_CONFIG_HOME"); configured != "" {
 		if filepath.IsAbs(configured) {
-			return canonicalPathIfPresent(filepath.Join(configured, "wirecmd"))
+			return canonicalPath(filepath.Join(configured, "wirecmd"))
 		}
 	}
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
@@ -245,5 +255,5 @@ func globalWirecmdRoot() string {
 	if err != nil || home == "" {
 		return ""
 	}
-	return canonicalPathIfPresent(filepath.Join(home, ".config", "wirecmd"))
+	return canonicalPath(filepath.Join(home, ".config", "wirecmd"))
 }

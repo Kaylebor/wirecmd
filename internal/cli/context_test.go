@@ -20,6 +20,9 @@ func TestResolveInvocationContextChoosesDeepestImplicitCandidate(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	gitRoot = canonicalPath(gitRoot)
+	workspace = canonicalPath(workspace)
+	cwd = canonicalPath(cwd)
 	original := runGitRoot
 	runGitRoot = func(context.Context, string) ([]byte, error) { return []byte(gitRoot + "\n"), nil }
 	t.Cleanup(func() { runGitRoot = original })
@@ -133,6 +136,8 @@ func TestResolveInvocationContextRejectsUnrelatedGitResult(t *testing.T) {
 	if err := os.MkdirAll(cwd, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	cwd = canonicalPath(cwd)
+	boundary = canonicalPath(boundary)
 	original := runGitRoot
 	runGitRoot = func(context.Context, string) ([]byte, error) { return []byte(filepath.Join(base, "other") + "\n"), nil }
 	t.Cleanup(func() { runGitRoot = original })
@@ -160,8 +165,8 @@ func TestResolveInvocationContextExplicitUsesStrongestRoot(t *testing.T) {
 	if appErr != nil {
 		t.Fatal(appErr)
 	}
-	if resolved.ProjectRoot != declared {
-		t.Fatalf("project root = %q, want %q", resolved.ProjectRoot, declared)
+	if resolved.ProjectRoot != canonicalPath(declared) {
+		t.Fatalf("project root = %q, want %q", resolved.ProjectRoot, canonicalPath(declared))
 	}
 }
 
@@ -179,8 +184,8 @@ func TestResolveInvocationContextGlobalOnlyUsesDeclaredRoot(t *testing.T) {
 	if appErr != nil {
 		t.Fatal(appErr)
 	}
-	if resolved.ProjectRoot != declared {
-		t.Fatalf("project root = %q, want global declared root %q", resolved.ProjectRoot, declared)
+	if resolved.ProjectRoot != canonicalPath(declared) {
+		t.Fatalf("project root = %q, want global declared root %q", resolved.ProjectRoot, canonicalPath(declared))
 	}
 }
 
@@ -241,8 +246,8 @@ func TestGlobalWirecmdRootCanonicalizesExistingSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("XDG_CONFIG_HOME", aliasHome)
-	if got := globalWirecmdRoot(); got != root {
-		t.Fatalf("global root = %q, want canonical %q", got, root)
+	if got := globalWirecmdRoot(); got != canonicalPath(root) {
+		t.Fatalf("global root = %q, want canonical %q", got, canonicalPath(root))
 	}
 }
 

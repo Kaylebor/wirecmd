@@ -445,7 +445,7 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 		if !filepath.IsAbs(file) {
 			file = filepath.Join(cwd, file)
 		}
-		file = filepath.Clean(file)
+		file = canonicalPath(file)
 	}
 	if request.Operation == lspStatus {
 		if opts.direct {

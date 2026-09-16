@@ -1322,7 +1322,7 @@ func daemonConfigKey(paths []string, discovered bool, generation uint64) string 
 func daemonExpectedProjectRoot(request daemonRequest, cached *daemonConfig) string {
 	declared := declaredProjectRoot(cached.declaredRoot)
 	if declared != "" {
-		return canonicalPathIfPresent(declared)
+		return canonicalPath(declared)
 	}
 	return request.ProjectRoot
 }

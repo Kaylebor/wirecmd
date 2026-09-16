@@ -165,6 +165,10 @@ func TestWorkspaceContextReusesOneProjectAcrossCallerDirectories(t *testing.T) {
 	discoveryEnvironment(t)
 	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
 	project := t.TempDir()
+	canonicalProject, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		t.Fatal(err)
+	}
 	first := filepath.Join(project, "src", "one")
 	second := filepath.Join(project, "src", "two")
 	if err := os.MkdirAll(first, 0o700); err != nil {
@@ -192,7 +196,7 @@ func TestWorkspaceContextReusesOneProjectAcrossCallerDirectories(t *testing.T) {
 
 	t.Chdir(first)
 	code, output, stderr := invoke(t, []string{"--direct", "helper", "working_directory"})
-	if code != exitOK || stderr != "" || callCWD(t, output) != project {
+	if code != exitOK || stderr != "" || callCWD(t, output) != canonicalProject {
 		t.Fatalf("direct project root: code=%d stderr=%q output=%s", code, stderr, output)
 	}
 
@@ -200,7 +204,7 @@ func TestWorkspaceContextReusesOneProjectAcrossCallerDirectories(t *testing.T) {
 	for _, directory := range []string{first, second} {
 		t.Chdir(directory)
 		code, output, stderr = invoke(t, []string{"helper", "working_directory"})
-		if code != exitOK || stderr != "" || callCWD(t, output) != project {
+		if code != exitOK || stderr != "" || callCWD(t, output) != canonicalProject {
 			t.Fatalf("daemon project root from %s: code=%d stderr=%q output=%s", directory, code, stderr, output)
 		}
 	}
