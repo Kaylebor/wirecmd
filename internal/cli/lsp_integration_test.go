@@ -64,7 +64,7 @@ func TestLSPDefinitionDirectAndDaemon(t *testing.T) {
 	}
 	lsp := decodeOutput(t, output)["lsp"].(map[string]any)
 	locations := lsp["locations"].([]any)
-	if len(locations) != 1 || locations[0].(map[string]any)["path"] != input+".definition" {
+	if len(locations) != 1 || locations[0].(map[string]any)["path"] != canonicalPath(input)+".definition" {
 		t.Fatalf("locations = %#v", locations)
 	}
 	code, output, stderr = invoke(t, args)
@@ -140,7 +140,7 @@ lsp "nonmatching" { selector language-id="html" pattern="**/*.html"; stdio %s { 
 		t.Fatalf("document symbols=%#v", document)
 	}
 	workspaceResult := decodeOutput(t, mustInvokeLSP(t, []string{"--direct", "--config", configPath, "lsp", "workspace-symbols", "--query", "Needle"}))["lsp"].(map[string]any)
-	if workspaceResult["query"] != "Needle" || workspaceResult["workspace"] != workspace || len(workspaceResult["providers"].([]any)) != 2 || workspaceResult["symbols"].([]any)[0].(map[string]any)["name"] != "Needle" {
+	if workspaceResult["query"] != "Needle" || workspaceResult["workspace"] != canonicalPath(workspace) || len(workspaceResult["providers"].([]any)) != 2 || workspaceResult["symbols"].([]any)[0].(map[string]any)["name"] != "Needle" {
 		t.Fatalf("workspace symbols=%#v", workspaceResult)
 	}
 }
@@ -438,7 +438,7 @@ func TestLSPNavigationOperations(t *testing.T) {
 				t.Fatalf("%s daemon output differs: direct=%#v daemon=%#v", test.operation, direct, decoded)
 			}
 			location := decoded["lsp"].(map[string]any)["locations"].([]any)[0].(map[string]any)
-			if location["path"] != input+test.suffix {
+			if location["path"] != canonicalPath(input)+test.suffix {
 				t.Fatalf("%s location = %#v", test.operation, location)
 			}
 		}

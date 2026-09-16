@@ -93,7 +93,7 @@ func TestResolveInvocationContextNearestWorkspaceRootOverridesAllCandidates(t *t
 	if appErr != nil {
 		t.Fatal(appErr)
 	}
-	if resolved.ProjectRoot != declared {
+	if resolved.ProjectRoot != canonicalPath(declared) {
 		t.Fatalf("project root = %q, want declared root %q", resolved.ProjectRoot, declared)
 	}
 }
