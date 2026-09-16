@@ -4,252 +4,173 @@ Status: authoritative product direction
 
 ## Thesis
 
-Make useful capabilities available to any shell-capable agent without requiring
-native protocol support in its harness, eager tool-schema injection, or loss
-of ordinary shell composition.
+Wirecmd makes useful capabilities available through a stable shell contract.
+A shell-capable agent can discover, inspect, invoke, and compose those
+capabilities without native support for every upstream protocol, eager schema
+injection from its harness, or loss of ordinary shell tools.
 
-The shell is the agent-facing capability interface. MCP is the first upstream
-adapter and should normally be invisible outside configuration and diagnostics.
-Native LSP navigation is a deliberately narrow local capability, not a
-language-server catalog or a competing editor client.
+Wirecmd is agent-oriented, but not agent-exclusive. A technical human commonly
+configures or supervises it; a properly instructed agent may configure it too.
+Humans, agents, scripts, editors, and CI use the same semantic commands,
+results, errors, and exit behavior.
+
+MCP and LSP are upstream capability families rather than the product boundary.
+Wirecmd is a configuration-driven capability runtime and local lifecycle
+broker. It hides protocol and lifecycle complexity without hiding the
+configuration needed to operate arbitrary providers.
 
 ## Problem
 
-Harness-native MCP integrations commonly own server registration, connection
-lifecycle, schema exposure, tool invocation, authentication, and presentation.
-That couples capability access to each harness and can expose large tool
-inventories before an agent needs them.
+Harness-native integrations commonly own provider registration, connection
+lifecycle, schema exposure, invocation, authentication, and presentation. That
+couples capability access to one harness and can inject large inventories before
+an agent needs them.
 
-Most coding agents already have a shell and strong operational priors for
-discovering commands, reading help, handling exit status, processing structured
-output, and composing programs. A stable shell contract can make the same
-capabilities usable by different agents, people, scripts, CI jobs, editors, and
-other local automation without teaching each consumer MCP.
+Agents already know how to discover commands, read focused help, handle exit
+status, consume structured output, and compose shell programs. A stable shell
+interface lets the same configured capability work across different agents and
+ordinary local automation while preserving those skills.
 
-## Product boundary
+Upstream providers also vary in ways a generic runtime cannot predict. Their
+executables, arguments, environments, settings, project conventions, and
+lifecycle assumptions are owned by their developers and users. A useful
+runtime must expose predictable primitives without pretending to understand
+every server.
 
-The runtime provides:
+## Product model
 
-- lazy discovery of configured capability sources;
-- focused help and schema inspection;
-- deterministic, non-interactive invocation;
-- lossless structured input and machine-readable output;
-- stable error categories with actionable recovery information;
-- composition through pipes, redirection, scripts, and standard shell tools;
-- configuration that can vary safely by invocation and workspace context; and
-- optional local lifecycle brokering that does not change command semantics.
-- transparent OAuth for protected HTTP sources when an interactive caller
-  permits browser authorization, with encrypted local credential persistence.
-- optional age-backed secret resolution for configured values, using
-  user-managed hardware-backed identities when available.
-- workspace-scoped native LSP navigation when workspace configuration supplies
-  compatible language-server processes and selectors.
+Configuration is Wirecmd's control plane. Global sources define reusable
+providers. Project sources add defaults or overrides when a project needs them.
+Configuration provenance remains explainable regardless of where the resulting
+provider runs.
 
-The initial upstream adapter consumes MCP sources. Native LSP navigation and
-read-only inspection are the completed first non-MCP capability family, with
-automatic selector routing and capable-provider fan-out. Future adapter
-families are possible only if real use demonstrates their value; this does not
-commit the product to them.
+The runtime keeps several concerns distinct:
+
+- configuration sources describe providers and compose static intent;
+- invocation context describes facts resolved for the current call;
+- explicit materialization places contextual or sensitive values into fields a
+  provider consumes;
+- instance scope selects the ownership and reuse boundary for a live provider;
+- materialized startup configuration describes what is actually launched; and
+- authentication identity describes the selected credentials or upstream
+  principal without exposing secret material; and
+- retained-instance identity combines scope, startup-affecting configuration,
+  and sensitive identity for honest reuse decisions.
+
+Where configuration is stored does not determine instance scope. Scope does not
+remove contextual information or prescribe how an upstream provider interprets
+it. When materialized values make two providers start differently, Wirecmd must
+represent that difference honestly rather than claiming interchangeable state.
+
+This separation lets a provider be defined once and used in many contexts. A
+developer—or an agent operating from adequate instructions—decides which
+available values a particular provider needs and where to place them.
+
+## Responsibilities and ownership
+
+Wirecmd owns behavior that can be made generic:
+
+- lazy discovery and configuration composition;
+- provenance and actionable configuration errors;
+- context resolution and explicit value materialization;
+- secret resolution, redaction, and sensitive identity boundaries;
+- process, connection, and retained-session lifecycle;
+- protocol negotiation and framing through maintained SDKs where available;
+- focused capability inspection and lossless invocation;
+- normalized structured output, stable errors, and recovery guidance; and
+- consistent direct and daemon-backed semantics where continuity permits.
+
+The configurator owns arbitrary provider semantics. Wirecmd should validate its
+own contract but should not infer a language server, database connector, MCP
+server, or future provider's private policy merely to simplify an adapter.
+
+Known-provider conveniences may become worthwhile after repeated evidence.
+They remain conveniences that compile down to the generic configuration model;
+they must not create a separate runtime or make the generic path incomplete.
 
 ## Interaction principles
 
 ### Pull, do not inject
 
 An agent begins with a small universal Skill and a stable discovery convention.
-It asks for the available servers, capabilities, or schemas only when the task
-requires them. Large inventories are not assumed to be present in the harness
-context.
+It asks for available providers, capabilities, or schemas only when needed.
+Large inventories are not assumed to be present in the harness context.
 
-### Shell-native composition
+### Compose through the shell
 
-Results must be usable with normal shell tooling. Structured input and output
-are authoritative; ergonomic projections such as generated flags may improve
-common calls but cannot make a valid upstream invocation unrepresentable.
+Structured input and output are authoritative. Ergonomic projections may
+improve common calls but cannot make a valid upstream invocation
+unrepresentable. The important unit of composition is an entire shell program,
+which may combine repository search, files, Git, language tooling, filters, and
+multiple remote capabilities without a model round trip between every step.
 
-The important unit of composition is an entire shell program submitted through
-one harness shell call, not merely one MCP call presented as a command. An agent
-should be able to combine repository search, logs, files, Git, language tools,
-ordinary filters and transforms, and multiple remote capabilities without a
-model round trip between every operation. The shell remains the workflow
-language; this project must not grow a competing workflow engine.
+Wirecmd must not grow a competing workflow language.
 
 ### One public contract
 
-Agents and humans should not use separate semantic interfaces. Scripts and CI
-must receive the same operation, output, error, and exit-code behavior as an
-agent invoking the command through a shell.
+Agents and humans do not receive different semantic interfaces. Presentation
+may adapt to a terminal, but scripts and CI retain the same operation, result,
+error, and exit-code behavior. Machine-readable output remains deterministic
+and selectable explicitly.
 
-Presentation may adapt to stdout: terminals default to readable discovery,
-administration, and errors, and indented JSON tool results; pipes default to
-compact JSON. `--format json --color never` selects machine output even in a
-PTY. This does not change semantic envelopes, exit codes, or OAuth interaction
-rules. The [output contract](plans/output-plan.md) defines this presentation boundary.
+### Deterministic interaction
 
-### Non-interactive by default
+Ordinary non-interactive calls do not unexpectedly prompt. Narrow documented
+flows—such as interactive OAuth or authorization performed by a selected
+hardware-backed identity—may involve the user without changing the stdout
+result contract. Diagnostics and interaction guidance remain on stderr.
 
-Ordinary commands remain deterministic and non-interactive when either stdin or
-stderr is not a TTY, or when `WIRECMD_NONINTERACTIVE=1` is set. When both are
-TTYs, a protected HTTP call may transparently open a browser and wait for the
-OAuth callback. Authorization URLs and browser diagnostics go to stderr; the
-result remains a single stdout response in the selected presentation. Explicit
-`wirecmd auth login SERVER` provides the deliberate credential-management
-flow, and headless callers receive an actionable structured condition instead
-of an unexpected prompt. This OAuth policy does not suppress a selected
-hardware-backed `age` identity's own authorization prompt; that prompt belongs
-to the user's local identity and is bounded by secret resolution.
+### Honest lifecycle brokering
 
-### Daemon-backed normal operation
+Normal operation is daemon-backed so processes, connections, authentication
+flows, and protocol state can be retained. The daemon is an internal lifecycle
+facility, not the agent-facing protocol or a general service manager.
 
-A local daemon may retain upstream connections, own long-lived authentication
-transactions, coordinate browser callbacks, manage encrypted local
-credentials, manage local processes, cache discovery, and reap idle resources.
-It is an optimization and lifecycle broker, not the agent-facing protocol.
-Equivalent invocations should retain their observable contract with or without
-the daemon, except where an upstream operation genuinely requires continuity.
+Equivalent invocations preserve their public contract in direct and
+daemon-backed modes except where genuine continuity changes semantics. Wirecmd
+must never silently fall back to one-shot execution or pretend that state
+survived replacement, restart, or identity change.
 
-Normal invocation is daemon-backed and fails clearly when the daemon is
-unavailable. An explicit `--direct` mode provides deliberate one-shot execution
-for testing and diagnostics. The CLI must not silently fall back to direct mode
-because doing so could discard expected server or application state while
-appearing successful.
+## Adapter boundaries
 
-The daemon path should be validated early rather than postponed until after a
-pure one-shot client is complete. Many currently deployed MCP servers use
-initialized sessions or persistent stdio processes, so testing only ephemeral
-connections would leave a material part of the product premise unexercised.
-Early validation does not justify advanced pooling, recovery, hot reload,
-service-manager integration, or a public daemon API.
+Public commands and normalized results remain independent of upstream wire
+revisions and generated SDK types. Maintained official SDKs own protocol
+negotiation, transport, authorization, and compatibility behavior by default.
+Local shims require a confirmed gap and remain narrow.
 
-## Differentiation
+Adapters translate generic Wirecmd operations into upstream protocol behavior.
+They do not define a second agent-facing architecture. MCP, LSP, and any future
+family share the configuration, context, secret, scope, lifecycle, output, and
+recovery model even when their protocol mechanics differ.
 
-The project is not justified merely by being a compiled MCP CLI. Its intended
-value is the combination of:
+## Product boundaries
 
-- harness-independent capability access through the shell;
-- lazy, agent-directed discovery;
-- predictable composition and recovery;
-- workspace-aware behavior with explainable configuration provenance; and
-- hidden upstream protocol and lifecycle complexity.
+Wirecmd is not:
 
-Existing MCP clients are comparison points. Their breadth is not a target by
-itself.
+- an IDE or replacement editor client;
+- an agent harness or harness-specific integration layer;
+- a marketplace, provider registry, or mandatory server catalog;
+- a workflow engine competing with the shell;
+- a policy engine that decides what arbitrary providers are allowed to mean;
+- a general plugin or extension runtime;
+- a universal service manager, autoscaler, or audit database;
+- a security sandbox for hostile same-user processes; or
+- a promise to expose every primitive of every supported protocol.
 
-## MCP implementation constraint
-
-The official Go SDK owns MCP behavior by default. Before adding MCP-specific
-code, assume the pinned SDK already supports the required feature and verify it
-against current SDK documentation, source, examples, and tests. Prefer its
-highest-level client, session, transport, authorization, capability, and
-request APIs.
-
-Project code should primarily implement the product outside MCP: shell UX,
-configuration and provenance, normalized output and recovery, local daemon IPC,
-managed process lifecycle, instance scope, caching policy, diagnostics,
-encrypted credential persistence, optional secret resolution, and Skills. It must not reimplement protocol
-negotiation, wire codecs, transports, revision gates, or authorization
-mechanics that the SDK handles. The current SDK does not expose a separate
-stable resource/issuer identity for the storage boundary, so this slice uses
-the resolved endpoint plus configured registration inputs as its credential
-identity. Any collision evidence must be recorded before changing that
-boundary or adding a compatibility shim.
-
-If a required feature exposes a confirmed SDK gap, add the smallest isolated
-shim and document the exact upstream limitation. A conceptual difference
-between protocol eras does not by itself justify a local adapter or abstraction.
-
-## Native LSP boundary
-
-The selector-routed LSP navigation milestone is complete and qualified. Process
-commands, arguments, environments, language IDs, selectors, and workspace roots
-are configuration-owned; Wirecmd does not name, discover, construct, or
-special-case language servers. Matching providers fan out automatically and
-return provider-aware structured outcomes and contextual status. Wirecmd
-provides standard JSON-RPC framing and lifecycle, conservative initialization,
-disk-backed document synchronization, UTF-16 position conversion, normalized
-locations, retained daemon sessions, and actionable errors. The authoritative
-contract and qualification boundaries are recorded in the [LSP plan](plans/lsp-plan.md).
-
-This is not a general LSP client commitment. Initialization options, unsaved
-buffers, language-specific behavior, dynamic registration, workspace settings,
-edits, mutating operations, and dynamic completion remain deferred.
-
-## MVP compatibility direction
-
-The first full MVP should support three deployed MCP compatibility layers:
-
-1. modern stateless MCP beginning with `2026-07-28`;
-2. legacy initialized MCP over stdio and Streamable HTTP; and
-3. legacy HTTP+SSE.
-
-Implementation and validation proceed newest to oldest. Establish the public
-shell contract and daemon boundary against modern MCP first, then exercise the
-SDK's legacy initialized behavior, and finally re-evaluate legacy HTTP+SSE
-through a stable official SDK API. The public command and result contract must
-not branch by era; differences remain within the SDK and diagnostics unless
-they change an actual capability available to the caller.
-
-The first validation milestone found the shell interaction model viable. Legacy
-stdio, Streamable HTTP, and HTTP+SSE are qualified through the stable official
-SDK; see the [SSE milestone](plans/sse-plan.md). SSE OAuth is explicitly deferred;
-that transport supports unauthenticated or static-header access.
-Trusted global and
-workspace configuration discovery is complete. Typed query and header values
-for Streamable HTTP endpoints and transparent OAuth with encrypted credential
-persistence are complete; their contracts are recorded in the
-[HTTP values plan](plans/http-values-plan.md) and [OAuth plan](plans/oauth-plan.md).
-Age-backed secret resolution is specified separately in the
-[age secrets plan](plans/age-secrets-plan.md). OAuth must use the official SDK's
-authorization surface, with Wirecmd adding only interaction, persistence,
-daemon coordination, redaction, and error mapping.
-
-Native LSP navigation and read-only inspection, including signature help,
-completed direct and retained-daemon qualification with a configured real
-server and deterministic overlapping-provider fixtures. They remain
-server-neutral; `gopls` and the Angular-like overlap fixture are test inputs,
-not product dependencies, defaults, or routing knowledge.
-
-For this milestone, endpoint values remain structural configuration rather than
-preassembled URL or request strings. `query NAME=value` and `header NAME=value`
-children accept literal values or provider-qualified secret references. Query
-names are case-sensitive and header names are case-insensitive. Stronger
-configuration layers replace matching keyed entries while preserving their
-position and append new entries. Only the selected server resolves its secret
-references; resolved startup credentials participate in daemon instance
-identity so retained instances cannot cross credential boundaries.
-
-## Current non-goals
-
-- Acting primarily as an MCP server, aggregator, or proxy.
-- Importing configuration from every supported editor or agent harness.
-- Providing an MCP marketplace or registry.
-- Turning arbitrary CLIs into MCP servers.
-- Generating language-specific SDKs or typed application clients.
-- Providing a general plugin or extension runtime.
-- Building record/replay, audit-database, autoscaling, or policy-engine
-  subsystems.
-- Supporting every MCP primitive before validating the agent-facing contract.
-- Designing future non-MCP adapters without a demonstrated consumer.
-- Expanding native LSP beyond the accepted selector-routed navigation and
-  read-only inspection slice into a language-server catalog, editor
-  integration, or general LSP client without separate evidence.
-- Client ID Metadata Documents, device authorization, client credentials,
-  provider-side revocation, non-loopback callbacks, multiple accounts per
-  identity, and provider-specific OAuth compatibility guards are deferred.
-- Templated or dynamically composed HTTP values and dynamic per-request
-  headers remain deferred.
-- Arbitrary shell secret providers, provider plugins, and plaintext generated
-  configuration files remain deferred.
-
-An optional future MCP-server frontend is not part of the current product
-contract. If later justified, it may expose the daemon's aggregated semantic
-capabilities over the latest MCP revision and could translate older upstream
-servers into that newer frontend. This possibility should influence only the
-existing separation between CLI rendering, daemon semantics, and SDK sessions;
-it does not justify a generic frontend framework or proxy implementation now.
+Future capability families, provider conveniences, and broader protocol
+surfaces require demonstrated value and an accepted contract. Current shipped
+state and open decisions are recorded in the [roadmap](roadmap.md); detailed
+feature contracts and qualification records are indexed in the
+[documentation map](README.md).
 
 ## Decision test
 
-A feature belongs in the product when it materially improves reliable agent
-discovery, invocation, composition, recovery, or the transparent operation of
-those behaviors across workspaces and harnesses. Protocol breadth or competitor
-parity alone is not sufficient.
+For unfamiliar behavior, first determine whether it is required by an upstream
+protocol, is a generic runtime or lifecycle invariant, or belongs to arbitrary
+provider configuration. Wirecmd should encode the first two centrally and give
+the configurator an expressive, explicit path for the third.
+
+A feature belongs in the product when it materially improves reliable
+discovery, configuration, invocation, composition, recovery, or transparent
+lifecycle operation across agents and contexts. Protocol breadth, competitor
+parity, or local adapter convenience alone is insufficient.

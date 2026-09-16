@@ -12,7 +12,7 @@ work, without claiming broad MCP compatibility or production readiness.
 
 The immutable run evidence, limitations, and qualification commands are
 recorded in `docs/notes/comparative-evaluation-2026-08-25.md`. Subsequent
-authoritative milestones are indexed in `README.md` and `AGENTS.md`.
+authoritative milestones are indexed in the [documentation map](../README.md).
 
 ## Objective
 

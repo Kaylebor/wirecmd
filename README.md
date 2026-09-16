@@ -162,6 +162,8 @@ contacts the daemon, resolves secrets, or opens OAuth.
   security boundary.
 - [Product thesis](docs/product-thesis.md): product direction and boundaries.
 - [Current roadmap](docs/roadmap.md): shipped baseline and open decision queue.
+- [Development guide](docs/development.md): contributor workflow, verification,
+  review, and change hygiene.
 - [LSP plan](docs/plans/lsp-plan.md): native navigation and inspection contract.
 - [Output contract](docs/plans/output-plan.md): terminal, JSON, and color behavior.
 - [Onboarding and completion](docs/plans/onboarding-plan.md): help and Fish
@@ -169,7 +171,9 @@ contacts the daemon, resolves secrets, or opens OAuth.
 - [Release readiness](docs/release-readiness.md): installation, compatibility,
   qualification, and publication policy.
 
-Repository working instructions are in [AGENTS.md](AGENTS.md).
+Agents should start with the repository primer in [AGENTS.md](AGENTS.md);
+contributor and maintainer procedures are in the
+[development guide](docs/development.md).
 
 ## License
 

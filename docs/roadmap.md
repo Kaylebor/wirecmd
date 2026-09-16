@@ -16,8 +16,9 @@ The governing documents are the [product thesis](product-thesis.md),
 [MCP resources plan](plans/resources-plan.md),
 [age secrets plan](plans/age-secrets-plan.md),
 [release-readiness contract](release-readiness.md), and
-[macOS qualification plan](plans/macos-plan.md). `AGENTS.md` is the complete index of
-authoritative milestone documents and their precedence.
+[macOS qualification plan](plans/macos-plan.md). The
+[documentation index](README.md) routes contributors to authoritative milestone
+documents and non-authoritative working material.
 
 ## Current baseline
 
