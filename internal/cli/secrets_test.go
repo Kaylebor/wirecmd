@@ -45,6 +45,9 @@ if [ "$1" = "--version" ]; then
   printf '%s\n' 'v1.3.2'
   exit 0
 fi
+if [ -n "$WIRECMD_FAKE_AGE_CALLS" ]; then
+  printf '%s\n' decrypt >> "$WIRECMD_FAKE_AGE_CALLS"
+fi
 cat
 `
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
@@ -238,6 +241,79 @@ func TestDirectAgeEnvironmentUsesExplicitSiblingBeforeGlobal(t *testing.T) {
 	assertDirectEnvironmentMatches(t, []string{"--config", configPath}, map[string]string{"TOKEN": "explicit-sibling"})
 }
 
+func TestGlobalAgeEnvironmentIgnoresWorkspaceStore(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	writePassthroughFakeAge(t)
+	configHome := t.TempDir()
+	globalDirectory := filepath.Join(configHome, "wirecmd")
+	if err := os.Mkdir(globalDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	if err := os.WriteFile(filepath.Join(globalDirectory, "secrets.json.age"), []byte(`{"TOKEN":"global"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config.kdl")
+	identity := filepath.Join(directory, "identity.age")
+	source := "wirecmd {\nsecrets { age { identity " + strconv.Quote(identity) + " } }\nmcp \"helper\" { scope \"global\"; stdio " + strconv.Quote(os.Args[0]) + " { arg \"-test.run=TestHelperProcess\"; arg \"--\"; env TOKEN=(secret)\"age://TOKEN\" } }\n}\n"
+	if err := os.WriteFile(configPath, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "secrets.json.age"), []byte(`{"TOKEN":"workspace"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	assertDirectEnvironmentMatches(t, []string{"--config", configPath}, map[string]string{"TOKEN": "global"})
+}
+
+func TestDaemonGlobalAgeReuseIgnoresWorkspaceStoreChanges(t *testing.T) {
+	t.Setenv("GO_WIRECMD_HELPER", "1")
+	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
+	directory := t.TempDir()
+	calls := filepath.Join(directory, "age.calls")
+	children := filepath.Join(directory, "children")
+	t.Setenv("WIRECMD_FAKE_AGE_CALLS", calls)
+	writeFakeAge(t, `{"TOKEN":"global-daemon-sentinel"}`)
+	configHome := t.TempDir()
+	globalDirectory := filepath.Join(configHome, "wirecmd")
+	if err := os.Mkdir(globalDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	if err := os.WriteFile(filepath.Join(globalDirectory, "secrets.json.age"), []byte("global ciphertext"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	configPath := filepath.Join(directory, "config.kdl")
+	identity := filepath.Join(directory, "identity.age")
+	writeSource(t, configPath, "wirecmd {\nsecrets { age { identity "+strconv.Quote(identity)+" } }\nmcp \"helper\" { scope \"global\"; stdio "+strconv.Quote(os.Args[0])+" { arg \"-test.run=TestHelperProcess\"; arg \"--\"; env SECRET=(secret)\"age://TOKEN\"; env WIRECMD_CHILD_COUNT_FILE="+strconv.Quote(children)+" } }\n}\n")
+	workspaceStore := filepath.Join(directory, "secrets.json.age")
+	if err := os.WriteFile(workspaceStore, []byte("workspace ciphertext"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	startTestDaemon(t)
+
+	for iteration := 0; iteration < 2; iteration++ {
+		code, output, stderr := invoke(t, []string{"--config", configPath, "helper", "secret"})
+		if code != exitOK || strings.Contains(output, "global-daemon-sentinel") || strings.Contains(stderr, "global-daemon-sentinel") {
+			t.Fatalf("global daemon age call %d: code=%d stdout=%q stderr=%q", iteration, code, output, stderr)
+		}
+		if iteration == 0 {
+			if err := os.WriteFile(workspaceStore, []byte("changed workspace ciphertext"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if got := fakeAgeDecryptCount(t, calls); got != 1 {
+		t.Fatalf("global decrypts after workspace-store change = %d, want 1", got)
+	}
+	if data, err := os.ReadFile(children); err != nil || len(strings.Fields(string(data))) != 1 {
+		t.Fatalf("global retained child count: data=%q err=%v", data, err)
+	}
+}
+
 func assertDirectEnvironmentMatches(t *testing.T, options []string, expected map[string]string) {
 	t.Helper()
 	payload, err := json.Marshal(expected)
@@ -394,7 +470,7 @@ func TestAgeBatchFeedsHTTPAndOAuthDestinations(t *testing.T) {
 	}
 	server := config.Server{Name: "remote", HTTP: &transport}
 	configured := config.Secrets{Age: &config.AgeSecrets{Identities: []config.AgeIdentity{{Path: filepath.Join(directory, "identity.age")}}}}
-	resolved, appErr := resolveSelectedSecrets(context.Background(), configured, []string{store}, false, nil, serverSecretValues(server), os.LookupEnv)
+	resolved, appErr := resolveSelectedSecrets(context.Background(), config.ScopeWorkspace, configured, []string{store}, false, nil, serverSecretValues(server), os.LookupEnv)
 	if appErr != nil {
 		t.Fatal(appErr)
 	}
@@ -428,7 +504,7 @@ func TestLSPMatchesShareOneAgeBatch(t *testing.T) {
 		{Definition: config.LSP{Stdio: config.Stdio{Env: []config.Environment{{Name: "TOKEN", Value: config.Value{Kind: config.ValueSecretReference, Text: "age://SECOND"}}}}}},
 	}
 	configured := config.Secrets{Age: &config.AgeSecrets{Identities: []config.AgeIdentity{{Path: filepath.Join(directory, "identity.age")}}}}
-	resolved, appErr := resolveSelectedSecrets(context.Background(), configured, []string{store}, false, nil, lspSecretValues(matches), os.LookupEnv)
+	resolved, appErr := resolveSelectedSecrets(context.Background(), config.ScopeWorkspace, configured, []string{store}, false, nil, lspSecretValues(matches), os.LookupEnv)
 	if appErr != nil {
 		t.Fatal(appErr)
 	}

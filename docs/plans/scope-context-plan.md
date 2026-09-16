@@ -1,6 +1,6 @@
 # Scope and invocation context plan
 
-Status: accepted; workspace-context slice implemented, global-scope slice next
+Status: accepted and implemented
 
 ## Purpose
 
@@ -83,9 +83,9 @@ remains fresh and normal operation remains daemon-required.
 
 ## Global scope
 
-The next slice accepts `scope "global"` for MCP and LSP while leaving omitted
-scope as `workspace`. Scope controls lifecycle ownership and the default
-provider root, never configuration provenance.
+`scope "global"` is accepted for MCP and LSP while omitted scope remains
+`workspace`. Scope controls lifecycle ownership and the default provider root,
+never configuration provenance.
 
 Global stdio and LSP providers use the global Wirecmd root and return
 `global_root_unavailable` when it is absent or not a directory. Context-free

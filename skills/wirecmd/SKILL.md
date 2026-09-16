@@ -36,11 +36,19 @@ Repeated `--config PATH` options replace discovery completely and preserve
 their weakest-to-strongest order; explicit files can use any filename.
 
 Workspace calls use one canonical project root. An explicit applicable `root`
-wins; otherwise Wirecmd chooses the deeper of the nearest project-config
+wins; otherwise Wirecmd chooses the deeper of the nearest `.wirecmd/config.kdl`
 directory and the Git worktree, then falls back to the trusted boundary or
 caller CWD. A stronger `git-root #false` KDL 2 setting disables Git probing.
-Use this resolved root when reasoning about MCP child CWD, LSP selectors and
-initialization, and daemon reuse.
+Use this resolved root when reasoning about `workspace` MCP child CWD, LSP
+selectors and initialization, and daemon reuse.
+
+MCP and LSP definitions omit `scope` for `workspace`, or may set
+`scope "global"`. Scope chooses lifecycle ownership and a default provider
+root, not where configuration is declared. Global stdio MCP and LSP providers
+run from `$XDG_CONFIG_HOME/wirecmd` (or `~/.config/wirecmd`) and return
+`global_root_unavailable` if that directory is absent. Context-free global HTTP
+providers do not require it and can reuse across projects. Global LSP selectors
+and initialization stay rooted there, never in an arbitrary caller project.
 
 Manage trust explicitly when a workspace is not yet approved:
 
@@ -80,7 +88,7 @@ lsp "primary" {
 }
 ```
 
-Selectors optionally accept a workspace-relative `pattern`, defaulting to
+Selectors optionally accept a provider-root-relative `pattern`, defaulting to
 `**/*`. Matching definitions are queried concurrently and their locations are
 attributed to the provider. Query a saved UTF-8 file with one-based coordinates:
 
@@ -156,9 +164,11 @@ part of this slice. HTTP and MCP transport-owned headers are reserved and
 rejected; see the [HTTP values plan](../../docs/plans/http-values-plan.md) for the
 complete list.
 
-Listing, completion, and LSP status do no secret work. In daemon mode, resolved
-startup credentials distinguish retained instances, so one server definition
-cannot reuse an instance started with different credentials. See [age
+Listing, completion, and LSP status do no secret work. `workspace` age
+references search trusted workspace stores before the global store; `global`
+references use only the global store. In daemon mode, resolved startup
+credentials distinguish retained instances, so one server definition cannot
+reuse an instance started with different credentials. See [age
 secrets](../../docs/plans/age-secrets-plan.md) for encrypted-store discovery,
 hardware prompts, and the threat boundary.
 

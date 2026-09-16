@@ -57,6 +57,23 @@ func TestParseAndComposeOneSource(t *testing.T) {
 	}
 }
 
+func TestComposeAcceptsGlobalScopeForMCPAndLSP(t *testing.T) {
+	source, err := ParseString("global.kdl", `wirecmd {
+		mcp "shared" { scope "global"; http "https://example.test/mcp" }
+		lsp "shared" { scope "global"; selector language-id="go"; stdio "gopls" }
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective, err := Compose(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.Servers[0].Scope != ScopeGlobal || effective.LSPs[0].Scope != ScopeGlobal {
+		t.Fatalf("global scopes were not preserved: MCP=%q LSP=%q", effective.Servers[0].Scope, effective.LSPs[0].Scope)
+	}
+}
+
 func TestParseAllowsPartialSources(t *testing.T) {
 	tests := []struct {
 		name   string

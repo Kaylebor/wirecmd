@@ -92,7 +92,7 @@ effective configuration used by the daemon, run `wirecmd daemon reload`.
 An explicit path may have any filename; only automatic workspace discovery uses
 the `.wirecmd/config.kdl` name.
 
-## Project root and workspace behavior
+## Project root and scope behavior
 
 `root` is optional. A relative root resolves against the file that declared
 the applicable value. Under automatic discovery, only the nearest workspace
@@ -106,12 +106,12 @@ wirecmd {
 }
 ```
 
-Without a declared root, Wirecmd compares the nearest discovered project
-configuration directory with the Git worktree root and chooses the deepest
-valid ancestor of the caller's canonical CWD. It then falls back to the
+Without a declared root, Wirecmd compares the directory containing the nearest
+discovered `.wirecmd/config.kdl` with the Git worktree root and chooses the
+deepest valid ancestor of the caller's canonical CWD. It then falls back to the
 nearest trusted boundary and finally the CWD. The canonical project root owns
-workspace-scoped process CWDs, LSP routing and initialization, and retained
-daemon instances.
+the `workspace` scope: its stdio process CWD, LSP selector and initialization
+root, and retained-instance boundary.
 
 Git participation is optional and defaults on. Disable it in a stronger
 configuration layer with KDL 2 boolean syntax:
@@ -126,8 +126,36 @@ When disabled, Wirecmd does not launch Git. Otherwise Git is only a project
 signal; missing Git, non-worktrees, invalid or unrelated results, and a
 five-second timeout quietly fall back to the other candidates.
 
-MCP and LSP definitions default to workspace scope. Writing `scope "workspace"`
-explicitly is also valid. No other scope is implemented.
+MCP and LSP definitions default to `workspace` scope. Writing
+`scope "workspace"` explicitly is also valid. `scope "global"` is also
+available and controls lifecycle ownership and the default provider root; it
+does not determine where a definition was configured. A global definition may
+be declared or overridden in global, workspace, or explicit configuration.
+
+The global root is `$XDG_CONFIG_HOME/wirecmd`, or `~/.config/wirecmd` when
+`XDG_CONFIG_HOME` is unset or not absolute. Global stdio MCP and LSP providers
+start from that directory; they return `global_root_unavailable` if it is
+absent or is not a directory. Context-free global HTTP and SSE MCP providers
+do not require the directory. Equivalent global providers can reuse a retained
+instance across projects. Global LSP selectors, process CWD, and initialization
+remain rooted at the global root and never attach a retained server to an
+arbitrary caller project.
+
+For example, a reusable global HTTP provider can be defined in any effective
+configuration source:
+
+```kdl
+wirecmd {
+    mcp "account-service" {
+        scope "global"
+        http "https://service.example.test/mcp"
+    }
+}
+```
+
+Global `age://` references read only the global encrypted store. Workspace
+references retain the trusted workspace-to-global store lookup order. Mixed
+scope operations keep their secret batches and retained metadata separate.
 
 ## MCP definitions
 
@@ -234,11 +262,12 @@ lsp "typescript" {
 
 Every LSP definition requires a `stdio` executable and at least one selector.
 `language-id` is required on each selector. `pattern` is an optional
-workspace-relative doublestar glob and defaults to `**/*`.
+provider-root-relative doublestar glob and defaults to `**/*`.
 `implementation-id` is optional descriptive metadata; negotiated server
 identity and capabilities still come from LSP initialization. Multiple
 definitions may match one file and are queried according to their advertised
-capabilities.
+capabilities. A global LSP definition matches only files beneath the global
+root; it does not treat the invocation project as its workspace.
 
 Wirecmd does not derive language IDs, executable names, launch arguments, or
 initialization options.

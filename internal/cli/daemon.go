@@ -32,7 +32,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 12
+const daemonProtocol = 13
 
 type daemonAdmin struct {
 	command string
@@ -98,36 +98,42 @@ type secretInput struct {
 }
 
 type daemonRequest struct {
-	Operation             operation              `json:"operation"`
-	Server                string                 `json:"server,omitempty"`
-	Tool                  string                 `json:"tool,omitempty"`
-	URI                   string                 `json:"uri,omitempty"`
-	Arguments             map[string]any         `json:"arguments,omitempty"`
-	Projected             []projectedArgument    `json:"projected,omitempty"`
-	Overlay               map[string]any         `json:"overlay,omitempty"`
-	Help                  helpKind               `json:"help,omitempty"`
-	CWD                   string                 `json:"cwd"`
-	ProjectRoot           string                 `json:"project_root,omitempty"`
-	GlobalRoot            string                 `json:"global_root,omitempty"`
-	TrustedBoundary       string                 `json:"trusted_boundary,omitempty"`
-	WorkspaceConfig       string                 `json:"workspace_config,omitempty"`
-	WorkspaceDirectory    string                 `json:"workspace_directory,omitempty"`
-	Configs               []string               `json:"configs,omitempty"`
-	Discovered            bool                   `json:"discovered,omitempty"`
-	Fingerprint           string                 `json:"fingerprint,omitempty"`
-	Execution             string                 `json:"execution_fingerprint,omitempty"`
-	EnvSecrets            map[string]secretInput `json:"env_secrets,omitempty"`
-	SecretStores          []string               `json:"secret_stores,omitempty"`
-	Admin                 string                 `json:"admin,omitempty"`
-	Auth                  string                 `json:"auth,omitempty"`
-	Interactive           bool                   `json:"interactive,omitempty"`
-	LSPFile               string                 `json:"lsp_file,omitempty"`
-	LSPLine               int                    `json:"lsp_line,omitempty"`
-	LSPColumn             int                    `json:"lsp_column,omitempty"`
-	LSPQuery              string                 `json:"lsp_query,omitempty"`
-	LSPQuerySet           bool                   `json:"lsp_query_set,omitempty"`
-	LSPOperation          string                 `json:"lsp_operation,omitempty"`
-	LSPIncludeDeclaration bool                   `json:"lsp_include_declaration,omitempty"`
+	Operation             operation                   `json:"operation"`
+	Server                string                      `json:"server,omitempty"`
+	Tool                  string                      `json:"tool,omitempty"`
+	URI                   string                      `json:"uri,omitempty"`
+	Arguments             map[string]any              `json:"arguments,omitempty"`
+	Projected             []projectedArgument         `json:"projected,omitempty"`
+	Overlay               map[string]any              `json:"overlay,omitempty"`
+	Help                  helpKind                    `json:"help,omitempty"`
+	CWD                   string                      `json:"cwd"`
+	ProjectRoot           string                      `json:"project_root,omitempty"`
+	GlobalRoot            string                      `json:"global_root,omitempty"`
+	ProviderRoot          string                      `json:"provider_root,omitempty"`
+	ScopeOwner            string                      `json:"scope_owner,omitempty"`
+	TrustedBoundary       string                      `json:"trusted_boundary,omitempty"`
+	WorkspaceConfig       string                      `json:"workspace_config,omitempty"`
+	WorkspaceDirectory    string                      `json:"workspace_directory,omitempty"`
+	Configs               []string                    `json:"configs,omitempty"`
+	Discovered            bool                        `json:"discovered,omitempty"`
+	Fingerprint           string                      `json:"fingerprint,omitempty"`
+	Execution             string                      `json:"execution_fingerprint,omitempty"`
+	SecretScopes          map[string]secretScopeInput `json:"secret_scopes,omitempty"`
+	Admin                 string                      `json:"admin,omitempty"`
+	Auth                  string                      `json:"auth,omitempty"`
+	Interactive           bool                        `json:"interactive,omitempty"`
+	LSPFile               string                      `json:"lsp_file,omitempty"`
+	LSPLine               int                         `json:"lsp_line,omitempty"`
+	LSPColumn             int                         `json:"lsp_column,omitempty"`
+	LSPQuery              string                      `json:"lsp_query,omitempty"`
+	LSPQuerySet           bool                        `json:"lsp_query_set,omitempty"`
+	LSPOperation          string                      `json:"lsp_operation,omitempty"`
+	LSPIncludeDeclaration bool                        `json:"lsp_include_declaration,omitempty"`
+}
+
+type secretScopeInput struct {
+	EnvSecrets   map[string]secretInput `json:"env_secrets,omitempty"`
+	SecretStores []string               `json:"secret_stores,omitempty"`
 }
 
 type daemonReply struct {
@@ -164,8 +170,8 @@ func absoluteConfigPaths(cwd string, paths []string) ([]string, error) {
 	return result, nil
 }
 
-func daemonRequestFromConfig(req request, cfg *config.Config, source configContext, secrets map[string]secretInput) daemonRequest {
-	request := daemonRequest{Operation: req.operation, Server: req.server, Tool: req.tool, URI: req.uri, Arguments: req.arguments, Projected: req.projected, Overlay: req.overlay, Help: req.help, CWD: source.CWD, Configs: source.Configs, Discovered: source.Discovered, TrustedBoundary: source.TrustedBoundary, WorkspaceConfig: source.WorkspaceConfig, WorkspaceDirectory: source.WorkspaceDirectory, Fingerprint: configFingerprint(cfg), EnvSecrets: secrets}
+func daemonRequestFromConfig(req request, cfg *config.Config, source configContext) daemonRequest {
+	request := daemonRequest{Operation: req.operation, Server: req.server, Tool: req.tool, URI: req.uri, Arguments: req.arguments, Projected: req.projected, Overlay: req.overlay, Help: req.help, CWD: source.CWD, Configs: source.Configs, Discovered: source.Discovered, TrustedBoundary: source.TrustedBoundary, WorkspaceConfig: source.WorkspaceConfig, WorkspaceDirectory: source.WorkspaceDirectory, Fingerprint: configFingerprint(cfg)}
 	if req.operation != listServers {
 		if server, ok := findServer(cfg, req.server); ok {
 			request.Execution = serverExecutionFingerprint(server, nil, source.CWD, cfg.Secrets)
@@ -267,9 +273,15 @@ func lspMatchesExecutionFingerprint(matches []lspMatch, root *config.Root, cwd s
 	}
 	definitions := make([]any, 0, len(matches))
 	for _, match := range matches {
-		definitions = append(definitions, []any{semanticLSPExecution(match.Definition), match.LanguageID})
+		providerRoot := resolvedRoot
+		owner := resolvedRoot
+		if match.Context.Root != "" {
+			providerRoot = match.Context.Root
+			owner = match.Context.Owner
+		}
+		definitions = append(definitions, []any{semanticLSPExecution(match.Definition), match.LanguageID, owner, providerRoot})
 	}
-	return fingerprint(map[string]any{"v": 1, "root": resolvedRoot, "providers": definitions})
+	return fingerprint(map[string]any{"v": 2, "providers": definitions})
 }
 
 func semanticLSP(definition config.LSP) any {
@@ -844,6 +856,9 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	if request.GlobalRoot != "" && (!filepath.IsAbs(request.GlobalRoot) || filepath.Clean(request.GlobalRoot) != request.GlobalRoot) {
 		return errorReply(configurationError("daemon_context_invalid", "daemon global root must be absolute and clean", "use the Wirecmd CLI"))
 	}
+	if request.ProviderRoot != "" && (!filepath.IsAbs(request.ProviderRoot) || filepath.Clean(request.ProviderRoot) != request.ProviderRoot) {
+		return errorReply(configurationError("daemon_context_invalid", "daemon provider root must be absolute and clean", "use the Wirecmd CLI"))
+	}
 	for _, path := range []string{request.TrustedBoundary, request.WorkspaceConfig, request.WorkspaceDirectory} {
 		if path != "" && (!filepath.IsAbs(path) || filepath.Clean(path) != path) {
 			return errorReply(configurationError("daemon_context_invalid", "daemon discovery context paths must be absolute and clean", "use the Wirecmd CLI"))
@@ -857,9 +872,14 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	if appErr := validateDaemonDiscoveryContext(request); appErr != nil {
 		return errorReply(appErr)
 	}
-	for _, path := range request.SecretStores {
-		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-			return errorReply(configurationError("daemon_context_invalid", "daemon secret-store paths must be absolute and clean", "use the Wirecmd CLI"))
+	for scope, input := range request.SecretScopes {
+		if scope != string(config.ScopeWorkspace) && scope != string(config.ScopeGlobal) {
+			return errorReply(configurationError("daemon_context_invalid", "daemon secret inputs use an unsupported scope", "use the Wirecmd CLI"))
+		}
+		for _, path := range input.SecretStores {
+			if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+				return errorReply(configurationError("daemon_context_invalid", "daemon secret-store paths must be absolute and clean", "use the Wirecmd CLI"))
+			}
 		}
 	}
 	generation := d.currentGeneration()
@@ -903,29 +923,43 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 		return errorReplyWithWarnings(configurationError("config_mismatch", fmt.Sprintf("cached configuration has no server %q", request.Server), "run wirecmd daemon reload and retry"), warnings)
 	}
 	expectedRoot := daemonExpectedProjectRoot(request, cached)
-	if request.Fingerprint != cached.fingerprint && request.Execution != serverExecutionFingerprint(server, nil, expectedRoot, cached.config.Secrets) {
+	runtimeContext, runtimeErr := serverRuntimeContext(server, invocationContext{ProjectRoot: expectedRoot, GlobalRoot: request.GlobalRoot})
+	if runtimeErr != nil {
+		return errorReplyWithWarnings(runtimeErr, warnings)
+	}
+	if request.Fingerprint != cached.fingerprint && request.Execution != serverExecutionFingerprint(server, nil, runtimeContext.Root, cached.config.Secrets) {
 		return errorReplyWithWarnings(configurationError("config_mismatch", "selected server execution configuration differs from the daemon cache", "run wirecmd daemon reload and retry"), warnings)
 	}
-	if err := validateSecretInputs(server, request.EnvSecrets); err != nil {
+	if request.ProviderRoot != runtimeContext.Root || request.ScopeOwner != runtimeContext.Owner {
+		return errorReplyWithWarnings(configurationError("daemon_context_invalid", "daemon provider scope context does not match the selected server", "use the Wirecmd CLI"), warnings)
+	}
+	scopeInput, ok := request.SecretScopes[string(server.Scope)]
+	if !ok {
+		return errorReplyWithWarnings(configurationError("daemon_context_invalid", "daemon request is missing scope-separated secret inputs", "use the Wirecmd CLI"), warnings)
+	}
+	selectedValues := serverSecretValues(server)
+	if appErr := validateScopedSecretStores(server.Scope, request.GlobalRoot, selectedValues, scopeInput.SecretStores); appErr != nil {
+		return errorReplyWithWarnings(appErr, warnings)
+	}
+	if err := validateSecretInputs(server, scopeInput.EnvSecrets); err != nil {
 		return errorReplyWithWarnings(err, warnings)
 	}
 	envLookup := func(name string) (string, bool) {
-		value, ok := request.EnvSecrets[name]
+		value, ok := scopeInput.EnvSecrets[name]
 		return value.Value, ok && value.Present
 	}
-	selectedValues := serverSecretValues(server)
 	ageReferences := selectedAgeReferences(selectedValues)
 	var instance *retainedInstance
 	var metadataKey, snapshotIdentity string
 	var storeSnapshot *secretpkg.StoreSnapshot
 	if request.Auth == "" && len(ageReferences) != 0 {
 		var snapshotErr *appError
-		storeSnapshot, snapshotErr = captureAgeStores(request.SecretStores, request.Discovered)
+		storeSnapshot, snapshotErr = captureAgeStores(scopeInput.SecretStores, request.Discovered && server.Scope == config.ScopeWorkspace)
 		if snapshotErr != nil {
 			return errorReplyWithWarnings(snapshotErr, warnings)
 		}
 		snapshotIdentity = storeSnapshot.Identity()
-		metadataKey = d.serverSecretCacheKey(server, nil, request.ProjectRoot, cached.config.Secrets, request.EnvSecrets, ageReferences, request.SecretStores, generation)
+		metadataKey = d.serverSecretCacheKey(server, runtimeContext.Owner, nil, runtimeContext.Root, cached.config.Secrets, scopeInput.EnvSecrets, ageReferences, scopeInput.SecretStores, generation)
 		var reused bool
 		instance, reused, _ = d.cachedInstance(ctx, metadataKey, snapshotIdentity, server.Name, generation, false)
 		if !reused {
@@ -935,7 +969,7 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	var resolved resolvedSecretSet
 	if instance == nil || request.Auth != "" {
 		var resolveErr *appError
-		resolved, resolveErr = resolveSelectedSecrets(ctx, cached.config.Secrets, request.SecretStores, request.Discovered, storeSnapshot, selectedValues, envLookup)
+		resolved, resolveErr = resolveSelectedSecrets(ctx, server.Scope, cached.config.Secrets, scopeInput.SecretStores, request.Discovered && server.Scope == config.ScopeWorkspace, storeSnapshot, selectedValues, envLookup)
 		if resolveErr != nil {
 			return errorReplyWithWarnings(resolveErr, warnings)
 		}
@@ -945,13 +979,13 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	}
 	if instance == nil {
 		var appErr *appError
-		instance, appErr = d.acquire(ctx, server, nil, request.ProjectRoot, resolved, generation, request.Interactive, emitURL)
+		instance, appErr = d.acquire(ctx, server, runtimeContext.Owner, nil, runtimeContext.Root, resolved, generation, request.Interactive, emitURL)
 		if appErr != nil {
 			return errorReplyWithWarnings(appErr, warnings)
 		}
 		if metadataKey != "" {
 			auth := d.resolvedAuthIdentity(server, resolved.lookup)
-			d.rememberSecretPools(metadataKey, snapshotIdentity, map[string]string{server.Name: mcpPoolKey(server, nil, request.ProjectRoot, generation, auth)})
+			d.rememberSecretPools(metadataKey, snapshotIdentity, map[string]string{server.Name: mcpPoolKey(server, runtimeContext.Owner, nil, runtimeContext.Root, generation, auth)})
 		}
 	}
 	defer d.release(instance)
@@ -1114,12 +1148,13 @@ func validateDaemonDiscoveryContext(request daemonRequest) *appError {
 }
 
 func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *daemonConfig, generation uint64, warnings []string) daemonReply {
-	workspace := request.ProjectRoot
+	workspace := daemonExpectedProjectRoot(request, cached)
+	providerContext := invocationContext{ProjectRoot: workspace, GlobalRoot: request.GlobalRoot}
 	if request.Operation == statusLSP {
 		if request.LSPFile != "" && !filepath.IsAbs(request.LSPFile) {
 			return errorReplyWithWarnings(invocationError("lsp_file_invalid", "daemon LSP status requires an absolute file", "use the Wirecmd CLI"), warnings)
 		}
-		return resultReply(makeLSPStatusEnvelope(cached.config.LSPs, workspace, request.LSPFile, d.lspRuntimeStatuses(cached.config.LSPs, workspace, generation)), warnings)
+		return resultReply(makeLSPStatusEnvelope(cached.config.LSPs, providerContext, request.LSPFile, d.lspRuntimeStatuses(cached.config.LSPs, providerContext, generation)), warnings)
 	}
 	if !isLSPNavigation(request.LSPOperation) && !isLSPInspection(request.LSPOperation) {
 		return errorReplyWithWarnings(invocationError("lsp_request_invalid", "daemon LSP request has an unsupported operation", "use a compatible Wirecmd CLI"), warnings)
@@ -1139,89 +1174,125 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 	var matches []lspMatch
 	var appErr *appError
 	if request.LSPOperation == lspWorkspaceSymbols {
-		matches = allLSPDefinitions(cached.config.LSPs)
+		matches, appErr = allLSPDefinitionsForContext(cached.config.LSPs, providerContext)
 	} else {
-		matches, appErr = matchLSPDefinitions(cached.config.LSPs, workspace, request.LSPFile)
-		if appErr != nil {
-			return errorReplyWithWarnings(appErr, warnings)
-		}
+		matches, appErr = matchLSPDefinitionsForContext(cached.config.LSPs, providerContext, request.LSPFile)
 	}
-	expectedRoot := daemonExpectedProjectRoot(request, cached)
-	if request.Fingerprint != cached.fingerprint && request.Execution != matchedLSPExecutionFingerprint(matches, nil, expectedRoot, cached.config.Secrets) {
+	if appErr != nil {
+		return errorReplyWithWarnings(appErr, warnings)
+	}
+	if request.Fingerprint != cached.fingerprint && request.Execution != matchedLSPExecutionFingerprint(matches, nil, workspace, cached.config.Secrets) {
 		return errorReplyWithWarnings(configurationError("config_mismatch", "selected LSP execution configuration differs from the daemon cache", "run wirecmd daemon reload and retry"), warnings)
 	}
-	for _, match := range matches {
-		if appErr := validateLSPSecretInputs(match.Definition, request.EnvSecrets); appErr != nil {
+	instances := make([]*retainedInstance, len(matches))
+	type lspScopeState struct {
+		matches          []lspMatch
+		input            secretScopeInput
+		resolved         resolvedSecretSet
+		metadataKey      string
+		snapshotIdentity string
+		allCached        bool
+		newPoolKeys      map[string]string
+	}
+	states := make(map[config.Scope]*lspScopeState)
+	ageSession := secretpkg.NewAgeSession()
+	releaseSetupInstances := true
+	defer func() {
+		if !releaseSetupInstances {
+			return
+		}
+		for _, instance := range instances {
+			if instance != nil {
+				d.release(instance)
+			}
+		}
+	}()
+	groupedMatches := lspMatchesByScope(matches)
+	for _, scope := range lspScopeOrder(groupedMatches) {
+		scopedMatches := groupedMatches[scope]
+		input, ok := request.SecretScopes[string(scope)]
+		if !ok {
+			return errorReplyWithWarnings(configurationError("daemon_context_invalid", "daemon request is missing scope-separated LSP secret inputs", "use the Wirecmd CLI"), warnings)
+		}
+		for _, match := range scopedMatches {
+			if appErr := validateLSPSecretInputs(match.Definition, input.EnvSecrets); appErr != nil {
+				return errorReplyWithWarnings(appErr, warnings)
+			}
+		}
+		state := &lspScopeState{matches: scopedMatches, input: input, newPoolKeys: map[string]string{}}
+		selectedValues := lspSecretValues(scopedMatches)
+		if appErr := validateScopedSecretStores(scope, request.GlobalRoot, selectedValues, input.SecretStores); appErr != nil {
 			return errorReplyWithWarnings(appErr, warnings)
 		}
-	}
-	envLookup := func(name string) (string, bool) {
-		value, ok := request.EnvSecrets[name]
-		return value.Value, ok && value.Present
-	}
-	selectedValues := lspSecretValues(matches)
-	ageReferences := selectedAgeReferences(selectedValues)
-	instances := make([]*retainedInstance, len(matches))
-	var metadataKey, snapshotIdentity string
-	var storeSnapshot *secretpkg.StoreSnapshot
-	allCached := len(ageReferences) != 0
-	if allCached {
-		var snapshotErr *appError
-		storeSnapshot, snapshotErr = captureAgeStores(request.SecretStores, request.Discovered)
-		if snapshotErr != nil {
-			return errorReplyWithWarnings(snapshotErr, warnings)
-		}
-		snapshotIdentity = storeSnapshot.Identity()
-		metadataKey = d.lspSecretCacheKey(matches, nil, request.ProjectRoot, cached.config.Secrets, request.EnvSecrets, ageReferences, request.SecretStores, generation)
-		for index, match := range matches {
-			instance, reused, _ := d.cachedInstance(ctx, metadataKey, snapshotIdentity, match.Definition.Name, generation, true)
-			if !reused {
-				allCached = false
-				break
+		ageReferences := selectedAgeReferences(selectedValues)
+		state.allCached = len(ageReferences) != 0
+		var storeSnapshot *secretpkg.StoreSnapshot
+		if state.allCached {
+			var snapshotErr *appError
+			storeSnapshot, snapshotErr = captureAgeStores(input.SecretStores, request.Discovered && scope == config.ScopeWorkspace)
+			if snapshotErr != nil {
+				return errorReplyWithWarnings(snapshotErr, warnings)
 			}
-			instances[index] = instance
-		}
-		if !allCached {
-			for index, instance := range instances {
-				if instance != nil {
-					d.release(instance)
-					instances[index] = nil
+			state.snapshotIdentity = storeSnapshot.Identity()
+			state.metadataKey = d.lspSecretCacheKey(scopedMatches, nil, workspace, cached.config.Secrets, input.EnvSecrets, ageReferences, input.SecretStores, generation)
+			for index, match := range matches {
+				if normalizedScope(match.Definition.Scope) != scope {
+					continue
+				}
+				instance, reused, _ := d.cachedInstance(ctx, state.metadataKey, state.snapshotIdentity, match.Definition.Name, generation, true)
+				if !reused {
+					state.allCached = false
+					break
+				}
+				instances[index] = instance
+			}
+			if !state.allCached {
+				for index, match := range matches {
+					if normalizedScope(match.Definition.Scope) == scope && instances[index] != nil {
+						d.release(instances[index])
+						instances[index] = nil
+					}
 				}
 			}
 		}
-	}
-	var resolved resolvedSecretSet
-	if !allCached {
-		var resolveErr *appError
-		resolved, resolveErr = resolveSelectedSecrets(ctx, cached.config.Secrets, request.SecretStores, request.Discovered, storeSnapshot, selectedValues, envLookup)
-		if resolveErr != nil {
-			return errorReplyWithWarnings(resolveErr, warnings)
+		if !state.allCached {
+			envLookup := func(name string) (string, bool) {
+				value, ok := input.EnvSecrets[name]
+				return value.Value, ok && value.Present
+			}
+			var resolveErr *appError
+			state.resolved, resolveErr = resolveSelectedSecretsWithAgeSession(ctx, scope, cached.config.Secrets, input.SecretStores, request.Discovered && scope == config.ScopeWorkspace, storeSnapshot, selectedValues, envLookup, ageSession)
+			if resolveErr != nil {
+				return errorReplyWithWarnings(resolveErr, warnings)
+			}
 		}
+		states[scope] = state
 	}
 	lspReq := lspRequest{Operation: request.LSPOperation, File: request.LSPFile, Line: request.LSPLine, Column: request.LSPColumn, Query: request.LSPQuery, QuerySet: request.LSPQuerySet, IncludeDeclaration: request.LSPIncludeDeclaration}
 	if appErr := validateLSPRequestInput(request.LSPFile, lspReq, matches); appErr != nil {
 		return errorReplyWithWarnings(appErr, warnings)
 	}
+	releaseSetupInstances = false
 	results := make([]lspProviderRun, len(matches))
-	newPoolKeys := make(map[string]string, len(matches))
 	var poolKeysMu sync.Mutex
 	var wait sync.WaitGroup
 	for index, match := range matches {
 		wait.Add(1)
 		go func(index int, match lspMatch) {
 			defer wait.Done()
+			state := states[normalizedScope(match.Definition.Scope)]
 			instance := instances[index]
 			if instance == nil {
 				var appErr *appError
-				instance, appErr = d.acquireLSP(ctx, match.Definition, nil, request.ProjectRoot, resolved, generation)
+				instance, appErr = d.acquireLSP(ctx, match.Definition, match.Context.Owner, nil, match.Context.Root, state.resolved, generation)
 				if appErr != nil {
 					results[index].Err = appErr
 					return
 				}
-				if metadataKey != "" {
-					auth := d.lspResolvedAuthIdentity(match.Definition, resolved.lookup)
+				if state.metadataKey != "" {
+					auth := d.lspResolvedAuthIdentity(match.Definition, state.resolved.lookup)
 					poolKeysMu.Lock()
-					newPoolKeys[match.Definition.Name] = lspPoolKey(match.Definition, nil, request.ProjectRoot, generation, auth)
+					state.newPoolKeys[match.Definition.Name] = lspPoolKey(match.Definition, match.Context.Owner, nil, match.Context.Root, generation, auth)
 					poolKeysMu.Unlock()
 				}
 			}
@@ -1258,8 +1329,10 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 		}(index, match)
 	}
 	wait.Wait()
-	if metadataKey != "" && !allCached && len(newPoolKeys) == len(matches) {
-		d.rememberSecretPools(metadataKey, snapshotIdentity, newPoolKeys)
+	for _, state := range states {
+		if state.metadataKey != "" && !state.allCached && len(state.newPoolKeys) == len(state.matches) {
+			d.rememberSecretPools(state.metadataKey, state.snapshotIdentity, state.newPoolKeys)
+		}
 	}
 	result, appErr := aggregateLSPRequestResults(lspReq, workspace, request.LSPFile, matches, results)
 	if appErr != nil {
@@ -1268,10 +1341,10 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 	return resultReply(result, warnings)
 }
 
-func (d *daemon) lspRuntimeStatuses(definitions []config.LSP, workspace string, generation uint64) map[string]lspRuntimeStatus {
-	wanted := make(map[string]struct{}, len(definitions))
+func (d *daemon) lspRuntimeStatuses(definitions []config.LSP, context invocationContext, generation uint64) map[string]lspRuntimeStatus {
+	wanted := make(map[string]string, len(definitions))
 	for _, definition := range definitions {
-		wanted[definition.Name] = struct{}{}
+		wanted[definition.Name] = providerRootForScope(definition.Scope, context)
 	}
 	d.mu.Lock()
 	type candidate struct {
@@ -1282,10 +1355,10 @@ func (d *daemon) lspRuntimeStatuses(definitions []config.LSP, workspace string, 
 	}
 	candidates := make([]candidate, 0)
 	for key, entry := range d.pools {
-		if entry.instance == nil || entry.instance.lspSession == nil || entry.instance.lspWorkspace != workspace || entry.instance.lspGeneration != generation {
+		if entry.instance == nil || entry.instance.lspSession == nil || entry.instance.lspGeneration != generation {
 			continue
 		}
-		if _, ok := wanted[entry.instance.lspName]; ok {
+		if root, ok := wanted[entry.instance.lspName]; ok && entry.instance.lspWorkspace == root {
 			candidates = append(candidates, candidate{key: key, name: entry.instance.lspName, instance: entry.instance, broken: entry.broken})
 		}
 	}
@@ -1349,16 +1422,35 @@ func validateLSPSecretInputs(definition config.LSP, inputs map[string]secretInpu
 	return nil
 }
 
-func lspPoolKey(definition config.LSP, root *config.Root, cwd string, generation uint64, auth string) string {
+func validateScopedSecretStores(scope config.Scope, globalRoot string, values []config.Value, stores []string) *appError {
+	if normalizedScope(scope) != config.ScopeGlobal {
+		return nil
+	}
+	expected := []string(nil)
+	if len(selectedAgeReferences(values)) != 0 && globalRoot != "" {
+		expected = []string{filepath.Join(globalRoot, "secrets.json.age")}
+	}
+	if len(stores) != len(expected) {
+		return configurationError("daemon_context_invalid", "daemon global secret stores do not match the global scope", "use the Wirecmd CLI")
+	}
+	for index := range expected {
+		if stores[index] != expected[index] {
+			return configurationError("daemon_context_invalid", "daemon global secret stores do not match the global scope", "use the Wirecmd CLI")
+		}
+	}
+	return nil
+}
+
+func lspPoolKey(definition config.LSP, owner string, root *config.Root, cwd string, generation uint64, auth string) string {
 	workspace := cwd
 	if root != nil {
 		workspace = resolveRoot(*root)
 	}
-	return strings.Join([]string{"lsp", definition.Name, workspace, lspExecutionFingerprint(definition, root, cwd), fmt.Sprint(generation), auth}, "\x00")
+	return strings.Join([]string{"lsp", definition.Name, string(definition.Scope), owner, workspace, lspExecutionFingerprint(definition, root, cwd), fmt.Sprint(generation), auth}, "\x00")
 }
 
-func (d *daemon) acquireLSP(ctx context.Context, definition config.LSP, root *config.Root, cwd string, resolved resolvedSecretSet, generation uint64) (*retainedInstance, *appError) {
-	key := lspPoolKey(definition, root, cwd, generation, d.lspResolvedAuthIdentity(definition, resolved.lookup))
+func (d *daemon) acquireLSP(ctx context.Context, definition config.LSP, owner string, root *config.Root, cwd string, resolved resolvedSecretSet, generation uint64) (*retainedInstance, *appError) {
+	key := lspPoolKey(definition, owner, root, cwd, generation, d.lspResolvedAuthIdentity(definition, resolved.lookup))
 	d.mu.Lock()
 	if d.closing || d.generation != generation {
 		d.mu.Unlock()
@@ -1468,9 +1560,9 @@ func captureAgeStores(paths []string, automatic bool) (*secretpkg.StoreSnapshot,
 	return snapshot, nil
 }
 
-func (d *daemon) serverSecretCacheKey(server config.Server, root *config.Root, cwd string, configured config.Secrets, inputs map[string]secretInput, references, stores []string, generation uint64) string {
+func (d *daemon) serverSecretCacheKey(server config.Server, owner string, root *config.Root, cwd string, configured config.Secrets, inputs map[string]secretInput, references, stores []string, generation uint64) string {
 	return strings.Join([]string{
-		"mcp", fmt.Sprint(generation), serverExecutionFingerprint(server, root, cwd, configured),
+		"mcp", fmt.Sprint(generation), owner, serverExecutionFingerprint(server, root, cwd, configured),
 		d.authIdentity(server, inputs), fingerprint(map[string]any{"references": references, "stores": stores}),
 	}, "\x00")
 }
@@ -1560,17 +1652,17 @@ func (d *daemon) retirePoolKeyLocked(key string, displaced map[string]struct{}, 
 	}
 }
 
-func mcpPoolKey(server config.Server, root *config.Root, cwd string, generation uint64, auth string) string {
+func mcpPoolKey(server config.Server, owner string, root *config.Root, cwd string, generation uint64, auth string) string {
 	workspace := cwd
 	if root != nil {
 		workspace = resolveRoot(*root)
 	}
-	return strings.Join([]string{"mcp", server.Name, workspace, executionFingerprint(server, root, cwd), fmt.Sprint(generation), auth}, "\x00")
+	return strings.Join([]string{"mcp", server.Name, string(server.Scope), owner, workspace, executionFingerprint(server, root, cwd), fmt.Sprint(generation), auth}, "\x00")
 }
 
-func (d *daemon) acquire(ctx context.Context, server config.Server, root *config.Root, cwd string, resolved resolvedSecretSet, generation uint64, interactive bool, emitURL func(string) error) (*retainedInstance, *appError) {
+func (d *daemon) acquire(ctx context.Context, server config.Server, owner string, root *config.Root, cwd string, resolved resolvedSecretSet, generation uint64, interactive bool, emitURL func(string) error) (*retainedInstance, *appError) {
 	auth := d.resolvedAuthIdentity(server, resolved.lookup)
-	key := mcpPoolKey(server, root, cwd, generation, auth)
+	key := mcpPoolKey(server, owner, root, cwd, generation, auth)
 	d.mu.Lock()
 	if d.closing || d.generation != generation {
 		d.mu.Unlock()

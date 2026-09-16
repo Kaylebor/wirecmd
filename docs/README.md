@@ -51,7 +51,7 @@ installation, and the first commands to run.
   - [macOS qualification](plans/macos-plan.md): CI coverage, Apple Silicon
     physical qualification, and release gates.
   - [Scope and invocation context](plans/scope-context-plan.md): shared project
-    root resolution, workspace ownership, and the accepted global-scope slice.
+    root resolution plus workspace and global lifecycle ownership.
 - [`notes/`](notes/) contains non-authoritative research, validation evidence,
   and working material. Nothing there becomes a product requirement without
   explicit promotion into an authoritative document.
