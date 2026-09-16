@@ -75,9 +75,9 @@ workspace files above it are ignored. A discovered project configuration with
 no matching trust root fails closed. The global user configuration is
 inherently trusted.
 
-Automatic discovery accepts only regular, non-symlink configuration files,
-and every discovered workspace `.wirecmd` component must be a real directory,
-not a symlink. Wirecmd does not inspect or fall back to a top-level
+Automatic discovery accepts only regular, non-symlink workspace configuration
+files, and every discovered workspace `.wirecmd` component must be a real
+directory, not a symlink. Wirecmd does not inspect or fall back to a top-level
 `wirecmd.kdl`.
 
 Repeated explicit paths replace discovery and trust evaluation completely:
