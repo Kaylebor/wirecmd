@@ -223,9 +223,14 @@ func TestAgeSessionDecryptsSharedStoreOnceAcrossScopes(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := writeStore(t, `{"TOKEN":"value"}`)
+	aliasDirectory := filepath.Join(t.TempDir(), "store-alias")
+	if err := os.Symlink(filepath.Dir(store), aliasDirectory); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{store, filepath.Join(aliasDirectory, filepath.Base(store))}
 	session := NewAgeSession()
-	for _, scope := range []Scope{"workspace", "global"} {
-		provider, err := NewAgeProvider(AgeProviderOptions{Command: fake, Identities: []string{testIdentity(t)}, Stores: []Store{{Path: store}}, Session: session})
+	for index, scope := range []Scope{"workspace", "global"} {
+		provider, err := NewAgeProvider(AgeProviderOptions{Command: fake, Identities: []string{testIdentity(t)}, Stores: []Store{{Path: paths[index]}}, Session: session})
 		if err != nil {
 			t.Fatal(err)
 		}

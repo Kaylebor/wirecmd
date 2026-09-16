@@ -248,7 +248,11 @@ func (p *AgeProvider) document(ctx context.Context, command string, store captur
 		return decodeAgeDocument(plaintext)
 	}
 	digest := sha256.Sum256(store.ciphertext)
-	key := store.path + "\x00" + hex.EncodeToString(digest[:])
+	path := filepath.Clean(store.path)
+	if canonical, err := filepath.EvalSymlinks(path); err == nil {
+		path = filepath.Clean(canonical)
+	}
+	key := path + "\x00" + hex.EncodeToString(digest[:])
 	p.session.mu.Lock()
 	defer p.session.mu.Unlock()
 	if document, ok := p.session.documents[key]; ok {
