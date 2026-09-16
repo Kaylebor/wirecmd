@@ -124,7 +124,7 @@ for an explicitly configured legacy SSE endpoint; there is no transport
 autodetection. SSE accepts static authentication headers but has no transparent
 OAuth or auth-management commands. Do not suggest an SSE `oauth` block.
 Transport switches replace the prior transport and its credentials rather
-than inheriting them. See the [SSE milestone](../../docs/sse-plan.md).
+than inheriting them. See the [SSE milestone](../../docs/plans/sse-plan.md).
 
 Streamable HTTP endpoints can declare structural query and header values:
 
@@ -146,13 +146,13 @@ and appends new keys. Existing endpoint query parameters are preserved unless a
 structural query entry has the same key. The `Authorization` value is complete,
 for example `Bearer ...`. Templates and dynamic per-request headers are not
 part of this slice. HTTP and MCP transport-owned headers are reserved and
-rejected; see the [HTTP values plan](../../docs/http-values-plan.md) for the
+rejected; see the [HTTP values plan](../../docs/plans/http-values-plan.md) for the
 complete list.
 
 Listing, completion, and LSP status do no secret work. In daemon mode, resolved
 startup credentials distinguish retained instances, so one server definition
 cannot reuse an instance started with different credentials. See [age
-secrets](../../docs/age-secrets-plan.md) for encrypted-store discovery,
+secrets](../../docs/plans/age-secrets-plan.md) for encrypted-store discovery,
 hardware prompts, and the threat boundary.
 
 ## Authenticate protected HTTP servers
@@ -288,5 +288,5 @@ transport, or an upstream tool failure.
 
 Normal calls require the local daemon. Use `--direct` only for deliberate
 one-shot testing or diagnostics; it does not retain server state between
-invocations. See the [OAuth plan](../../docs/oauth-plan.md) for the accepted
+invocations. See the [OAuth plan](../../docs/plans/oauth-plan.md) for the accepted
 credential and provider-qualification boundary.

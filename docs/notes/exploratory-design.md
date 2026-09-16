@@ -4,7 +4,7 @@ Status: non-authoritative working notes
 
 Nothing in this file is a committed requirement. Ideas must be validated and
 explicitly promoted into `docs/product-thesis.md` or
-`docs/validation-plan.md` before they direct implementation.
+`docs/plans/validation-plan.md` before they direct implementation.
 
 This file condenses an exploratory design discussion dated 18 August 2026. The
 original discussion ranged well beyond the first validation milestone and

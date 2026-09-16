@@ -154,15 +154,17 @@ contacts the daemon, resolves secrets, or opens OAuth.
 
 ## Learn more
 
+- [Documentation index](docs/README.md): reading paths for users, contributors,
+  and maintainers.
 - [Configuration reference](docs/configuration.md): practical setup and exact
   configuration behavior.
-- [Age secrets](docs/age-secrets-plan.md): encrypted secret stores and their
+- [Age secrets](docs/plans/age-secrets-plan.md): encrypted secret stores and their
   security boundary.
 - [Product thesis](docs/product-thesis.md): product direction and boundaries.
 - [Current roadmap](docs/roadmap.md): shipped baseline and open decision queue.
-- [LSP plan](docs/lsp-plan.md): native navigation and inspection contract.
-- [Output contract](docs/output-plan.md): terminal, JSON, and color behavior.
-- [Onboarding and completion](docs/onboarding-plan.md): help and Fish
+- [LSP plan](docs/plans/lsp-plan.md): native navigation and inspection contract.
+- [Output contract](docs/plans/output-plan.md): terminal, JSON, and color behavior.
+- [Onboarding and completion](docs/plans/onboarding-plan.md): help and Fish
   completion contracts.
 - [Release readiness](docs/release-readiness.md): installation, compatibility,
   qualification, and publication policy.

@@ -267,6 +267,6 @@ too small to justify a new runtime.
 
 The evidence supported continuing the project. Compatibility work now proceeds
 backward through the two legacy layers required for the full MVP, as defined in
-`docs/compatibility-plan.md`. The evaluation did not authorize production
+`docs/plans/compatibility-plan.md`. The evaluation did not authorize production
 daemon behavior, automatic configuration discovery and templating, OAuth,
 broader schema projection, or packaging.

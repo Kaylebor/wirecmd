@@ -258,7 +258,7 @@ wirecmd {
 
 `age` is optional unless an `age://` reference is selected. For the complete
 store format, lookup order, hardware-prompt behavior, and threat boundary, see
-the [age secrets plan](age-secrets-plan.md).
+the [age secrets plan](plans/age-secrets-plan.md).
 
 ## Composition rules
 
@@ -281,6 +281,6 @@ generic templates, or arbitrary secret-provider commands. A source can inherit
 omitted fields, but the final effective configuration must be complete.
 
 For the underlying decisions and security boundaries, see the
-[discovery](discovery-plan.md), [HTTP values](http-values-plan.md),
-[OAuth](oauth-plan.md), [age secrets](age-secrets-plan.md), [SSE](sse-plan.md),
-and [LSP](lsp-plan.md) milestones.
+[discovery](plans/discovery-plan.md), [HTTP values](plans/http-values-plan.md),
+[OAuth](plans/oauth-plan.md), [age secrets](plans/age-secrets-plan.md), [SSE](plans/sse-plan.md),
+and [LSP](plans/lsp-plan.md) milestones.

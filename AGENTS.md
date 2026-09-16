@@ -3,44 +3,46 @@
 ## Authority and document roles
 
 - `README.md` is the short public orientation.
+- `docs/README.md` is the documentation map for users, contributors, and
+  maintainers.
 - `docs/configuration.md` is the practical reference for the implemented KDL
   surface, discovery order, composition, transports, secrets, and LSP selectors.
-- `docs/age-secrets-plan.md` is authoritative for age-backed secret-store
+- `docs/plans/age-secrets-plan.md` is authoritative for age-backed secret-store
   discovery, resolution, reuse, and its security boundary.
-- `docs/onboarding-plan.md` defines administrative help and private Fish
+- `docs/plans/onboarding-plan.md` defines administrative help and private Fish
   completion. Completion must remain local, read-only, secret-free and must not
   contact the daemon or upstream servers. MCP help and execution use the `mcp`
   namespace; tool-side `--` retains raw-overlay ownership.
-- `docs/help-metadata-plan.md` defines conventional suffix help. MCP server and
+- `docs/plans/help-metadata-plan.md` defines conventional suffix help. MCP server and
   tool help is live: it needs the daemon or explicit `--direct` execution;
   persistent MCP metadata is not retained for help or completion.
 - `docs/product-thesis.md` is authoritative for product direction and scope.
 - `docs/roadmap.md` is the authoritative current-state handoff and decision
   queue. Its future candidates are not accepted implementation milestones;
   each requires the corresponding deliberate plan and authorization.
-- `docs/output-plan.md` is authoritative for contextual presentation and color;
+- `docs/plans/output-plan.md` is authoritative for contextual presentation and color;
   it supersedes earlier milestones' always-JSON presentation wording.
-- `docs/validation-plan.md` is the authoritative record of the completed first
+- `docs/plans/validation-plan.md` is the authoritative record of the completed first
   validation milestone and its acceptance criteria.
-- `docs/compatibility-plan.md` is the authoritative record of the completed
+- `docs/plans/compatibility-plan.md` is the authoritative record of the completed
   supported-protocol qualification, including legacy HTTP+SSE.
-- `docs/resources-plan.md` is authoritative for the MCP resources slice and
+- `docs/plans/resources-plan.md` is authoritative for the MCP resources slice and
   its SDK-owned pagination, reading, normalization, and redaction boundary.
-- `docs/sse-plan.md` is authoritative for stable SDK-backed legacy HTTP+SSE
+- `docs/plans/sse-plan.md` is authoritative for stable SDK-backed legacy HTTP+SSE
   qualification; transparent SSE OAuth remains deferred.
-- `docs/discovery-plan.md` is authoritative for the completed automatic
+- `docs/plans/discovery-plan.md` is authoritative for the completed automatic
   configuration-discovery milestone and its acceptance criteria.
-- `docs/http-values-plan.md` is authoritative for the completed typed HTTP
+- `docs/plans/http-values-plan.md` is authoritative for the completed typed HTTP
   query/header configuration milestone and its acceptance criteria.
-- `docs/oauth-plan.md` is authoritative for the completed transparent OAuth and
+- `docs/plans/oauth-plan.md` is authoritative for the completed transparent OAuth and
   encrypted credential-persistence milestone and its acceptance criteria.
-- `docs/lsp-plan.md` is authoritative for the completed server-neutral,
+- `docs/plans/lsp-plan.md` is authoritative for the completed server-neutral,
   selector-routed multi-provider LSP navigation, signature-help, and inspection
   milestone.
 - `docs/release-readiness.md` is authoritative for stable installation,
   compatibility, qualification, versioning, and the manual publication
   boundary.
-- `docs/macos-plan.md` is authoritative for the current macOS Apple Silicon
+- `docs/plans/macos-plan.md` is authoritative for the current macOS Apple Silicon
   qualification milestone, Intel CI boundary, and physical M2 release gate.
 - Files under `docs/notes/` are non-authoritative working material. Do not turn
   an idea from those files into a requirement without promoting it explicitly
@@ -181,12 +183,12 @@
 ## Verification
 
 - Tie tests and demonstrations to the acceptance criteria in
-  `docs/validation-plan.md`.
+  `docs/plans/validation-plan.md`.
 - Apply the release gates and manual publication boundary in
   `docs/release-readiness.md`; passing preparation checks does not authorize a
   tag or GitHub Release.
 - Treat macOS CI as necessary but insufficient for Apple Silicon support; the
-  physical checks and visibility gate are defined in `docs/macos-plan.md`.
+  physical checks and visibility gate are defined in `docs/plans/macos-plan.md`.
 - Exercise real agent-facing discovery and composition, not only unit tests or
   direct SDK calls.
 - Record exact commands, server fixtures, observed outputs, latency conditions,

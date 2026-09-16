@@ -1,7 +1,7 @@
 # Onboarding and Fish completion evidence
 
 Non-authoritative validation evidence, 2026-09-04. Scope:
-[onboarding milestone](../onboarding-plan.md). Main-based worktree
+[onboarding milestone](../plans/onboarding-plan.md). Main-based worktree
 `/tmp/wirecmd-onboarding`, branch `codex/onboarding-fish`; SDK remains v1.7.0.
 The SDK/SSE draft was not modified. At the time of the local validation below,
 no commit, push or release had been performed. The slice was subsequently

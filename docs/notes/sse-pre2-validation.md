@@ -1,7 +1,7 @@
 # SDK 1.8 prerelease / SSE evidence
 
 Non-authoritative working evidence, 2026-09-04. Authoritative scope and merge
-gate: [draft SSE milestone](../sse-plan.md). No release is authorized here.
+gate: [draft SSE milestone](../plans/sse-plan.md). No release is authorized here.
 
 ## Dependency and initial gate
 

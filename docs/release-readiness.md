@@ -41,9 +41,9 @@ Streamable HTTP and legacy HTTP+SSE MCP transports, SDK-backed OAuth for
 Streamable HTTP, MCP resources, and the documented native LSP operations.
 Modern and legacy initialized stdio and Streamable HTTP are qualified, as is
 legacy HTTP+SSE through stable SDK v1.8.0. Transparent OAuth for legacy SSE
-remains deferred under the [SSE milestone](sse-plan.md). The release also
+remains deferred under the [SSE milestone](plans/sse-plan.md). The release also
 supports optional age-backed secret resolution under the
-[age secrets plan](age-secrets-plan.md).
+[age secrets plan](plans/age-secrets-plan.md).
 
 Within the pre-1.0 stable line, backward-incompatible changes to the documented
 CLI, configuration, and structured output contracts require the next minor
@@ -80,7 +80,7 @@ Configurations that select `age://` values additionally require `age` 1.3.0 or
 newer on `PATH` and at least one configured absolute identity path. Age is not
 a general runtime prerequisite for configurations that do not select it. A
 hardware identity may request local authorization during decryption even when
-`WIRECMD_NONINTERACTIVE=1`; see the [age secrets plan](age-secrets-plan.md).
+`WIRECMD_NONINTERACTIVE=1`; see the [age secrets plan](plans/age-secrets-plan.md).
 
 ## Qualification gates
 
@@ -157,6 +157,6 @@ the gates above.
 - Homebrew, distribution packages, containers, and service-manager units.
 - Automated tagging or GitHub Release publication.
 - Windows build or runtime qualification. macOS qualification is tracked in
-  the [macOS plan](macos-plan.md).
+  the [macOS plan](plans/macos-plan.md).
 - Transparent OAuth for legacy HTTP+SSE and additional MCP primitives listed
   in the compatibility plan.

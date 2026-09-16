@@ -4,7 +4,7 @@ Status: non-authoritative working notes
 
 This note preserves accepted intent and unresolved design questions from the
 configuration discussion. The exact initial HTTP query/header spelling is now
-promoted in the authoritative [HTTP values plan](../http-values-plan.md);
+promoted in the authoritative [HTTP values plan](../plans/http-values-plan.md);
 other ideas here remain non-authoritative until explicitly promoted.
 
 ## Governing intent
