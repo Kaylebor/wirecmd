@@ -215,6 +215,22 @@ printf '%s\n' "$WIRECMD_EXPECTED_CWD"
 	}
 }
 
+func TestDiscoverGitRootPreservesTrailingSpace(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "worktree ")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := runGitRoot
+	runGitRoot = func(context.Context, string) ([]byte, error) {
+		return []byte(root + "\n"), nil
+	}
+	t.Cleanup(func() { runGitRoot = original })
+
+	if got := discoverGitRoot(context.Background(), root); got != root {
+		t.Fatalf("Git root = %q, want trailing-space path %q", got, root)
+	}
+}
+
 func TestGitRootProbeTimesOutQuietly(t *testing.T) {
 	bin := t.TempDir()
 	git := filepath.Join(bin, "git")

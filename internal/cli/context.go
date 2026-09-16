@@ -235,7 +235,9 @@ func discoverGitRoot(ctx context.Context, cwd string) string {
 	if err != nil || len(output) > 64*1024 || bytes.IndexByte(output, 0) >= 0 {
 		return ""
 	}
-	path := strings.TrimSpace(string(output))
+	output = bytes.TrimSuffix(output, []byte("\n"))
+	output = bytes.TrimSuffix(output, []byte("\r"))
+	path := string(output)
 	if path == "" || strings.ContainsAny(path, "\r\n") || !filepath.IsAbs(path) {
 		return ""
 	}
