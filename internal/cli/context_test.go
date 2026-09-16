@@ -251,6 +251,14 @@ func TestGlobalWirecmdRootCanonicalizesExistingSymlink(t *testing.T) {
 	}
 }
 
+func TestGlobalWirecmdRootRejectsRelativeHome(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "relative-config")
+	t.Setenv("HOME", "relative-home")
+	if got := globalWirecmdRoot(); got != "" {
+		t.Fatalf("global root = %q, want unavailable root", got)
+	}
+}
+
 func TestValidateDaemonDiscoveryContext(t *testing.T) {
 	base := t.TempDir()
 	workspace := filepath.Join(base, "workspace")

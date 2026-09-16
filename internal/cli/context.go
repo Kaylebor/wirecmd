@@ -252,7 +252,7 @@ func globalWirecmdRoot() string {
 		return ""
 	}
 	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	if err != nil || home == "" || !filepath.IsAbs(home) {
 		return ""
 	}
 	return canonicalPath(filepath.Join(home, ".config", "wirecmd"))
