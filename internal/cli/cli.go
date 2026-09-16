@@ -24,7 +24,6 @@ import (
 
 	"github.com/Kaylebor/wirecmd/internal/buildinfo"
 	"github.com/Kaylebor/wirecmd/internal/config"
-	"github.com/Kaylebor/wirecmd/internal/discovery"
 	"github.com/Kaylebor/wirecmd/internal/oauthstore"
 	mcpauth "github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -232,31 +231,13 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	if req.help == globalHelp {
 		return helpText(globalHelpText()), nil
 	}
-	cwd, err := os.Getwd()
+	callerCWD, err := os.Getwd()
 	if err != nil {
 		return nil, transportError("caller_cwd_unavailable", err.Error(), "run Wirecmd from an accessible working directory")
 	}
-	var configPaths []string
-	discovered := len(opts.configs) == 0
-	if len(opts.configs) != 0 {
-		configPaths, err = absoluteConfigPaths(cwd, opts.configs)
-		if err != nil {
-			return nil, configurationError("config_path_invalid", err.Error(), "supply valid configuration paths")
-		}
-	} else {
-		configPaths, err = discovery.Paths(cwd)
-		if err != nil {
-			var untrusted *discovery.UntrustedError
-			var notFound *discovery.NotFoundError
-			switch {
-			case errors.As(err, &untrusted):
-				return nil, userActionError("workspace_untrusted", err.Error(), "run wirecmd config trust "+shellQuote(untrusted.Workspace))
-			case errors.As(err, &notFound):
-				return nil, configurationError("config_not_found", err.Error(), "create a global config.kdl or trusted workspace .wirecmd/config.kdl, or supply --config PATH")
-			default:
-				return nil, configurationError("config_discovery_failed", err.Error(), "check Wirecmd configuration and trust state")
-			}
-		}
+	sourceContext, contextErr := resolveConfigContext(callerCWD, opts.configs)
+	if contextErr != nil {
+		return nil, contextErr
 	}
 	// The daemon handshake precedes configuration parsing and secret lookup.
 	// Besides failing clearly when it is unavailable, this makes normal-mode
@@ -272,18 +253,14 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 			defer daemonClient.Close()
 		}
 	}
-	var cfg *config.Config
-	if discovered {
-		cfg, err = config.LoadEffectiveDiscovered(configPaths)
-	} else {
-		cfg, err = config.LoadEffective(configPaths)
-	}
+	loaded, err := loadContextConfig(sourceContext)
 	if err != nil {
 		return nil, configurationError("config_invalid", err.Error(), "correct the supplied KDL configuration")
 	}
+	cfg := loaded.Config
 	if req.operation == listServers {
 		if !opts.direct {
-			result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, cwd, configPaths, discovered, nil), errOut)
+			result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequestFromConfig(req, cfg, sourceContext, nil), errOut)
 			return result, appErr
 		}
 		return serverList(cfg), nil
@@ -292,8 +269,12 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	if !ok {
 		return nil, configurationError("server_not_found", fmt.Sprintf("configured server %q was not found", req.server), "list configured servers and choose one by name")
 	}
+	providerContext, contextErr := resolveInvocationContext(ctx, sourceContext, loaded)
+	if contextErr != nil {
+		return nil, contextErr
+	}
 	selectedValues := serverSecretValues(server)
-	secretStores, storesErr := selectedSecretStores(cwd, configPaths, discovered, selectedValues)
+	secretStores, storesErr := selectedSecretStores(providerContext.CWD, providerContext.Configs, providerContext.Discovered, selectedValues)
 	if storesErr != nil {
 		return nil, storesErr
 	}
@@ -303,7 +284,10 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		}
 		secrets := selectedSecretInputs(server, os.LookupEnv)
 		if !opts.direct {
-			daemonRequest := daemonRequestFromConfig(req, cfg, cwd, configPaths, discovered, secrets)
+			daemonRequest := daemonRequestFromConfig(req, cfg, providerContext.configContext, secrets)
+			daemonRequest.ProjectRoot = providerContext.ProjectRoot
+			daemonRequest.GlobalRoot = providerContext.GlobalRoot
+			daemonRequest.Execution = serverExecutionFingerprint(server, nil, providerContext.ProjectRoot, cfg.Secrets)
 			daemonRequest.SecretStores = secretStores
 			daemonRequest.Auth = authAdmin.command
 			daemonRequest.Interactive = isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
@@ -311,15 +295,18 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 			result, appErr, _ := daemonRequestCallWithClient(daemonClient, daemonRequest, errOut)
 			return result, appErr
 		}
-		resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, discovered, nil, selectedValues, os.LookupEnv)
+		resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, providerContext.Discovered, nil, selectedValues, os.LookupEnv)
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
-		return runDirectAuth(ctx, authAdmin, server, cfg.Root, cwd, resolved.lookup, in, errOut)
+		return runDirectAuth(ctx, authAdmin, server, nil, providerContext.ProjectRoot, resolved.lookup, in, errOut)
 	}
 	if !opts.direct {
 		secrets := selectedSecretInputs(server, os.LookupEnv)
-		daemonRequest := daemonRequestFromConfig(req, cfg, cwd, configPaths, discovered, secrets)
+		daemonRequest := daemonRequestFromConfig(req, cfg, providerContext.configContext, secrets)
+		daemonRequest.ProjectRoot = providerContext.ProjectRoot
+		daemonRequest.GlobalRoot = providerContext.GlobalRoot
+		daemonRequest.Execution = serverExecutionFingerprint(server, nil, providerContext.ProjectRoot, cfg.Secrets)
 		daemonRequest.SecretStores = secretStores
 		daemonRequest.Interactive = isInteractiveTerminal(in, errOut) && os.Getenv("WIRECMD_NONINTERACTIVE") != "1"
 		daemonClient.event = browserEventHandler(errOut, daemonEventRedactor(server, secrets, errOut))
@@ -333,11 +320,11 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 		return result, nil
 	}
 
-	resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, discovered, nil, selectedValues, os.LookupEnv)
+	resolved, resolveErr := resolveSelectedSecrets(ctx, cfg.Secrets, secretStores, providerContext.Discovered, nil, selectedValues, os.LookupEnv)
 	if resolveErr != nil {
 		return nil, resolveErr
 	}
-	target, secrets, targetErr := makeTarget(server, cfg.Root, cwd, resolved.lookup)
+	target, secrets, targetErr := makeTarget(server, nil, providerContext.ProjectRoot, resolved.lookup)
 	if targetErr != nil {
 		return nil, targetErr
 	}

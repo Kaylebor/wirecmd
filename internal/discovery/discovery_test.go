@@ -39,6 +39,30 @@ func canonicalTestPath(t *testing.T, path string) string {
 	return filepath.Clean(canonical)
 }
 
+func TestResolveCanonicalizesSymlinkedGlobalConfigSource(t *testing.T) {
+	_, _ = testEnvironment(t)
+	realHome := filepath.Join(t.TempDir(), "real-config")
+	aliasHome := filepath.Join(t.TempDir(), "config-alias")
+	if err := os.MkdirAll(realHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realHome, aliasHome); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", aliasHome)
+	global := filepath.Join(realHome, "wirecmd", "config.kdl")
+	writeFile(t, global)
+	cwd := t.TempDir()
+
+	result, err := Resolve(cwd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := result.Paths, []string{canonicalTestPath(t, global)}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("global paths = %#v, want canonical %#v", got, want)
+	}
+}
+
 func TestTrustedDiscoveryOrderAndBoundary(t *testing.T) {
 	configHome, _ := testEnvironment(t)
 	workspace := filepath.Join(t.TempDir(), "workspace")
@@ -76,6 +100,75 @@ func TestTrustedDiscoveryOrderAndBoundary(t *testing.T) {
 	}
 	if roots, err := List(); err != nil || !reflect.DeepEqual(roots, []string{canonicalWorkspace}) {
 		t.Fatalf("List() = %#v, %v", roots, err)
+	}
+}
+
+func TestResolveReturnsCanonicalContextAndNearestWorkspaceSource(t *testing.T) {
+	configHome, _ := testEnvironment(t)
+	workspace := filepath.Join(t.TempDir(), "workspace")
+	child := filepath.Join(workspace, "nested", "child")
+	if err := os.MkdirAll(child, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	global := filepath.Join(configHome, "wirecmd", "config.kdl")
+	rootConfig := projectConfigPath(workspace)
+	nearestDirectory := filepath.Join(workspace, "nested")
+	nearestConfig := projectConfigPath(nearestDirectory)
+	writeFile(t, global)
+	writeFile(t, rootConfig)
+	writeFile(t, nearestConfig)
+	if _, err := Trust(workspace); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := Resolve(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := result.CWD, canonicalTestPath(t, child); got != want {
+		t.Fatalf("CWD = %q, want %q", got, want)
+	}
+	if got, want := result.TrustedRoot, canonicalTestPath(t, workspace); got != want {
+		t.Fatalf("TrustedRoot = %q, want %q", got, want)
+	}
+	if got, want := result.Paths, []string{global, canonicalTestPath(t, rootConfig), canonicalTestPath(t, nearestConfig)}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Paths = %#v, want %#v", got, want)
+	}
+	if got, want := result.WorkspaceConfig, canonicalTestPath(t, nearestConfig); got != want {
+		t.Fatalf("WorkspaceConfig = %q, want %q", got, want)
+	}
+	if got, want := result.WorkspaceDirectory, canonicalTestPath(t, nearestDirectory); got != want {
+		t.Fatalf("WorkspaceDirectory = %q, want %q", got, want)
+	}
+}
+
+func TestResolveCanonicalizesSymlinkCallerDirectory(t *testing.T) {
+	testEnvironment(t)
+	realParent := t.TempDir()
+	workspace := filepath.Join(realParent, "workspace")
+	child := filepath.Join(workspace, "child")
+	if err := os.MkdirAll(child, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, projectConfigPath(workspace))
+	if _, err := Trust(workspace); err != nil {
+		t.Fatal(err)
+	}
+	aliasParent := t.TempDir()
+	alias := filepath.Join(aliasParent, "workspace")
+	if err := os.Symlink(workspace, alias); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	result, err := Resolve(filepath.Join(alias, "child"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := result.CWD, canonicalTestPath(t, child); got != want {
+		t.Fatalf("CWD = %q, want %q", got, want)
+	}
+	if got, want := result.WorkspaceDirectory, canonicalTestPath(t, workspace); got != want {
+		t.Fatalf("WorkspaceDirectory = %q, want %q", got, want)
 	}
 }
 

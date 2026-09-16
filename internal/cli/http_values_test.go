@@ -191,7 +191,7 @@ func TestHTTPTransportKindChangesFingerprints(t *testing.T) {
 	}
 	httpConfig := &config.Config{Servers: []config.Server{httpServer}}
 	sseConfig := &config.Config{Servers: []config.Server{sseServer}}
-	if configFingerprint(httpConfig, "/work") == configFingerprint(sseConfig, "/work") {
+	if configFingerprint(httpConfig) == configFingerprint(sseConfig) {
 		t.Fatal("HTTP and SSE configuration fingerprints must differ")
 	}
 }

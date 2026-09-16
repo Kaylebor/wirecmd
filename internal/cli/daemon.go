@@ -32,7 +32,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 11
+const daemonProtocol = 12
 
 type daemonAdmin struct {
 	command string
@@ -107,6 +107,11 @@ type daemonRequest struct {
 	Overlay               map[string]any         `json:"overlay,omitempty"`
 	Help                  helpKind               `json:"help,omitempty"`
 	CWD                   string                 `json:"cwd"`
+	ProjectRoot           string                 `json:"project_root,omitempty"`
+	GlobalRoot            string                 `json:"global_root,omitempty"`
+	TrustedBoundary       string                 `json:"trusted_boundary,omitempty"`
+	WorkspaceConfig       string                 `json:"workspace_config,omitempty"`
+	WorkspaceDirectory    string                 `json:"workspace_directory,omitempty"`
 	Configs               []string               `json:"configs,omitempty"`
 	Discovered            bool                   `json:"discovered,omitempty"`
 	Fingerprint           string                 `json:"fingerprint,omitempty"`
@@ -150,16 +155,20 @@ func absoluteConfigPaths(cwd string, paths []string) ([]string, error) {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(cwd, path)
 		}
-		result = append(result, filepath.Clean(path))
+		path = filepath.Clean(path)
+		if canonical, err := filepath.EvalSymlinks(path); err == nil {
+			path = filepath.Clean(canonical)
+		}
+		result = append(result, path)
 	}
 	return result, nil
 }
 
-func daemonRequestFromConfig(req request, cfg *config.Config, cwd string, paths []string, discovered bool, secrets map[string]secretInput) daemonRequest {
-	request := daemonRequest{Operation: req.operation, Server: req.server, Tool: req.tool, URI: req.uri, Arguments: req.arguments, Projected: req.projected, Overlay: req.overlay, Help: req.help, CWD: cwd, Configs: paths, Discovered: discovered, Fingerprint: configFingerprint(cfg, cwd), EnvSecrets: secrets}
+func daemonRequestFromConfig(req request, cfg *config.Config, source configContext, secrets map[string]secretInput) daemonRequest {
+	request := daemonRequest{Operation: req.operation, Server: req.server, Tool: req.tool, URI: req.uri, Arguments: req.arguments, Projected: req.projected, Overlay: req.overlay, Help: req.help, CWD: source.CWD, Configs: source.Configs, Discovered: source.Discovered, TrustedBoundary: source.TrustedBoundary, WorkspaceConfig: source.WorkspaceConfig, WorkspaceDirectory: source.WorkspaceDirectory, Fingerprint: configFingerprint(cfg), EnvSecrets: secrets}
 	if req.operation != listServers {
 		if server, ok := findServer(cfg, req.server); ok {
-			request.Execution = serverExecutionFingerprint(server, cfg.Root, cwd, cfg.Secrets)
+			request.Execution = serverExecutionFingerprint(server, nil, source.CWD, cfg.Secrets)
 		}
 	}
 	return request
@@ -197,15 +206,15 @@ func selectedSecretInputs(server config.Server, lookup func(string) (string, boo
 	return result
 }
 
-// configFingerprint deliberately excludes provenance and resolved values, while
-// retaining the resolved root because a root's declaring file changes execution
-// semantics for relative paths.
-func configFingerprint(cfg *config.Config, cwd string) string {
+// configFingerprint deliberately excludes invocation context and resolved
+// values. A declared root remains part of static configuration because its
+// declaring file gives a relative value meaning.
+func configFingerprint(cfg *config.Config) string {
 	servers := make([]any, 0, len(cfg.Servers))
 	for _, server := range cfg.Servers {
 		servers = append(servers, semanticServer(server))
 	}
-	root := cwd
+	root := ""
 	if cfg.Root != nil {
 		root = resolveRoot(*cfg.Root)
 	}
@@ -213,7 +222,7 @@ func configFingerprint(cfg *config.Config, cwd string) string {
 	for _, definition := range cfg.LSPs {
 		lsps = append(lsps, semanticLSP(definition))
 	}
-	return fingerprint(map[string]any{"v": 3, "root": root, "secrets": semanticSecrets(cfg.Secrets), "servers": servers, "lsps": lsps})
+	return fingerprint(map[string]any{"v": 4, "root": root, "git_root": cfg.GitRoot.Enabled, "secrets": semanticSecrets(cfg.Secrets), "servers": servers, "lsps": lsps})
 }
 
 func semanticSecrets(configured config.Secrets) any {
@@ -404,8 +413,9 @@ type daemon struct {
 }
 
 type daemonConfig struct {
-	config      *config.Config
-	fingerprint string
+	config       *config.Config
+	declaredRoot *config.Root
+	fingerprint  string
 }
 
 type secretCacheEntry struct {
@@ -823,13 +833,29 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	if request.Operation == readResource && !validResourceURI(request.URI) {
 		return errorReply(invocationError("resource_uri_invalid", "resource reads require a valid absolute URI", "supply a URI with a non-empty scheme"))
 	}
-	if !filepath.IsAbs(request.CWD) || len(request.Configs) == 0 {
+	if !filepath.IsAbs(request.CWD) || filepath.Clean(request.CWD) != request.CWD || len(request.Configs) == 0 {
 		return errorReply(configurationError("daemon_context_invalid", "daemon requests require absolute caller context and configuration paths", "use the Wirecmd CLI"))
 	}
-	for _, path := range request.Configs {
-		if !filepath.IsAbs(path) {
-			return errorReply(configurationError("daemon_context_invalid", "daemon configuration paths must be absolute", "use the Wirecmd CLI"))
+	if request.Operation != listServers {
+		if !filepath.IsAbs(request.ProjectRoot) || filepath.Clean(request.ProjectRoot) != request.ProjectRoot {
+			return errorReply(configurationError("daemon_context_invalid", "daemon requests require an absolute clean project root", "use the Wirecmd CLI"))
 		}
+	}
+	if request.GlobalRoot != "" && (!filepath.IsAbs(request.GlobalRoot) || filepath.Clean(request.GlobalRoot) != request.GlobalRoot) {
+		return errorReply(configurationError("daemon_context_invalid", "daemon global root must be absolute and clean", "use the Wirecmd CLI"))
+	}
+	for _, path := range []string{request.TrustedBoundary, request.WorkspaceConfig, request.WorkspaceDirectory} {
+		if path != "" && (!filepath.IsAbs(path) || filepath.Clean(path) != path) {
+			return errorReply(configurationError("daemon_context_invalid", "daemon discovery context paths must be absolute and clean", "use the Wirecmd CLI"))
+		}
+	}
+	for _, path := range request.Configs {
+		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+			return errorReply(configurationError("daemon_context_invalid", "daemon configuration paths must be absolute and clean", "use the Wirecmd CLI"))
+		}
+	}
+	if appErr := validateDaemonDiscoveryContext(request); appErr != nil {
+		return errorReply(appErr)
 	}
 	for _, path := range request.SecretStores {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
@@ -837,22 +863,17 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 		}
 	}
 	generation := d.currentGeneration()
-	key := daemonConfigKey(request.CWD, request.Configs, request.Discovered, generation)
+	key := daemonConfigKey(request.Configs, request.Discovered, generation)
 	d.mu.Lock()
 	cached := d.configs[key]
 	d.mu.Unlock()
 	if cached == nil {
-		var loaded *config.Config
-		var err error
-		if request.Discovered {
-			loaded, err = config.LoadEffectiveDiscovered(request.Configs)
-		} else {
-			loaded, err = config.LoadEffective(request.Configs)
-		}
+		source := configContext{CWD: request.CWD, Configs: request.Configs, Discovered: request.Discovered, TrustedBoundary: request.TrustedBoundary, WorkspaceConfig: request.WorkspaceConfig, WorkspaceDirectory: request.WorkspaceDirectory}
+		loaded, err := loadContextConfig(source)
 		if err != nil {
 			return errorReply(configurationError("config_invalid", err.Error(), "correct the supplied KDL configuration"))
 		}
-		cached = &daemonConfig{config: loaded, fingerprint: configFingerprint(loaded, request.CWD)}
+		cached = &daemonConfig{config: loaded.Config, declaredRoot: loaded.DeclaredRoot, fingerprint: configFingerprint(loaded.Config)}
 		d.mu.Lock()
 		if d.closing || d.generation != generation {
 			d.mu.Unlock()
@@ -881,7 +902,8 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	if !ok {
 		return errorReplyWithWarnings(configurationError("config_mismatch", fmt.Sprintf("cached configuration has no server %q", request.Server), "run wirecmd daemon reload and retry"), warnings)
 	}
-	if request.Fingerprint != cached.fingerprint && request.Execution != serverExecutionFingerprint(server, cached.config.Root, request.CWD, cached.config.Secrets) {
+	expectedRoot := daemonExpectedProjectRoot(request, cached)
+	if request.Fingerprint != cached.fingerprint && request.Execution != serverExecutionFingerprint(server, nil, expectedRoot, cached.config.Secrets) {
 		return errorReplyWithWarnings(configurationError("config_mismatch", "selected server execution configuration differs from the daemon cache", "run wirecmd daemon reload and retry"), warnings)
 	}
 	if err := validateSecretInputs(server, request.EnvSecrets); err != nil {
@@ -903,7 +925,7 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 			return errorReplyWithWarnings(snapshotErr, warnings)
 		}
 		snapshotIdentity = storeSnapshot.Identity()
-		metadataKey = d.serverSecretCacheKey(server, cached.config.Root, request.CWD, cached.config.Secrets, request.EnvSecrets, ageReferences, request.SecretStores, generation)
+		metadataKey = d.serverSecretCacheKey(server, nil, request.ProjectRoot, cached.config.Secrets, request.EnvSecrets, ageReferences, request.SecretStores, generation)
 		var reused bool
 		instance, reused, _ = d.cachedInstance(ctx, metadataKey, snapshotIdentity, server.Name, generation, false)
 		if !reused {
@@ -919,17 +941,17 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 		}
 	}
 	if request.Auth != "" {
-		return d.executeAuth(ctx, request, server, cached.config.Root, resolved.lookup, warnings, emitURL)
+		return d.executeAuth(ctx, request, server, nil, resolved.lookup, warnings, emitURL)
 	}
 	if instance == nil {
 		var appErr *appError
-		instance, appErr = d.acquire(ctx, server, cached.config.Root, request.CWD, resolved, generation, request.Interactive, emitURL)
+		instance, appErr = d.acquire(ctx, server, nil, request.ProjectRoot, resolved, generation, request.Interactive, emitURL)
 		if appErr != nil {
 			return errorReplyWithWarnings(appErr, warnings)
 		}
 		if metadataKey != "" {
 			auth := d.resolvedAuthIdentity(server, resolved.lookup)
-			d.rememberSecretPools(metadataKey, snapshotIdentity, map[string]string{server.Name: mcpPoolKey(server, cached.config.Root, request.CWD, generation, auth)})
+			d.rememberSecretPools(metadataKey, snapshotIdentity, map[string]string{server.Name: mcpPoolKey(server, nil, request.ProjectRoot, generation, auth)})
 		}
 	}
 	defer d.release(instance)
@@ -1056,8 +1078,43 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 	return resultReply(result, warnings)
 }
 
+func validateDaemonDiscoveryContext(request daemonRequest) *appError {
+	if !request.Discovered {
+		if request.TrustedBoundary != "" || request.WorkspaceConfig != "" || request.WorkspaceDirectory != "" {
+			return configurationError("daemon_context_invalid", "explicit configuration cannot carry automatic-discovery context", "use the Wirecmd CLI")
+		}
+		return nil
+	}
+	if (request.WorkspaceConfig == "") != (request.WorkspaceDirectory == "") {
+		return configurationError("daemon_context_invalid", "workspace configuration and directory must be supplied together", "use the Wirecmd CLI")
+	}
+	if request.TrustedBoundary != "" && !pathContains(request.TrustedBoundary, request.CWD) {
+		return configurationError("daemon_context_invalid", "trusted boundary must contain the caller CWD", "use the Wirecmd CLI")
+	}
+	if request.WorkspaceConfig == "" {
+		return nil
+	}
+	if filepath.Base(request.WorkspaceConfig) != "config.kdl" || filepath.Base(filepath.Dir(request.WorkspaceConfig)) != ".wirecmd" || filepath.Dir(filepath.Dir(request.WorkspaceConfig)) != request.WorkspaceDirectory || !pathContains(request.WorkspaceDirectory, request.CWD) {
+		return configurationError("daemon_context_invalid", "workspace configuration does not match its discovered directory", "use the Wirecmd CLI")
+	}
+	found := false
+	for _, path := range request.Configs {
+		if path == request.WorkspaceConfig {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return configurationError("daemon_context_invalid", "workspace configuration is not an ordered configuration source", "use the Wirecmd CLI")
+	}
+	if request.TrustedBoundary != "" && !pathContains(request.TrustedBoundary, request.WorkspaceDirectory) {
+		return configurationError("daemon_context_invalid", "workspace configuration is outside the trusted boundary", "use the Wirecmd CLI")
+	}
+	return nil
+}
+
 func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *daemonConfig, generation uint64, warnings []string) daemonReply {
-	workspace := effectiveLSPWorkspace(cached.config.Root, request.CWD)
+	workspace := request.ProjectRoot
 	if request.Operation == statusLSP {
 		if request.LSPFile != "" && !filepath.IsAbs(request.LSPFile) {
 			return errorReplyWithWarnings(invocationError("lsp_file_invalid", "daemon LSP status requires an absolute file", "use the Wirecmd CLI"), warnings)
@@ -1089,7 +1146,8 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 			return errorReplyWithWarnings(appErr, warnings)
 		}
 	}
-	if request.Fingerprint != cached.fingerprint && request.Execution != matchedLSPExecutionFingerprint(matches, cached.config.Root, request.CWD, cached.config.Secrets) {
+	expectedRoot := daemonExpectedProjectRoot(request, cached)
+	if request.Fingerprint != cached.fingerprint && request.Execution != matchedLSPExecutionFingerprint(matches, nil, expectedRoot, cached.config.Secrets) {
 		return errorReplyWithWarnings(configurationError("config_mismatch", "selected LSP execution configuration differs from the daemon cache", "run wirecmd daemon reload and retry"), warnings)
 	}
 	for _, match := range matches {
@@ -1114,7 +1172,7 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 			return errorReplyWithWarnings(snapshotErr, warnings)
 		}
 		snapshotIdentity = storeSnapshot.Identity()
-		metadataKey = d.lspSecretCacheKey(matches, cached.config.Root, request.CWD, cached.config.Secrets, request.EnvSecrets, ageReferences, request.SecretStores, generation)
+		metadataKey = d.lspSecretCacheKey(matches, nil, request.ProjectRoot, cached.config.Secrets, request.EnvSecrets, ageReferences, request.SecretStores, generation)
 		for index, match := range matches {
 			instance, reused, _ := d.cachedInstance(ctx, metadataKey, snapshotIdentity, match.Definition.Name, generation, true)
 			if !reused {
@@ -1155,7 +1213,7 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 			instance := instances[index]
 			if instance == nil {
 				var appErr *appError
-				instance, appErr = d.acquireLSP(ctx, match.Definition, cached.config.Root, request.CWD, resolved, generation)
+				instance, appErr = d.acquireLSP(ctx, match.Definition, nil, request.ProjectRoot, resolved, generation)
 				if appErr != nil {
 					results[index].Err = appErr
 					return
@@ -1163,7 +1221,7 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 				if metadataKey != "" {
 					auth := d.lspResolvedAuthIdentity(match.Definition, resolved.lookup)
 					poolKeysMu.Lock()
-					newPoolKeys[match.Definition.Name] = lspPoolKey(match.Definition, cached.config.Root, request.CWD, generation, auth)
+					newPoolKeys[match.Definition.Name] = lspPoolKey(match.Definition, nil, request.ProjectRoot, generation, auth)
 					poolKeysMu.Unlock()
 				}
 			}
@@ -1257,8 +1315,16 @@ func (d *daemon) currentGeneration() uint64 {
 	return d.generation
 }
 
-func daemonConfigKey(cwd string, paths []string, discovered bool, generation uint64) string {
-	return fmt.Sprintf("%d\x00%t\x00%s\x00%s", generation, discovered, cwd, strings.Join(paths, "\x00"))
+func daemonConfigKey(paths []string, discovered bool, generation uint64) string {
+	return fmt.Sprintf("%d\x00%t\x00%s", generation, discovered, strings.Join(paths, "\x00"))
+}
+
+func daemonExpectedProjectRoot(request daemonRequest, cached *daemonConfig) string {
+	declared := declaredProjectRoot(cached.declaredRoot)
+	if declared != "" {
+		return canonicalPathIfPresent(declared)
+	}
+	return request.ProjectRoot
 }
 
 func validateSecretInputs(server config.Server, inputs map[string]secretInput) *appError {

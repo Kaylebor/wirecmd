@@ -15,7 +15,7 @@ set -gx XDG_STATE_HOME "$temporary/state"
 set -gx XDG_RUNTIME_DIR "$temporary/runtime-not-created"
 set -l config "$temporary/base config.kdl"
 set -l stronger "$temporary/override.kdl"
-printf '%s\n' 'wirecmd {' 'mcp "alpha" { scope "workspace"; stdio "never-started" }' 'mcp "space name" { scope "workspace"; stdio "never-started" }' 'mcp "$(touch SHOULD_NOT_EXIST)" { scope "workspace"; stdio "never-started" }' 'mcp "quote\"name" { scope "workspace"; stdio "never-started" }' 'mcp "--help" { scope "workspace"; stdio "never-started" }' 'mcp "-h" { scope "workspace"; stdio "never-started" }' 'mcp "--" { scope "workspace"; stdio "never-started" }' '}' >"$config"
+printf '%s\n' 'wirecmd {' 'git-root #false' 'mcp "alpha" { scope "workspace"; stdio "never-started" }' 'mcp "space name" { scope "workspace"; stdio "never-started" }' 'mcp "$(touch SHOULD_NOT_EXIST)" { scope "workspace"; stdio "never-started" }' 'mcp "quote\"name" { scope "workspace"; stdio "never-started" }' 'mcp "--help" { scope "workspace"; stdio "never-started" }' 'mcp "-h" { scope "workspace"; stdio "never-started" }' 'mcp "--" { scope "workspace"; stdio "never-started" }' '}' >"$config"
 printf '%s\n' 'wirecmd { mcp "beta" { scope "workspace"; stdio "never-started" } }' >"$stronger"
 source "$root/completions/wirecmd.fish"
 or exit 1

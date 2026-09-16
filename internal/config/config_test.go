@@ -141,6 +141,67 @@ func TestComposeMergesPartialSourcesAndRetainsProvenance(t *testing.T) {
 	}
 }
 
+func TestComposeGitRootDefaultsAndUsesStrongestValue(t *testing.T) {
+	base, err := ParseString("base.kdl", `wirecmd {
+        git-root #false
+        mcp "memory" { stdio "memory" }
+    }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	local, err := ParseString("local.kdl", `wirecmd { git-root #true }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	defaultSource, err := ParseString("default.kdl", `wirecmd { mcp "memory" { stdio "memory" } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaulted, err := Compose(defaultSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !defaulted.GitRoot.Enabled || defaulted.GitRoot.Provenance != (Provenance{}) {
+		t.Fatalf("default git root = %#v", defaulted.GitRoot)
+	}
+	disabled, err := Compose(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled.GitRoot.Enabled || disabled.GitRoot.Provenance != (Provenance{File: "base.kdl", Path: "wirecmd.git-root"}) {
+		t.Fatalf("disabled git root = %#v", disabled.GitRoot)
+	}
+
+	config, err := Compose(base, local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.GitRoot.Enabled || config.GitRoot.Provenance != (Provenance{File: "local.kdl", Path: "wirecmd.git-root"}) {
+		t.Fatalf("effective git root = %#v", config.GitRoot)
+	}
+}
+
+func TestParseGitRootRejectsInvalidValues(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "text", source: `wirecmd { git-root "true" }`, want: "expected a boolean value"},
+		{name: "annotation", source: `wirecmd { git-root (flag)#true }`, want: "value annotation"},
+		{name: "duplicate", source: `wirecmd { git-root #true; git-root #false }`, want: "duplicate git-root"},
+		{name: "children", source: `wirecmd { git-root #true { child } }`, want: "expected one boolean"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ParseString("test.kdl", test.source); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("ParseString() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestComposeUsesSameOrderForExplicitAndDiscoverySources(t *testing.T) {
 	global, err := ParseString("global.kdl", `wirecmd { mcp "memory" { scope "workspace"; stdio "global" } }`)
 	if err != nil {
@@ -308,6 +369,28 @@ func TestDiscoveredWorkspaceLoadRejectsSymlinkWithoutChangingExplicitLoad(t *tes
 	}
 	if _, err := LoadEffective([]string{link}); err != nil {
 		t.Fatalf("explicit LoadEffective() changed behavior: %v", err)
+	}
+}
+
+func TestLoadDiscoveredReturnsSourceWithoutComposition(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, ".wirecmd", "config.kdl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`wirecmd { root "/configured-root"; git-root #false }`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	source, err := LoadDiscovered(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.Root == nil || source.Root.Path != "/configured-root" || source.Root.Provenance != (Provenance{File: path, Path: "wirecmd.root"}) {
+		t.Fatalf("discovered root = %#v", source.Root)
+	}
+	if source.GitRoot == nil || source.GitRoot.Enabled || source.GitRoot.Provenance != (Provenance{File: path, Path: "wirecmd.git-root"}) {
+		t.Fatalf("discovered git root = %#v", source.GitRoot)
 	}
 }
 

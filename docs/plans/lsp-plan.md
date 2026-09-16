@@ -111,7 +111,8 @@ wirecmd {
 }
 ```
 
-Scope defaults to `workspace`; root defaults to the caller CWD. The stdio
+Scope defaults to `workspace`; the provider root is the shared resolved project
+root defined by the [scope and invocation context plan](scope-context-plan.md). The stdio
 executable and at least one selector are mandatory. `implementation-id`, argv,
 and environment are optional. Each selector requires `language-id`; `pattern`
 defaults to `**/*`. Patterns are validated and matched with doublestar against
@@ -151,8 +152,9 @@ reload or daemon restart and requests are never replayed.
 Daemon instances are keyed by definition, resolved workspace root, selected
 execution configuration, daemon generation, and sensitive startup identity.
 The LSP slice introduced private daemon protocol version 6; the current client
-and daemon use version 10 after adding schema-aware trailing help, native LSP
-inspection and signature-help requests, and MCP resources. Status
+and daemon use version 12 after adding schema-aware trailing help, native LSP
+inspection and signature-help requests, MCP resources, age resolution, and the
+shared invocation context. Status
 reports configured definitions, selectors, optional implementation metadata,
 executable, selector matches, and already-observed runtime identity and
 capabilities without starting a process.

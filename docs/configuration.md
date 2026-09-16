@@ -10,6 +10,7 @@ security boundaries.
 ```kdl
 wirecmd {
     root "."
+    git-root #true
 
     secrets {
         age {
@@ -91,18 +92,39 @@ effective configuration used by the daemon, run `wirecmd daemon reload`.
 An explicit path may have any filename; only automatic workspace discovery uses
 the `.wirecmd/config.kdl` name.
 
-## Root and workspace behavior
+## Project root and workspace behavior
 
 `root` is optional. A relative root resolves against the file that declared
-the winning value. Without one, Wirecmd uses the caller's current directory.
-The effective absolute root identifies the workspace for daemon session
-pooling and LSP file routing.
+the applicable value. Under automatic discovery, only the nearest workspace
+configuration may declare the project root; a weaker global or outer-workspace
+root does not leak into it. Global-only discovery uses the global declaration,
+while explicit `--config` paths use the strongest declaration.
 
 ```kdl
 wirecmd {
     root ".."
 }
 ```
+
+Without a declared root, Wirecmd compares the nearest discovered project
+configuration directory with the Git worktree root and chooses the deepest
+valid ancestor of the caller's canonical CWD. It then falls back to the
+nearest trusted boundary and finally the CWD. The canonical project root owns
+workspace-scoped process CWDs, LSP routing and initialization, and retained
+daemon instances.
+
+Git participation is optional and defaults on. Disable it in a stronger
+configuration layer with KDL 2 boolean syntax:
+
+```kdl
+wirecmd {
+    git-root #false
+}
+```
+
+When disabled, Wirecmd does not launch Git. Otherwise Git is only a project
+signal; missing Git, non-worktrees, invalid or unrelated results, and a
+five-second timeout quietly fall back to the other candidates.
 
 MCP and LSP definitions default to workspace scope. Writing `scope "workspace"`
 explicitly is also valid. No other scope is implemented.

@@ -15,6 +15,7 @@ The governing documents are the [product thesis](product-thesis.md),
 [LSP plan](plans/lsp-plan.md), [MCP compatibility plan](plans/compatibility-plan.md),
 [MCP resources plan](plans/resources-plan.md),
 [age secrets plan](plans/age-secrets-plan.md),
+[scope and invocation context plan](plans/scope-context-plan.md),
 [release-readiness contract](release-readiness.md), and
 [macOS qualification plan](plans/macos-plan.md). The
 [documentation index](README.md) routes contributors to authoritative milestone
@@ -61,7 +62,16 @@ build for that test, so no physical-device qualification is claimed yet.
 
 ## Decision queue
 
-### 1. LSP runtime configuration prerequisite
+### 1. Complete global scope
+
+The shared invocation-context and workspace-root slice is implemented. Complete
+the accepted global-scope slice next, including scope-owned provider roots,
+cross-project reuse, explicit LSP status, and scope-separated age resolution.
+Do not introduce public context variables or templating in that slice. The
+contract and qualification matrix are in the
+[scope and invocation context plan](plans/scope-context-plan.md).
+
+### 2. LSP runtime configuration prerequisite
 
 Do not begin an LSP diagnostics slice before determining a server-neutral
 representation for `initializationOptions`, workspace settings, and related
@@ -74,7 +84,7 @@ not hardcode a server catalog, infer language servers from executables or
 extensions, introduce another configuration format, or select a generic
 KDL-to-JSON/template mechanism without explicit deliberation.
 
-### 2. Candidate LSP diagnostics and later edit-oriented operations
+### 3. Candidate LSP diagnostics and later edit-oriented operations
 
 Once the runtime-configuration and asynchronous-notification boundaries are
 settled, diagnostics are the leading candidate for the next LSP slice. Rename,
@@ -86,7 +96,7 @@ requires deterministic fixtures and a real explicitly configured server
 qualification; `gopls` may be a test target but must never become production
 routing knowledge.
 
-### 3. Candidate additional MCP primitives
+### 4. Candidate additional MCP primitives
 
 Evaluate prompts, subscriptions, Tasks, sampling, and richer elicitation by
 concrete shell/agent value. Do not pursue protocol breadth or competitor parity
@@ -94,7 +104,7 @@ as goals by themselves. Prefer official SDK APIs and preserve the existing
 semantic boundary; bring any confirmed SDK gap back for deliberation before a
 shim or dependency change.
 
-### 4. Candidate MCP-server frontend
+### 5. Candidate MCP-server frontend
 
 One future exploration is exposing Wirecmd's normalized daemon capabilities as
 a latest-revision MCP server. Before accepting that slice, deliberate whether
