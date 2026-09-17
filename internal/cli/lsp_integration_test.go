@@ -10,11 +10,13 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Kaylebor/wirecmd/internal/config"
+	"github.com/go-json-experiment/json/jsontext"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
@@ -82,6 +84,103 @@ func TestLSPDefinitionDirectAndDaemon(t *testing.T) {
 	code, output, stderr = invoke(t, args)
 	if code != exitOK || stderr != "" {
 		t.Fatalf("post-reload call: code=%d stdout=%s stderr=%q", code, output, stderr)
+	}
+}
+
+func TestLSPInitializationOptionsDirectAndDaemon(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
+	startTestDaemon(t)
+	workspace := t.TempDir()
+	input := filepath.Join(workspace, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected := fmt.Sprintf(`{"root":%s,"large":123456789012345678901234567890,"sentinel":"initialization-only"}`, strconv.Quote(canonicalPath(workspace)))
+	configPath := filepath.Join(workspace, "config.kdl")
+	writeSource(t, configPath, fmt.Sprintf(`wirecmd {
+root %s
+lsp "fixture" {
+selector language-id="fixture"
+initialization-options (template)#"{"root":"${wirecmd.project-root}","large":123456789012345678901234567890,"sentinel":"initialization-only"}"#
+stdio %s {
+arg "-test.run=TestCLILSPHelperProcess"
+env WIRECMD_LSP_EXPECT_INITIALIZATION_OPTIONS=%s
+}
+}
+}
+`, strconv.Quote(workspace), strconv.Quote(os.Args[0]), strconv.Quote(expected)))
+
+	for _, prefix := range [][]string{{"--direct"}, {}} {
+		statusArgs := append(append([]string{}, prefix...), "--config", configPath, "lsp", "status", "--file", input)
+		status := mustInvokeLSP(t, statusArgs)
+		if strings.Contains(status, "initialization-only") {
+			t.Fatal("LSP status exposed initialization options")
+		}
+		args := append(append([]string{}, prefix...), "--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2")
+		mustInvokeLSP(t, args)
+	}
+}
+
+func TestLSPInitializationOptionsAreRedactedFromErrors(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
+	startTestDaemon(t)
+	workspace := t.TempDir()
+	input := filepath.Join(workspace, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(workspace, "config.kdl")
+	writeSource(t, configPath, fmt.Sprintf(`wirecmd {
+root %s
+lsp "fixture" {
+selector language-id="fixture"
+initialization-options #"{"private":"\u006eever-print-initialization"}"#
+stdio %s {
+arg "-test.run=TestCLILSPHelperProcess"
+env WIRECMD_LSP_ECHO_INIT_ERROR="1"
+}
+}
+}
+`, strconv.Quote(workspace), strconv.Quote(os.Args[0])))
+	for _, prefix := range [][]string{{"--direct"}, {}} {
+		args := append(append([]string{}, prefix...), "--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2")
+		code, output, stderr := invoke(t, args)
+		if code != exitProtocol || strings.Contains(output, "never-print-initialization") || strings.Contains(stderr, "never-print-initialization") || strings.Contains(output, `\u006eever-print-initialization`) || strings.Contains(stderr, `\u006eever-print-initialization`) {
+			t.Fatalf("initialization-options redaction %v: code=%d stdout=%q stderr=%q", prefix, code, output, stderr)
+		}
+	}
+}
+
+func TestLSPInitializationOptionsAreRedactedFromRequestErrors(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
+	startTestDaemon(t)
+	workspace := t.TempDir()
+	input := filepath.Join(workspace, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(workspace, "config.kdl")
+	writeSource(t, configPath, fmt.Sprintf(`wirecmd {
+root %s
+lsp "fixture" {
+selector language-id="fixture"
+initialization-options #"{"private":"\u006eever-print-request"}"#
+stdio %s {
+arg "-test.run=TestCLILSPHelperProcess"
+env WIRECMD_LSP_ECHO_REQUEST_ERROR="1"
+}
+}
+}
+`, strconv.Quote(workspace), strconv.Quote(os.Args[0])))
+	for _, prefix := range [][]string{{"--direct"}, {}} {
+		args := append(append([]string{}, prefix...), "--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2")
+		code, output, stderr := invoke(t, args)
+		if code != exitProtocol || strings.Contains(output, "never-print-request") || strings.Contains(stderr, "never-print-request") || strings.Contains(output, `\u006eever-print-request`) || strings.Contains(stderr, `\u006eever-print-request`) {
+			t.Fatalf("request-error initialization-options redaction %v: code=%d stdout=%q stderr=%q", prefix, code, output, stderr)
+		}
 	}
 }
 
@@ -336,6 +435,44 @@ env WIRECMD_LSP_EXPECT_WORKSPACE=%s
 	code, output, _ = invoke(t, []string{"--direct", "--config", configPath, "lsp", "definition", "--file", projectFile, "--line", "1", "--column", "2"})
 	if code != exitConfiguration || decodeOutput(t, output)["error"].(map[string]any)["code"] != "lsp_no_matching_provider" {
 		t.Fatalf("global LSP attached outside global root: code=%d output=%s", code, output)
+	}
+}
+
+func TestGlobalLSPInitializationTemplateSplitsAcrossProjects(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
+	configHome := t.TempDir()
+	globalRoot := filepath.Join(configHome, "wirecmd")
+	if err := os.Mkdir(globalRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	input := filepath.Join(globalRoot, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.kdl")
+	writeSource(t, configPath, fmt.Sprintf(`wirecmd {
+lsp "fixture" {
+scope "global"
+selector language-id="fixture" pattern="**/*.go"
+initialization-options (template)#"{"project":"${wirecmd.project-root}"}"#
+stdio %s {
+arg "-test.run=TestCLILSPHelperProcess"
+env WIRECMD_LSP_EXPECT_INITIALIZATION_OPTIONS=(template)"{\"project\":\"${wirecmd.project-root}\"}"
+}
+}
+}
+`, strconv.Quote(os.Args[0])))
+
+	startTestDaemon(t)
+	for _, project := range []string{t.TempDir(), t.TempDir()} {
+		t.Chdir(project)
+		mustInvokeLSP(t, []string{"--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2"})
+	}
+	code, output, stderr := invoke(t, []string{"daemon", "status"})
+	if code != exitOK || stderr != "" || decodeOutput(t, output)["daemon"].(map[string]any)["active_instances"].(json.Number).String() != "2" {
+		t.Fatalf("context-dependent initialization options did not split instances: code=%d stderr=%q output=%s", code, stderr, output)
 	}
 }
 
@@ -781,7 +918,7 @@ func TestCLILSPHelperProcess(t *testing.T) {
 	}
 	stream := jsonrpc2.NewStream(&cliLSPStdio{Reader: os.Stdin, Writer: os.Stdout})
 	delay, _ := strconv.Atoi(os.Getenv("WIRECMD_LSP_DELAY_MS"))
-	_, connection, _ := protocol.NewServer(context.Background(), cliLSPServer{UnimplementedServer: protocol.UnimplementedServer{}, mode: os.Getenv("WIRECMD_CLI_LSP_HELPER"), provider: os.Getenv("WIRECMD_LSP_PROVIDER"), fail: os.Getenv("WIRECMD_LSP_FAIL") == "1", unsupported: os.Getenv("WIRECMD_LSP_UNSUPPORTED") == "1", signatureMethodNotFound: os.Getenv("WIRECMD_LSP_SIGNATURE_METHOD_NOT_FOUND") == "1", delay: time.Duration(delay) * time.Millisecond, active: &atomic.Int32{}}, stream)
+	_, connection, _ := protocol.NewServer(context.Background(), cliLSPServer{UnimplementedServer: protocol.UnimplementedServer{}, mode: os.Getenv("WIRECMD_CLI_LSP_HELPER"), provider: os.Getenv("WIRECMD_LSP_PROVIDER"), fail: os.Getenv("WIRECMD_LSP_FAIL") == "1", unsupported: os.Getenv("WIRECMD_LSP_UNSUPPORTED") == "1", signatureMethodNotFound: os.Getenv("WIRECMD_LSP_SIGNATURE_METHOD_NOT_FOUND") == "1", delay: time.Duration(delay) * time.Millisecond, active: &atomic.Int32{}, initializationOptions: &capturedInitializationOptions{}}, stream)
 	<-connection.Done()
 }
 
@@ -801,9 +938,27 @@ type cliLSPServer struct {
 	signatureMethodNotFound bool
 	delay                   time.Duration
 	active                  *atomic.Int32
+	initializationOptions   *capturedInitializationOptions
+}
+
+type capturedInitializationOptions struct {
+	mu  sync.Mutex
+	raw []byte
 }
 
 func (server cliLSPServer) Initialize(_ context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
+	if os.Getenv("WIRECMD_LSP_ECHO_INIT_ERROR") == "1" {
+		var decoded any
+		if err := json.Unmarshal(params.InitializationOptions, &decoded); err != nil {
+			return nil, fmt.Errorf("decode initialization options")
+		}
+		pretty, _ := json.MarshalIndent(decoded, "", "  ")
+		fmt.Fprintf(os.Stderr, "rejected initialization options %s\n", pretty)
+		return nil, fmt.Errorf("rejected initialization options %s", pretty)
+	}
+	server.initializationOptions.mu.Lock()
+	server.initializationOptions.raw = append(server.initializationOptions.raw[:0], params.InitializationOptions...)
+	server.initializationOptions.mu.Unlock()
 	if expected := os.Getenv("WIRECMD_LSP_EXPECT_CONTEXT"); expected != "" && os.Getenv("WIRECMD_LSP_CONTEXT") != expected {
 		return nil, fmt.Errorf("materialized context does not match expected project root")
 	}
@@ -817,6 +972,15 @@ func (server cliLSPServer) Initialize(_ context.Context, params *protocol.Initia
 		}
 		if params.RootURI == nil || string(*params.RootURI) != string(uri.File(expected)) {
 			return nil, fmt.Errorf("initialize root URI does not match workspace %q", expected)
+		}
+	}
+	if expected := os.Getenv("WIRECMD_LSP_EXPECT_INITIALIZATION_OPTIONS"); expected != "" {
+		want := jsontext.Value(expected)
+		if err := (&want).Compact(); err != nil {
+			return nil, fmt.Errorf("invalid expected initialization options")
+		}
+		if string(params.InitializationOptions) != string(want) {
+			return nil, fmt.Errorf("initialization options did not match the configured value")
 		}
 	}
 	kind, open := protocol.TextDocumentSyncKindIncremental, true
@@ -889,6 +1053,17 @@ func (cliLSPServer) DidClose(context.Context, *protocol.DidCloseTextDocumentPara
 }
 
 func (server cliLSPServer) Definition(_ context.Context, params *protocol.DefinitionParams) (protocol.DefinitionResult, error) {
+	if os.Getenv("WIRECMD_LSP_ECHO_REQUEST_ERROR") == "1" {
+		server.initializationOptions.mu.Lock()
+		raw := append([]byte(nil), server.initializationOptions.raw...)
+		server.initializationOptions.mu.Unlock()
+		var decoded any
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return nil, fmt.Errorf("decode captured initialization options")
+		}
+		pretty, _ := json.MarshalIndent(decoded, "", "  ")
+		return nil, fmt.Errorf("definition rejected initialization options %s", pretty)
+	}
 	if server.mode == "exit-on-definition" {
 		os.Exit(0)
 	}

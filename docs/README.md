@@ -53,7 +53,8 @@ installation, and the first commands to run.
   - [Scope and invocation context](plans/scope-context-plan.md): shared project
     root resolution plus workspace and global lifecycle ownership.
   - [Context templates and LSP initialization options](plans/context-templates-plan.md):
-    explicit invocation-path materialization and arbitrary initialization JSON.
+    implemented explicit invocation-path materialization and arbitrary LSP
+    initialization JSON.
 - [`notes/`](notes/) contains non-authoritative research, validation evidence,
   and working material. Nothing there becomes a product requirement without
   explicit promotion into an authoritative document.

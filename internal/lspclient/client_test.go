@@ -1,6 +1,7 @@
 package lspclient
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -92,7 +93,7 @@ func TestSessionLifecycleAndDiskRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := helperCommand("incremental")
-	session, err := Start(context.Background(), command, workspace, "test")
+	session, err := Start(context.Background(), command, workspace, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +130,7 @@ func TestStartRejectsCapabilitiesAndEncoding(t *testing.T) {
 		if err := os.WriteFile(path, []byte("x\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		session, err := Start(context.Background(), helperCommand("no-definition"), workspace, "test")
+		session, err := Start(context.Background(), helperCommand("no-definition"), workspace, "test", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -144,7 +145,7 @@ func TestStartRejectsCapabilitiesAndEncoding(t *testing.T) {
 	})
 	t.Run("utf8", func(t *testing.T) {
 		workspace := t.TempDir()
-		_, err := Start(context.Background(), helperCommand("utf8"), workspace, "test")
+		_, err := Start(context.Background(), helperCommand("utf8"), workspace, "test", nil)
 		if !errorsIs(err, ErrEncodingUnsupported) {
 			t.Fatalf("Start() error = %v, want %v", err, ErrEncodingUnsupported)
 		}
@@ -152,7 +153,7 @@ func TestStartRejectsCapabilitiesAndEncoding(t *testing.T) {
 }
 
 func TestStartAdvertisesSignatureHelpCapabilities(t *testing.T) {
-	session, err := Start(context.Background(), helperCommand("signature-capabilities"), t.TempDir(), "test")
+	session, err := Start(context.Background(), helperCommand("signature-capabilities"), t.TempDir(), "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,13 +163,44 @@ func TestStartAdvertisesSignatureHelpCapabilities(t *testing.T) {
 	}
 }
 
+func TestStartForwardsInitializationOptionsRawValue(t *testing.T) {
+	raw := []byte(" {\n  \"large\": 123456789012345678901234567890,\n  \"path\": \"/tmp/a\\\\b\",\n  \"escaped\": \"\\u0061\"\n} ")
+	if got := rawInitializationOptions(raw); !bytes.Equal(got, raw) {
+		t.Fatal("initialization options changed before protocol encoding")
+	}
+	wire, err := (lspCodec{}).Marshal(&protocol.InitializeParams{InitializationOptions: rawInitializationOptions(raw)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := append([]byte(`"initializationOptions":`), raw...); !bytes.Contains(wire, want) {
+		t.Fatal("initialization options changed in the wire payload")
+	}
+	session, err := Start(context.Background(), helperCommand("initialization-options"), t.TempDir(), "test", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	session, err = Start(context.Background(), helperCommand("initialization-null"), t.TempDir(), "test", []byte("null"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	session, err = Start(context.Background(), helperCommand("initialization-omitted"), t.TempDir(), "test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+}
+
 func TestUnsupportedServerRequestIsReportedWhenDefinitionFails(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "input.go")
 	if err := os.WriteFile(path, []byte("call()\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	session, err := Start(context.Background(), helperCommand("unsupported-request"), workspace, "test")
+	session, err := Start(context.Background(), helperCommand("unsupported-request"), workspace, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +220,7 @@ func TestNavigationOperationsAndStatus(t *testing.T) {
 	if err := os.WriteFile(path, []byte("symbol\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	session, err := Start(context.Background(), helperCommand("all"), workspace, "test")
+	session, err := Start(context.Background(), helperCommand("all"), workspace, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +335,7 @@ func TestNormalizeSignatureHelp(t *testing.T) {
 
 func TestWorkspaceSymbolsDoesNotOpenDocument(t *testing.T) {
 	workspace := t.TempDir()
-	session, err := Start(context.Background(), helperCommand("workspace-no-open"), workspace, "test")
+	session, err := Start(context.Background(), helperCommand("workspace-no-open"), workspace, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +352,7 @@ func TestDocumentLanguageIDIsSelectedAtSynchronizationTime(t *testing.T) {
 	if err := os.WriteFile(path, []byte("symbol\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	session, err := Start(context.Background(), helperCommand("language"), workspace, "test")
+	session, err := Start(context.Background(), helperCommand("language"), workspace, "test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -472,6 +504,18 @@ type fakeServer struct {
 }
 
 func (s *fakeServer) Initialize(_ context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
+	if s.mode == "initialization-options" {
+		want := []byte(" {\n  \"large\": 123456789012345678901234567890,\n  \"path\": \"/tmp/a\\\\b\",\n  \"escaped\": \"\\u0061\"\n} ")
+		if !bytes.Equal(params.InitializationOptions, bytes.TrimSpace(want)) {
+			return nil, fmt.Errorf("initialization options changed during protocol encoding")
+		}
+	}
+	if s.mode == "initialization-null" && !bytes.Equal(params.InitializationOptions, []byte("null")) {
+		return nil, fmt.Errorf("explicit null initialization options were omitted")
+	}
+	if s.mode == "initialization-omitted" && params.InitializationOptions != nil {
+		return nil, fmt.Errorf("omitted initialization options were sent")
+	}
 	all := s.mode == "all"
 	capabilities := protocol.ServerCapabilities{DefinitionProvider: protocol.Boolean(s.mode != "no-definition")}
 	if all {

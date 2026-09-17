@@ -1,7 +1,6 @@
 # Context Templates and LSP Initialization Options
 
-Status: accepted; context templates implemented first, LSP initialization
-options follow in a separate reviewed change
+Status: implemented in two reviewed changes
 
 ## Purpose
 
@@ -51,7 +50,7 @@ protocol for this phase is 14.
 
 ## LSP initialization options
 
-The follow-up change adds one optional LSP child:
+An LSP definition may add one optional child:
 
 ```kdl
 initialization-options #"""

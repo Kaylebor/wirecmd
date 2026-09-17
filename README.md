@@ -129,6 +129,12 @@ do not interpolate secrets or change Wirecmd control fields. See the
 [configuration reference](docs/configuration.md#context-templates) for the
 exact syntax and lifecycle effects.
 
+LSP definitions may also provide one arbitrary strict JSON
+`initialization-options` value. Adding `(template)` expands the same context
+references only inside JSON string values, which keeps the JSON structure and
+numbers under the configurator's control. Wirecmd does not infer server-specific
+options, expose the document in status, or interpolate secrets into it.
+
 See the [configuration reference](docs/configuration.md) for the complete KDL
 surface, discovery and trust rules, transports, secrets, OAuth, and LSP setup.
 

@@ -387,7 +387,8 @@ Wirecmd routes file operations to every configured LSP selector matching the
 file; workspace-symbols queries every configured provider.
 Normal calls retain sessions through the daemon; --direct uses one-shot
 processes. The bare lsp command is native help. Use wirecmd mcp lsp to reach a
-configured MCP server named lsp.
+configured MCP server named lsp. LSP definitions may pass one strict JSON
+initialization-options value; status never displays that document.
 `
 }
 
@@ -708,9 +709,9 @@ func runDirectLSPMatches(ctx context.Context, workspace, file string, request ls
 			}
 			redactor := newRedactor(secrets, lockedErr)
 			defer redactor.FlushTo(lockedErr)
-			session, err := lspclient.Start(ctx, lspclient.Command{Path: command.Path, Args: command.Args[1:], Env: command.Env, Dir: command.Dir, Stderr: redactor}, match.Context.Root, buildinfo.Version())
+			session, err := lspclient.Start(ctx, lspclient.Command{Path: command.Path, Args: command.Args[1:], Env: command.Env, Dir: command.Dir, Stderr: redactor}, match.Context.Root, buildinfo.Version(), initializationOptions(match.Definition))
 			if err != nil {
-				results[index].Err = lspOperationError(err, "initialize").redacted(redactor)
+				results[index].Err = sanitizeLSPError(lspOperationError(err, "initialize").redacted(redactor), match.Definition, "initialize")
 				return
 			}
 			defer session.Close()
@@ -720,7 +721,7 @@ func runDirectLSPMatches(ctx context.Context, workspace, file string, request ls
 				return
 			}
 			if err != nil {
-				results[index].Err = lspOperationError(err, request.Operation).redacted(redactor)
+				results[index].Err = sanitizeLSPError(lspOperationError(err, request.Operation).redacted(redactor), match.Definition, request.Operation)
 				return
 			}
 			redactLSPProviderRun(&results[index], redactor)
@@ -728,6 +729,23 @@ func runDirectLSPMatches(ctx context.Context, workspace, file string, request ls
 	}
 	wait.Wait()
 	return aggregateLSPRequestResults(request, workspace, file, matches, results)
+}
+
+func initializationOptions(definition config.LSP) []byte {
+	if definition.InitializationOptions == nil {
+		return nil
+	}
+	return definition.InitializationOptions.Raw
+}
+
+func sanitizeLSPError(appErr *appError, definition config.LSP, operation string) *appError {
+	if appErr == nil || definition.InitializationOptions == nil {
+		return appErr
+	}
+	result := *appErr
+	result.message = "the LSP provider failed during " + operation
+	result.details = nil
+	return &result
 }
 
 func redactLSPProviderRun(result *lspProviderRun, redactor *redactor) {

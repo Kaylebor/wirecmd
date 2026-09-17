@@ -5,6 +5,7 @@ import (
 
 	"github.com/Kaylebor/wirecmd/internal/config"
 	"github.com/Kaylebor/wirecmd/internal/contexttmpl"
+	"github.com/Kaylebor/wirecmd/internal/jsontemplate"
 )
 
 func materializationContext(context invocationContext) contexttmpl.Context {
@@ -132,6 +133,20 @@ func materializeLSP(definition config.LSP, context invocationContext) (config.LS
 		return config.LSP{}, appErr
 	}
 	result.Stdio = stdio
+	if definition.InitializationOptions != nil && definition.InitializationOptions.Template {
+		raw, err := jsontemplate.Expand(definition.InitializationOptions.Raw, materializationContext(context))
+		if err != nil {
+			var unavailable *contexttmpl.UnavailableError
+			if errors.As(err, &unavailable) {
+				return config.LSP{}, configurationError("context_value_unavailable", err.Error(), "use this template only when the referenced invocation context is available")
+			}
+			return config.LSP{}, configurationError("config_invalid", err.Error(), "correct the configured initialization-options template")
+		}
+		value := *definition.InitializationOptions
+		value.Raw = raw
+		value.Template = false
+		result.InitializationOptions = &value
+	}
 	return result, nil
 }
 

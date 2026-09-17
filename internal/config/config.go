@@ -12,8 +12,10 @@ import (
 	"syscall"
 
 	"github.com/Kaylebor/wirecmd/internal/contexttmpl"
+	"github.com/Kaylebor/wirecmd/internal/jsontemplate"
 	secretref "github.com/Kaylebor/wirecmd/internal/secrets"
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/go-json-experiment/json/jsontext"
 	kdl "github.com/njreid/gokdl2"
 	"github.com/njreid/gokdl2/document"
 )
@@ -199,6 +201,7 @@ type LSP struct {
 	ImplementationID           string
 	ImplementationIDProvenance Provenance
 	Selectors                  []LSPSelector
+	InitializationOptions      *JSONValue
 	Stdio                      Stdio
 	Provenance
 }
@@ -211,7 +214,16 @@ type LSPSource struct {
 	ImplementationID           *string
 	ImplementationIDProvenance Provenance
 	Selectors                  []LSPSelector
+	InitializationOptions      *JSONValue
 	Stdio                      *StdioSource
+	Provenance
+}
+
+// JSONValue is one validated arbitrary JSON value. Template marks a document
+// whose string values require invocation-context materialization.
+type JSONValue struct {
+	Raw      []byte
+	Template bool
 	Provenance
 }
 
@@ -486,6 +498,11 @@ func Compose(sources ...*Source) (*Config, error) {
 			}
 			if len(partial.Selectors) != 0 {
 				lsp.Selectors = append([]LSPSelector(nil), partial.Selectors...)
+			}
+			if partial.InitializationOptions != nil {
+				value := *partial.InitializationOptions
+				value.Raw = append([]byte(nil), value.Raw...)
+				lsp.InitializationOptions = &value
 			}
 			if partial.Stdio != nil {
 				composeStdio(&lsp.Stdio, partial.Stdio)
@@ -1103,6 +1120,15 @@ func parseLSP(file string, node *document.Node) (LSPSource, error) {
 				return LSPSource{}, err
 			}
 			lsp.Selectors = append(lsp.Selectors, selector)
+		case "initialization-options":
+			if lsp.InitializationOptions != nil {
+				return LSPSource{}, fmt.Errorf("%s.initialization-options: duplicate initialization-options", path)
+			}
+			value, err := parseInitializationOptions(file, child, path+".initialization-options")
+			if err != nil {
+				return LSPSource{}, err
+			}
+			lsp.InitializationOptions = &value
 		case "stdio":
 			if lsp.Stdio != nil {
 				return LSPSource{}, fmt.Errorf("%s.stdio: duplicate stdio", path)
@@ -1117,6 +1143,37 @@ func parseLSP(file string, node *document.Node) (LSPSource, error) {
 		}
 	}
 	return lsp, nil
+}
+
+func parseInitializationOptions(file string, node *document.Node, path string) (JSONValue, error) {
+	if err := plainNode(node, path); err != nil {
+		return JSONValue{}, err
+	}
+	if len(node.Arguments) != 1 || len(node.Children) != 0 {
+		return JSONValue{}, fmt.Errorf("%s: expected one JSON string", path)
+	}
+	argument := node.Arguments[0]
+	text, ok := argument.Value.(string)
+	if !ok {
+		return JSONValue{}, fmt.Errorf("%s: expected one JSON string", path)
+	}
+	raw := []byte(text)
+	if !jsontext.Value(raw).IsValid() {
+		return JSONValue{}, fmt.Errorf("%s: invalid JSON value", path)
+	}
+	value := JSONValue{Raw: append([]byte(nil), raw...), Provenance: provenance(file, path)}
+	switch argument.Type {
+	case "":
+		return value, nil
+	case "template":
+		if err := jsontemplate.Validate(raw); err != nil {
+			return JSONValue{}, fmt.Errorf("%s: invalid template: %v", path, err)
+		}
+		value.Template = true
+		return value, nil
+	default:
+		return JSONValue{}, fmt.Errorf("%s: unsupported value annotation %q", path, argument.Type)
+	}
 }
 
 func parseLSPSelector(file string, node *document.Node, lspPath string, index int) (LSPSelector, error) {

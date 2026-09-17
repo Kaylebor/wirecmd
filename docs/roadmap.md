@@ -71,21 +71,21 @@ are scope-separated. Its complete contract and qualification matrix are in the
 [scope and invocation context plan](plans/scope-context-plan.md). It does not
 introduce public context variables or templating.
 
-Explicit context templates are the next accepted, unreleased layer. Provider
-inputs may opt into canonical caller CWD, project-root, and global-root values;
-the complete contract is in the
-[context templates plan](plans/context-templates-plan.md). Arbitrary LSP
-initialization JSON follows as its own reviewed PR using that mechanism.
+Explicit context templates and arbitrary LSP initialization JSON are the
+implemented, unreleased layers above scope resolution. Provider inputs may opt
+into canonical caller CWD, project-root, and global-root values, and LSP
+definitions may pass one strict JSON initialization value with expansion
+limited to its string values. The complete contract is in the
+[context templates plan](plans/context-templates-plan.md).
 
 ## Decision queue
 
 ### 1. LSP runtime configuration prerequisite
 
-The accepted initialization-options contract uses one strict arbitrary JSON
-value, with context expansion limited to JSON string values. Its implementation
-must land after generic context templates. Workspace settings and asynchronous
-or indefinitely running LSP behavior remain undecided and must not be inferred
-from this narrow configuration facility.
+The implemented `initialization-options` contract uses one strict arbitrary
+JSON value, with context expansion limited to JSON string values. Workspace
+settings and asynchronous or indefinitely running LSP behavior remain
+undecided and must not be inferred from this narrow configuration facility.
 
 ### 2. Candidate LSP diagnostics and later edit-oriented operations
 

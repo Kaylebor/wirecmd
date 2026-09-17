@@ -85,12 +85,19 @@ func TestMaterializeStdioAndLSP(t *testing.T) {
 	}
 	context := invocationContext{configContext: configContext{CWD: "/work/repo/sub"}, ProjectRoot: "/work/repo", GlobalRoot: "/config/wirecmd"}
 
-	got, appErr := materializeLSP(config.LSP{Name: "language", Stdio: stdio}, context)
+	options := &config.JSONValue{Raw: []byte(`{"root":"${wirecmd.project-root}","cwd":"${wirecmd.cwd}","key":"$$5"}`), Template: true}
+	got, appErr := materializeLSP(config.LSP{Name: "language", Stdio: stdio, InitializationOptions: options}, context)
 	if appErr != nil {
 		t.Fatal(appErr)
 	}
 	if got.Stdio.Command.Text != "/config/wirecmd/bin/server" || got.Stdio.Args[0].Text != "--root=/work/repo" || got.Stdio.Args[1].Text != "literal" || got.Stdio.Env[0].Value.Text != "/work/repo/sub" {
 		t.Fatalf("materialized LSP = %#v", got.Stdio)
+	}
+	if got.InitializationOptions == nil || got.InitializationOptions.Template || string(got.InitializationOptions.Raw) != `{"root":"/work/repo","cwd":"/work/repo/sub","key":"$5"}` {
+		t.Fatalf("materialized initialization options = %#v", got.InitializationOptions)
+	}
+	if !options.Template || string(options.Raw) != `{"root":"${wirecmd.project-root}","cwd":"${wirecmd.cwd}","key":"$$5"}` {
+		t.Fatalf("materialization mutated cached options = %#v", options)
 	}
 }
 
@@ -109,6 +116,30 @@ func TestMaterializationIdentityUsesResolvedValues(t *testing.T) {
 	}
 	if lspExecutionFingerprint(first, nil, "/global") == lspExecutionFingerprint(second, nil, "/global") {
 		t.Fatal("different materialized CWD values produced the same execution identity")
+	}
+	optionsDefinition := config.LSP{Name: "options", Scope: config.ScopeGlobal, Stdio: config.Stdio{Command: literalValue("lsp")}, InitializationOptions: &config.JSONValue{Raw: []byte(`{"cwd":"${wirecmd.cwd}"}`), Template: true}}
+	optionsFirst, appErr := materializeLSP(optionsDefinition, invocationContext{configContext: configContext{CWD: "/one"}, ProjectRoot: "/project", GlobalRoot: "/global"})
+	if appErr != nil {
+		t.Fatal(appErr)
+	}
+	optionsSecond, appErr := materializeLSP(optionsDefinition, invocationContext{configContext: configContext{CWD: "/two"}, ProjectRoot: "/project", GlobalRoot: "/global"})
+	if appErr != nil {
+		t.Fatal(appErr)
+	}
+	if lspExecutionFingerprint(optionsFirst, nil, "/global") == lspExecutionFingerprint(optionsSecond, nil, "/global") {
+		t.Fatal("different materialized initialization options produced the same execution identity")
+	}
+	equivalentLiteral := config.LSP{Name: "options", Scope: config.ScopeGlobal, Stdio: config.Stdio{Command: literalValue("lsp")}, InitializationOptions: &config.JSONValue{Raw: []byte(`{"cwd":"/one"}`)}}
+	if lspExecutionFingerprint(optionsFirst, nil, "/global") != lspExecutionFingerprint(equivalentLiteral, nil, "/global") {
+		t.Fatal("runtime identity retained the initialization template source instead of its materialized value")
+	}
+	literalSource := optionsDefinition
+	literalSource.InitializationOptions = &config.JSONValue{Raw: append([]byte(nil), optionsDefinition.InitializationOptions.Raw...)}
+	if configFingerprint(&config.Config{LSPs: []config.LSP{optionsDefinition}}) == configFingerprint(&config.Config{LSPs: []config.LSP{literalSource}}) {
+		t.Fatal("static configuration identity discarded the initialization template source kind")
+	}
+	if strings.Contains(string(mustJSON(t, semanticLSP(optionsDefinition))), "wirecmd.cwd") {
+		t.Fatal("semantic LSP fingerprint input exposed initialization JSON")
 	}
 	templateConfig := &config.Config{Servers: []config.Server{{Name: "server", Stdio: config.Stdio{Command: templateValue("${wirecmd.cwd}")}}}}
 	literalConfig := &config.Config{Servers: []config.Server{{Name: "server", Stdio: config.Stdio{Command: literalValue("${wirecmd.cwd}")}}}}
@@ -130,6 +161,15 @@ func TestMaterializationIdentityUsesResolvedValues(t *testing.T) {
 	}
 }
 
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
 func TestMaterializeUnavailableAndInvalidDestination(t *testing.T) {
 	_, appErr := materializeStdio(config.Stdio{Command: templateValue("${wirecmd.global-root}/server")}, invocationContext{})
 	if appErr == nil || appErr.code != "context_value_unavailable" {
@@ -138,6 +178,10 @@ func TestMaterializeUnavailableAndInvalidDestination(t *testing.T) {
 	_, appErr = materializeServer(config.Server{HTTP: &config.HTTP{Endpoint: templateValue("file://${wirecmd.project-root}")}}, invocationContext{ProjectRoot: "/work"})
 	if appErr == nil || appErr.code != "invalid_http_endpoint" {
 		t.Fatalf("invalid materialized endpoint error = %#v", appErr)
+	}
+	_, appErr = materializeLSP(config.LSP{InitializationOptions: &config.JSONValue{Raw: []byte(`"${wirecmd.global-root}"`), Template: true}}, invocationContext{})
+	if appErr == nil || appErr.code != "context_value_unavailable" || strings.Contains(appErr.message, `${wirecmd.global-root}`) {
+		t.Fatalf("unavailable initialization context error = %#v", appErr)
 	}
 }
 

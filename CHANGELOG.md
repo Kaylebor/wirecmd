@@ -19,6 +19,9 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Explicit context templates for provider inputs, exposing canonical caller
   CWD, project root, and global Wirecmd root without introducing a general
   template language or secret interpolation.
+- Arbitrary strict JSON LSP initialization options, including explicit `null`,
+  whole-document composition, and context expansion limited to JSON string
+  values.
 
 ### Changed
 
