@@ -258,7 +258,7 @@ func TestLSPInitializationOptionsAreRedactedFromNavigationPaths(t *testing.T) {
 root %s
 lsp "fixture" {
 selector language-id="fixture"
-initialization-options #"{"private":"never-print-location"}"#
+initialization-options "\"never-print-location\""
 stdio %s {
 arg "-test.run=TestCLILSPHelperProcess"
 env WIRECMD_LSP_ECHO_INIT_LOCATION="1"
@@ -1190,9 +1190,17 @@ func (server cliLSPServer) Definition(_ context.Context, params *protocol.Defini
 	}
 	if os.Getenv("WIRECMD_LSP_ECHO_INIT_LOCATION") == "1" {
 		server.initializationOptions.mu.Lock()
-		raw := string(server.initializationOptions.raw)
+		raw := append([]byte(nil), server.initializationOptions.raw...)
 		server.initializationOptions.mu.Unlock()
-		return &protocol.Location{URI: uri.File(filepath.Join(os.TempDir(), raw)), Range: protocol.Range{}}, nil
+		pathValue := string(raw)
+		var decoded any
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return nil, fmt.Errorf("decode initialization options for location")
+		}
+		if text, ok := decoded.(string); ok {
+			pathValue = text
+		}
+		return &protocol.Location{URI: uri.File(filepath.Join(os.TempDir(), pathValue)), Range: protocol.Range{}}, nil
 	}
 	if server.mode == "exit-on-definition" {
 		os.Exit(0)

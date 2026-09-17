@@ -55,3 +55,18 @@ func TestRedactorProtectJSONDetectsCompletePathComponents(t *testing.T) {
 		t.Fatalf("embedded filename fragment was redacted: %q", got)
 	}
 }
+
+func TestRedactorProtectJSONDetectsDecodedStringRoots(t *testing.T) {
+	redactor := newRedactor(nil, io.Discard)
+	redactor.ProtectJSON([]byte(`"private-token"`))
+
+	if got := redactor.Redact("private-token"); got != "[REDACTED]" {
+		t.Fatalf("decoded string root = %q", got)
+	}
+	if got := redactor.Redact("prefix private-token"); got != "prefix private-token" {
+		t.Fatalf("embedded string root was redacted: %q", got)
+	}
+	if got := redactor.RedactPath("/workspace/private-token/result.go"); got != "[REDACTED]" {
+		t.Fatalf("decoded string path component = %q", got)
+	}
+}
