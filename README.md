@@ -40,10 +40,10 @@ go install github.com/Kaylebor/wirecmd@latest
 wirecmd --version
 ```
 
-To install v0.4.0 exactly:
+To install v0.5.0 exactly:
 
 ```sh
-go install github.com/Kaylebor/wirecmd@v0.4.0
+go install github.com/Kaylebor/wirecmd@v0.5.0
 ```
 
 Linux and macOS are supported; see [release readiness](docs/release-readiness.md)

@@ -1,6 +1,6 @@
 # Current Roadmap
 
-Status: authoritative current-state handoff after v0.4.0; later items remain a
+Status: authoritative current-state handoff after v0.5.0; later items remain a
 decision queue
 
 ## Purpose
@@ -24,7 +24,7 @@ documents and non-authoritative working material.
 
 ## Current baseline
 
-Wirecmd v0.4.0 is the current stable release. Wirecmd is a shell-native
+Wirecmd v0.5.0 is the current stable release. Wirecmd is a shell-native
 capability client and local daemon. MCP is its first upstream adapter rather
 than the harness-facing abstraction. The baseline surface includes:
 
@@ -33,12 +33,16 @@ than the harness-facing abstraction. The baseline surface includes:
 - stdio, Streamable HTTP, and legacy HTTP+SSE MCP through the official Go SDK,
   including transparent Streamable HTTP OAuth and encrypted credential
   persistence;
-- composed KDL configuration with optional workspace-defaulted scope, trusted
-  workspace discovery, retained sessions, terminal-aware output, and Fish
-  completion;
+- composed KDL configuration with workspace and global provider scopes,
+  canonical project-root resolution, trusted workspace discovery, retained
+  sessions, terminal-aware output, and Fish completion;
 - MCP resource and resource-template discovery plus resource reads; and
 - selector-routed native LSP navigation, hover, signature help, document
-  symbols, and workspace symbols across multiple providers.
+  symbols, and workspace symbols across multiple providers, including strict
+  arbitrary JSON initialization options.
+
+Provider-consumed values may explicitly materialize canonical caller CWD,
+project root, and global Wirecmd root through context templates.
 
 Modern and legacy initialized stdio and Streamable HTTP are qualified. Legacy
 HTTP+SSE is qualified through stable SDK v1.8.0; transparent SSE OAuth remains
@@ -61,22 +65,19 @@ Physical Apple Silicon qualification of Secure Enclave-backed age resolution
 remains pending; v0.4.0 was explicitly published first to provide the tagged
 build for that test, so no physical-device qualification is claimed yet.
 
-## Unreleased on main
+## Implemented v0.5.0 milestone
 
-The accepted scope and invocation-context milestone is implemented on `main`
-but is not part of the v0.4.0 release. MCP and LSP definitions may use
+The scope and invocation-context milestone lets MCP and LSP definitions use
 `scope "global"` as well as the default `workspace` scope. Global lifecycle
 ownership, provider roots, retained identity, LSP status, and age resolution
 are scope-separated. Its complete contract and qualification matrix are in the
-[scope and invocation context plan](plans/scope-context-plan.md). It does not
-introduce public context variables or templating.
+[scope and invocation context plan](plans/scope-context-plan.md).
 
-Explicit context templates and arbitrary LSP initialization JSON are the
-implemented, unreleased layers above scope resolution. Provider inputs may opt
-into canonical caller CWD, project-root, and global-root values, and LSP
-definitions may pass one strict JSON initialization value with expansion
-limited to its string values. The complete contract is in the
-[context templates plan](plans/context-templates-plan.md).
+Explicit context templates and arbitrary LSP initialization JSON build on that
+scope resolution. Provider inputs may opt into canonical caller CWD,
+project-root, and global-root values, and LSP definitions may pass one strict
+JSON initialization value with expansion limited to its string values. The
+complete contract is in the [context templates plan](plans/context-templates-plan.md).
 
 ## Decision queue
 
