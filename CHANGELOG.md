@@ -7,6 +7,8 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-17
+
 ### Added
 
 - A shared invocation-context model that resolves one canonical project root
@@ -112,7 +114,8 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   hover, document symbols, and workspace symbols.
 - Terminal-aware pretty output alongside deterministic compact JSON.
 
-[Unreleased]: https://github.com/Kaylebor/wirecmd/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Kaylebor/wirecmd/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Kaylebor/wirecmd/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Kaylebor/wirecmd/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Kaylebor/wirecmd/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Kaylebor/wirecmd/compare/v0.2.0...v0.3.0

@@ -25,17 +25,17 @@ release with:
 go install github.com/Kaylebor/wirecmd@latest
 ```
 
-The reproducible v0.4.0 installation is:
+The reproducible v0.5.0 installation is:
 
 ```sh
-go install github.com/Kaylebor/wirecmd@v0.4.0
+go install github.com/Kaylebor/wirecmd@v0.5.0
 ```
 
 Linux and macOS are supported. Apple Silicon has native CI and maintainer M2
 smoke evidence; Intel macOS is CI-qualified without a physical-device claim.
 Windows remains unsupported.
 
-The v0.4.0 release supports the public CLI, KDL configuration,
+The v0.5.0 release supports the public CLI, KDL configuration,
 structured result and error contracts, daemon/direct split, stdio and
 Streamable HTTP and legacy HTTP+SSE MCP transports, SDK-backed OAuth for
 Streamable HTTP, MCP resources, and the documented native LSP operations.
@@ -43,7 +43,9 @@ Modern and legacy initialized stdio and Streamable HTTP are qualified, as is
 legacy HTTP+SSE through stable SDK v1.8.0. Transparent OAuth for legacy SSE
 remains deferred under the [SSE milestone](plans/sse-plan.md). The release also
 supports optional age-backed secret resolution under the
-[age secrets plan](plans/age-secrets-plan.md).
+[age secrets plan](plans/age-secrets-plan.md), workspace and global provider
+scopes, explicit canonical context templates, and strict arbitrary JSON LSP
+initialization options.
 
 Within the pre-1.0 stable line, backward-incompatible changes to the documented
 CLI, configuration, and structured output contracts require the next minor
@@ -147,8 +149,8 @@ Publication remains an explicit maintainer action:
 
 Every tag and GitHub Release requires a separate explicit release action.
 `v0.1.0` was published on 2026-09-08, `v0.2.0` on 2026-09-10, `v0.3.0` on
-2026-09-14, and `v0.3.1` on 2026-09-15 after their exact release commits passed
-the gates above.
+2026-09-14, `v0.3.1` on 2026-09-15, and `v0.4.0` on 2026-09-15 after their exact
+release commits passed the gates above or an explicitly documented exception.
 
 ## Deferred
 
