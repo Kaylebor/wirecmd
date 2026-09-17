@@ -741,7 +741,7 @@ func initializationOptions(definition config.LSP) []byte {
 
 func protectLSPInitializationOptions(redactor *redactor, definition config.LSP) {
 	if definition.InitializationOptions != nil {
-		redactor.ProtectSecrets(string(definition.InitializationOptions.Raw))
+		redactor.ProtectJSON(definition.InitializationOptions.Raw)
 	}
 }
 

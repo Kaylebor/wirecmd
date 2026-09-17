@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1046,9 +1047,16 @@ func (server cliLSPServer) Hover(_ context.Context, params *protocol.HoverParams
 	}
 	if os.Getenv("WIRECMD_LSP_ECHO_INIT_SUCCESS") == "1" {
 		server.initializationOptions.mu.Lock()
-		raw := string(server.initializationOptions.raw)
+		raw := append([]byte(nil), server.initializationOptions.raw...)
 		server.initializationOptions.mu.Unlock()
-		return &protocol.Hover{Contents: &protocol.MarkupContent{Kind: protocol.MarkupKindMarkdown, Value: raw}, Range: &protocol.Range{Start: params.Position, End: params.Position}}, nil
+		var decoded any
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		if err := decoder.Decode(&decoded); err != nil {
+			return nil, fmt.Errorf("decode initialization options for successful response")
+		}
+		pretty, _ := json.MarshalIndent(decoded, "", "  ")
+		return &protocol.Hover{Contents: &protocol.MarkupContent{Kind: protocol.MarkupKindMarkdown, Value: string(pretty)}, Range: &protocol.Range{Start: params.Position, End: params.Position}}, nil
 	}
 	return &protocol.Hover{Contents: &protocol.MarkupContent{Kind: protocol.MarkupKindMarkdown, Value: "**hover** " + server.provider}, Range: &protocol.Range{Start: params.Position, End: params.Position}}, nil
 }

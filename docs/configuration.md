@@ -332,7 +332,9 @@ when a language server echoes its input, Wirecmd suppresses child stderr and
 uses sanitized provider-error messages for definitions with initialization
 options. It also omits the provider-reported server name and version from
 `lsp status` for those definitions because a server can reflect initialization
-data through either field.
+data through either field. Successful provider result fields are redacted when
+the complete field is a semantically equivalent JSON value; ordinary language
+content containing JSON fragments is not treated as a secret.
 
 ## Secret references
 
