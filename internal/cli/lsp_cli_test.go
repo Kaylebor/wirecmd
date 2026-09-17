@@ -120,6 +120,31 @@ func TestLSPStaticHelpDoesNotRequireConfiguration(t *testing.T) {
 	}
 }
 
+func TestLSPStatusOmitsProviderInitializeOutputWithOptions(t *testing.T) {
+	capabilities := &lspclient.Capabilities{
+		PositionEncoding: "utf-16",
+		TextDocumentSync: "full",
+		Hover:            true,
+	}
+	definition := config.LSP{
+		Name:                  "fixture",
+		InitializationOptions: &config.JSONValue{Raw: []byte(`"utf-16"`)},
+	}
+	envelope := makeLSPStatusEnvelope(
+		[]config.LSP{definition},
+		invocationContext{ProjectRoot: "/work", GlobalRoot: "/global"},
+		"",
+		map[string]lspRuntimeStatus{
+			"fixture": {Status: "ready", ServerName: "utf-16", ServerVersion: "full", Capabilities: capabilities},
+		},
+	)
+
+	runtime := envelope.LSP.Providers[0].Runtime
+	if runtime.ServerName != "" || runtime.ServerVersion != "" || runtime.Capabilities != nil {
+		t.Fatalf("provider-controlled initialize output remained in status: %#v", runtime)
+	}
+}
+
 func TestLSPMCPServerEscapesRemainReachable(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
 	source, err := os.ReadFile(helperConfig(t, "", ""))

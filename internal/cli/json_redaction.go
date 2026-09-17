@@ -45,9 +45,7 @@ func (r *redactor) matchesProtectedJSON(value string) bool {
 // component. This covers file URI normalization without treating JSON-looking
 // fragments embedded in ordinary filenames as protected values.
 func (r *redactor) RedactPath(value string) string {
-	if redacted := r.Redact(value); redacted != value {
-		return redacted
-	}
+	redacted := r.Redact(value)
 	valueComponents := splitPathComponents(value)
 	for _, protected := range r.protectedJSON {
 		decoded, ok := protected.(string)
@@ -82,7 +80,7 @@ func (r *redactor) RedactPath(value string) string {
 			}
 		}
 	}
-	return value
+	return redacted
 }
 
 func splitPathComponents(value string) []string {

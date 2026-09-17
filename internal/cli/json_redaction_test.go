@@ -95,3 +95,12 @@ func TestRedactorProtectJSONMatchesDecodedStringAcrossPathComponents(t *testing.
 		}
 	}
 }
+
+func TestRedactorProtectJSONScansPathsAfterSecretRedaction(t *testing.T) {
+	redactor := newRedactor([]string{"TOKEN"}, io.Discard)
+	redactor.ProtectJSON([]byte(`{"private":"x"}`))
+
+	if got := redactor.RedactPath(`/workspace/TOKEN/{"private":"x"}/result.go`); got != "[REDACTED]" {
+		t.Fatalf("RedactPath() = %q, want [REDACTED]", got)
+	}
+}
