@@ -452,8 +452,12 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 		file = canonicalPath(file)
 	}
 	if request.Operation == lspStatus {
+		definitions, materializeErr := materializeLSPStatusDefinitions(cfg.LSPs, providerContext)
+		if materializeErr != nil {
+			return nil, materializeErr
+		}
 		if opts.direct {
-			return makeLSPStatusEnvelope(cfg.LSPs, providerContext, file, nil), nil
+			return makeLSPStatusEnvelope(definitions, providerContext, file, nil), nil
 		}
 		rpc := daemonRequest{Operation: statusLSP, CWD: cwd, ProjectRoot: workspace, GlobalRoot: providerContext.GlobalRoot, TrustedBoundary: providerContext.TrustedBoundary, WorkspaceConfig: providerContext.WorkspaceConfig, WorkspaceDirectory: providerContext.WorkspaceDirectory, Configs: providerContext.Configs, Discovered: providerContext.Discovered, Fingerprint: configFingerprint(cfg), LSPFile: file, LSPOperation: lspStatus}
 		result, callErr, _ := daemonRequestCallWithClient(client, rpc, errOut)
@@ -465,6 +469,10 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 	} else {
 		matches, appErr = matchLSPDefinitionsForContext(cfg.LSPs, providerContext, file)
 	}
+	if appErr != nil {
+		return nil, appErr
+	}
+	matches, appErr = materializeLSPMatches(matches, providerContext)
 	if appErr != nil {
 		return nil, appErr
 	}
@@ -1073,7 +1081,7 @@ func makeLSPStatusEnvelope(definitions []config.LSP, context invocationContext, 
 		if value, ok := runtime[definition.Name]; ok {
 			state = value
 		}
-		providers = append(providers, lspDefinitionStatus{Name: definition.Name, Scope: string(definition.Scope), Root: root, ImplementationID: definition.ImplementationID, Executable: definition.Stdio.Command, Selectors: selectors, Runtime: state})
+		providers = append(providers, lspDefinitionStatus{Name: definition.Name, Scope: string(definition.Scope), Root: root, ImplementationID: definition.ImplementationID, Executable: definition.Stdio.Command.Text, Selectors: selectors, Runtime: state})
 	}
 	return lspStatusEnvelope{OK: true, LSP: lspStatusResult{Operation: lspStatus, Workspace: context.ProjectRoot, File: file, Providers: providers}}
 }

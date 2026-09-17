@@ -120,10 +120,10 @@ from result stdout, JSON/stdin equivalence, daemon-offline failure without
 fallback, daemon/direct contract equivalence where applicable, and retained
 state across separate CLI processes.
 
-This slice deliberately tests direct typed secret values through a child
-environment entry. Typed HTTP header/query injection, generated secret
-artifacts, and template materialization remain deferred; their internal
-representation must remain possible without implementing them here.
+This initial slice deliberately tested direct typed secret values through a
+child environment entry. Typed HTTP header/query injection, generated secret
+artifacts, and template materialization were deferred from that milestone;
+later accepted plans supersede those historical deferrals.
 
 Focused schema help, projected arguments, the universal Agent Skill, and the
 controlled modern HTTP fixture were implemented, and the comparative evaluation
@@ -140,7 +140,9 @@ was completed. Its outcome is summarized above.
   are sequenced after the modern slice, not excluded from the full MVP.
 - Resources, prompts, subscriptions, Tasks, sampling, and rich elicitation.
 - Pool widths greater than one.
-- Runtime templates and secret providers beyond minimal safe fixture needs.
+- Runtime templates beyond the fixed context references accepted by the
+  [context templates plan](context-templates-plan.md), and additional secret
+  providers beyond the accepted internal registry.
 - MCP proxy/server mode and non-MCP adapters.
 
 Deferred items may influence whether the spike leaves a viable path forward,

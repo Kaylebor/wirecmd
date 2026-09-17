@@ -13,7 +13,7 @@ import (
 
 func TestMakeHTTPTargetResolvesQueryAndHeaders(t *testing.T) {
 	transport := config.HTTP{
-		Endpoint: "https://example.test/mcp?tenant=old&kept=yes",
+		Endpoint: literalValue("https://example.test/mcp?tenant=old&kept=yes"),
 		Query: []config.HTTPField{
 			{Name: "tenant", Value: literalValue("acme")},
 			{Name: "token", Value: secretValue("API_TOKEN")},
@@ -73,17 +73,17 @@ func TestMakeHTTPTargetRejectsMissingAndUnsafeResolvedValues(t *testing.T) {
 	}{
 		{
 			name:      "missing secret",
-			transport: config.HTTP{Endpoint: "https://example.test/mcp", Query: []config.HTTPField{{Name: "token", Value: secretValue("TOKEN")}}},
+			transport: config.HTTP{Endpoint: literalValue("https://example.test/mcp"), Query: []config.HTTPField{{Name: "token", Value: secretValue("TOKEN")}}},
 			lookup:    func(string) (string, bool) { return "", false }, code: "secret_not_available",
 		},
 		{
 			name:      "header line break",
-			transport: config.HTTP{Endpoint: "https://example.test/mcp", Headers: []config.HTTPField{{Name: "X-Test", Value: secretValue("TOKEN")}}},
+			transport: config.HTTP{Endpoint: literalValue("https://example.test/mcp"), Headers: []config.HTTPField{{Name: "X-Test", Value: secretValue("TOKEN")}}},
 			lookup:    func(string) (string, bool) { return "bad\r\nInjected: yes", true }, code: "invalid_http_value",
 		},
 		{
 			name:      "invalid UTF-8",
-			transport: config.HTTP{Endpoint: "https://example.test/mcp", Query: []config.HTTPField{{Name: "token", Value: secretValue("TOKEN")}}},
+			transport: config.HTTP{Endpoint: literalValue("https://example.test/mcp"), Query: []config.HTTPField{{Name: "token", Value: secretValue("TOKEN")}}},
 			lookup:    func(string) (string, bool) { return string([]byte{0xff}), true }, code: "invalid_http_value",
 		},
 	} {
@@ -143,7 +143,7 @@ func TestConfiguredSSEValuesFollowSameOriginDiscoveredEndpoint(t *testing.T) {
 
 func TestStreamableHTTPDoesNotOverlayQueriesOntoOtherPaths(t *testing.T) {
 	target, _, appErr := makeHTTPTarget(config.HTTP{
-		Endpoint: "https://example.test/mcp",
+		Endpoint: literalValue("https://example.test/mcp"),
 		Query:    []config.HTTPField{{Name: "token", Value: literalValue("configured")}},
 	}, nil)
 	if appErr != nil {
@@ -183,7 +183,7 @@ func TestHTTPSecretsParticipateInDaemonInputsAndIdentity(t *testing.T) {
 }
 
 func TestHTTPTransportKindChangesFingerprints(t *testing.T) {
-	httpServer := config.Server{Name: "remote", Scope: config.ScopeWorkspace, HTTP: &config.HTTP{Endpoint: "https://example.test/mcp"}}
+	httpServer := config.Server{Name: "remote", Scope: config.ScopeWorkspace, HTTP: &config.HTTP{Endpoint: literalValue("https://example.test/mcp")}}
 	sseServer := httpServer
 	sseServer.HTTP = &config.HTTP{Kind: config.HTTPTransportSSE, Endpoint: httpServer.HTTP.Endpoint}
 	if executionFingerprint(httpServer, nil, "/work") == executionFingerprint(sseServer, nil, "/work") {

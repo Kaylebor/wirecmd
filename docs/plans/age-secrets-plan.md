@@ -12,7 +12,10 @@ plaintext persistence while preserving the shell-facing configuration contract.
 The built-in secret registry is deliberately closed: it contains `env` and
 `age`, is constructed internally by the CLI and daemon, and is not a plugin or
 command-provider API. Arbitrary shell providers, provider plugins, generated
-plaintext configuration files, and templates remain deferred.
+plaintext configuration files, secret interpolation, and generated-file
+templates remain deferred. The later
+[context templates plan](context-templates-plan.md) permits only explicit
+non-secret invocation-path references in provider-consumed strings.
 
 ## Configuration and store format
 

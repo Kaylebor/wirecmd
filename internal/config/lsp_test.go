@@ -70,7 +70,7 @@ func TestParseAndComposeLSPSelectors(t *testing.T) {
 	if selector.LanguageIDProvenance != (Provenance{File: "local.kdl", Path: `wirecmd.lsp["primary"].selector[0].language-id`}) || selector.PatternProvenance != (Provenance{File: "local.kdl", Path: `wirecmd.lsp["primary"].selector[0].pattern`}) {
 		t.Fatalf("selector provenance = %#v", selector)
 	}
-	if primary.Stdio.Command != "local-lsp" || primary.Stdio.CommandProvenance != (Provenance{File: "local.kdl", Path: `wirecmd.lsp["primary"].stdio`}) {
+	if primary.Stdio.Command.Text != "local-lsp" || primary.Stdio.CommandProvenance != (Provenance{File: "local.kdl", Path: `wirecmd.lsp["primary"].stdio`}) {
 		t.Fatalf("stdio command = %#v", primary.Stdio)
 	}
 	if got, want := valueTexts(primary.Stdio.Args), []string{"--stdio"}; !sameStrings(got, want) {

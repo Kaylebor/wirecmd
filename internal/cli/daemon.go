@@ -32,7 +32,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 13
+const daemonProtocol = 14
 
 type daemonAdmin struct {
 	command string
@@ -303,7 +303,7 @@ func semanticLSPExecution(definition config.LSP) any {
 	for _, selector := range definition.Selectors {
 		selectors = append(selectors, []any{selector.LanguageID, selector.Pattern})
 	}
-	return map[string]any{"name": definition.Name, "scope": definition.Scope, "selectors": selectors, "command": definition.Stdio.Command, "args": args, "env": env}
+	return map[string]any{"name": definition.Name, "scope": definition.Scope, "selectors": selectors, "command": semanticValue(definition.Stdio.Command), "args": args, "env": env}
 }
 
 func executionFingerprint(server config.Server, root *config.Root, cwd string) string {
@@ -330,13 +330,13 @@ func semanticServer(server config.Server) any {
 			if server.HTTP.OAuth.ClientSecret != nil {
 				secret = []any{server.HTTP.OAuth.ClientSecret.Kind, server.HTTP.OAuth.ClientSecret.Text}
 			}
-			oauth = map[string]any{"client_id": server.HTTP.OAuth.ClientID, "client_secret": secret, "redirect_uri": server.HTTP.OAuth.RedirectURI}
+			oauth = map[string]any{"client_id": semanticValue(server.HTTP.OAuth.ClientID), "client_secret": secret, "redirect_uri": semanticValue(server.HTTP.OAuth.RedirectURI)}
 		}
 		transport := "http"
 		if server.HTTP.Kind == config.HTTPTransportSSE {
 			transport = "sse"
 		}
-		return map[string]any{"name": server.Name, "scope": server.Scope, "transport": transport, "endpoint": server.HTTP.Endpoint, "query": query, "headers": headers, "oauth": oauth}
+		return map[string]any{"name": server.Name, "scope": server.Scope, "transport": transport, "endpoint": semanticValue(server.HTTP.Endpoint), "query": query, "headers": headers, "oauth": oauth}
 	}
 	args := make([]any, 0, len(server.Stdio.Args))
 	for _, arg := range server.Stdio.Args {
@@ -346,7 +346,11 @@ func semanticServer(server config.Server) any {
 	for _, entry := range server.Stdio.Env {
 		env = append(env, []any{entry.Name, entry.Value.Kind, entry.Value.Text})
 	}
-	return map[string]any{"name": server.Name, "scope": server.Scope, "transport": "stdio", "command": server.Stdio.Command, "args": args, "env": env}
+	return map[string]any{"name": server.Name, "scope": server.Scope, "transport": "stdio", "command": semanticValue(server.Stdio.Command), "args": args, "env": env}
+}
+
+func semanticValue(value config.Value) any {
+	return []any{value.Kind, value.Text}
 }
 
 func fingerprint(value any) string {
@@ -459,6 +463,7 @@ type retainedInstance struct {
 	oauthRun             *oauthRuntime
 	lspName              string
 	lspWorkspace         string
+	lspExecution         string
 	lspGeneration        uint64
 }
 
@@ -923,7 +928,12 @@ func (d *daemon) execute(ctx context.Context, request daemonRequest, emitURL fun
 		return errorReplyWithWarnings(configurationError("config_mismatch", fmt.Sprintf("cached configuration has no server %q", request.Server), "run wirecmd daemon reload and retry"), warnings)
 	}
 	expectedRoot := daemonExpectedProjectRoot(request, cached)
-	runtimeContext, runtimeErr := serverRuntimeContext(server, invocationContext{ProjectRoot: expectedRoot, GlobalRoot: request.GlobalRoot})
+	providerContext := invocationContext{configContext: configContext{CWD: request.CWD}, ProjectRoot: expectedRoot, GlobalRoot: request.GlobalRoot}
+	runtimeContext, runtimeErr := serverRuntimeContext(server, providerContext)
+	if runtimeErr != nil {
+		return errorReplyWithWarnings(runtimeErr, warnings)
+	}
+	server, runtimeErr = materializeServer(server, providerContext)
 	if runtimeErr != nil {
 		return errorReplyWithWarnings(runtimeErr, warnings)
 	}
@@ -1149,12 +1159,27 @@ func validateDaemonDiscoveryContext(request daemonRequest) *appError {
 
 func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *daemonConfig, generation uint64, warnings []string) daemonReply {
 	workspace := daemonExpectedProjectRoot(request, cached)
-	providerContext := invocationContext{ProjectRoot: workspace, GlobalRoot: request.GlobalRoot}
+	providerContext := invocationContext{configContext: configContext{CWD: request.CWD}, ProjectRoot: workspace, GlobalRoot: request.GlobalRoot}
 	if request.Operation == statusLSP {
 		if request.LSPFile != "" && !filepath.IsAbs(request.LSPFile) {
 			return errorReplyWithWarnings(invocationError("lsp_file_invalid", "daemon LSP status requires an absolute file", "use the Wirecmd CLI"), warnings)
 		}
-		return resultReply(makeLSPStatusEnvelope(cached.config.LSPs, providerContext, request.LSPFile, d.lspRuntimeStatuses(cached.config.LSPs, providerContext, generation)), warnings)
+		definitions, appErr := materializeLSPStatusDefinitions(cached.config.LSPs, providerContext)
+		if appErr != nil {
+			return errorReplyWithWarnings(appErr, warnings)
+		}
+		// Status displays only the resolved executable. Full best-effort
+		// materialization is used solely to identify an exactly matching retained
+		// instance; unavailable unused context leaves the provider disconnected.
+		runtimeDefinitions := make([]config.LSP, 0, len(cached.config.LSPs))
+		for _, definition := range cached.config.LSPs {
+			materialized, materializeErr := materializeLSP(definition, providerContext)
+			if materializeErr == nil {
+				runtimeDefinitions = append(runtimeDefinitions, materialized)
+			}
+		}
+		runtime := d.lspRuntimeStatuses(runtimeDefinitions, providerContext, generation)
+		return resultReply(makeLSPStatusEnvelope(definitions, providerContext, request.LSPFile, runtime), warnings)
 	}
 	if !isLSPNavigation(request.LSPOperation) && !isLSPInspection(request.LSPOperation) {
 		return errorReplyWithWarnings(invocationError("lsp_request_invalid", "daemon LSP request has an unsupported operation", "use a compatible Wirecmd CLI"), warnings)
@@ -1178,6 +1203,10 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 	} else {
 		matches, appErr = matchLSPDefinitionsForContext(cached.config.LSPs, providerContext, request.LSPFile)
 	}
+	if appErr != nil {
+		return errorReplyWithWarnings(appErr, warnings)
+	}
+	matches, appErr = materializeLSPMatches(matches, providerContext)
 	if appErr != nil {
 		return errorReplyWithWarnings(appErr, warnings)
 	}
@@ -1342,9 +1371,16 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 }
 
 func (d *daemon) lspRuntimeStatuses(definitions []config.LSP, context invocationContext, generation uint64) map[string]lspRuntimeStatus {
-	wanted := make(map[string]string, len(definitions))
+	wanted := make(map[string]struct {
+		root      string
+		execution string
+	}, len(definitions))
 	for _, definition := range definitions {
-		wanted[definition.Name] = providerRootForScope(definition.Scope, context)
+		root := providerRootForScope(definition.Scope, context)
+		wanted[definition.Name] = struct {
+			root      string
+			execution string
+		}{root: root, execution: lspExecutionFingerprint(definition, nil, root)}
 	}
 	d.mu.Lock()
 	type candidate struct {
@@ -1358,7 +1394,7 @@ func (d *daemon) lspRuntimeStatuses(definitions []config.LSP, context invocation
 		if entry.instance == nil || entry.instance.lspSession == nil || entry.instance.lspGeneration != generation {
 			continue
 		}
-		if root, ok := wanted[entry.instance.lspName]; ok && entry.instance.lspWorkspace == root {
+		if desired, ok := wanted[entry.instance.lspName]; ok && entry.instance.lspWorkspace == desired.root && entry.instance.lspExecution == desired.execution {
 			candidates = append(candidates, candidate{key: key, name: entry.instance.lspName, instance: entry.instance, broken: entry.broken})
 		}
 	}
@@ -1491,7 +1527,7 @@ func (d *daemon) startLSPInstance(entry *poolEntry, key string, definition confi
 			redactor.FlushTo(d.stderr)
 			appErr = lspOperationError(err, "initialize").redacted(redactor)
 		} else {
-			started = &retainedInstance{lspSession: session, redactor: redactor, lspName: definition.Name, lspWorkspace: workspace, lspGeneration: generation}
+			started = &retainedInstance{lspSession: session, redactor: redactor, lspName: definition.Name, lspWorkspace: workspace, lspExecution: lspExecutionFingerprint(definition, root, cwd), lspGeneration: generation}
 		}
 	}
 	d.mu.Lock()

@@ -463,10 +463,10 @@ func TestAgeBatchFeedsHTTPAndOAuthDestinations(t *testing.T) {
 		return config.Value{Kind: config.ValueSecretReference, Text: "age://" + name}
 	}
 	transport := config.HTTP{
-		Endpoint: "https://example.test/mcp",
+		Endpoint: literalValue("https://example.test/mcp"),
 		Query:    []config.HTTPField{{Name: "token", Value: secretValue("QUERY")}},
 		Headers:  []config.HTTPField{{Name: "X-API-Key", Value: secretValue("HEADER")}},
-		OAuth:    &config.OAuth{ClientID: "client", ClientSecret: func() *config.Value { value := secretValue("OAUTH"); return &value }(), RedirectURI: "http://127.0.0.1:8765/callback"},
+		OAuth:    &config.OAuth{ClientID: literalValue("client"), ClientSecret: func() *config.Value { value := secretValue("OAUTH"); return &value }(), RedirectURI: literalValue("http://127.0.0.1:8765/callback")},
 	}
 	server := config.Server{Name: "remote", HTTP: &transport}
 	configured := config.Secrets{Age: &config.AgeSecrets{Identities: []config.AgeIdentity{{Path: filepath.Join(directory, "identity.age")}}}}
@@ -523,21 +523,21 @@ func TestAgeIdentitiesAffectOnlySelectedAgeExecutionFingerprints(t *testing.T) {
 	configured := config.Secrets{Age: &config.AgeSecrets{Identities: []config.AgeIdentity{{Path: "/identity/one"}}}}
 	changed := config.Secrets{Age: &config.AgeSecrets{Identities: []config.AgeIdentity{{Path: "/identity/two"}}}}
 
-	plainServer := config.Server{Name: "plain", Stdio: config.Stdio{Command: "server"}}
+	plainServer := config.Server{Name: "plain", Stdio: config.Stdio{Command: literalValue("server")}}
 	if first, second := serverExecutionFingerprint(plainServer, nil, "/workspace", configured), serverExecutionFingerprint(plainServer, nil, "/workspace", changed); first != second {
 		t.Fatal("unused age identities changed MCP execution fingerprint")
 	}
 	ageServer := plainServer
-	ageServer.Stdio = config.Stdio{Command: "server", Args: []config.Value{{Kind: config.ValueSecretReference, Text: "age://TOKEN"}}}
+	ageServer.Stdio = config.Stdio{Command: literalValue("server"), Args: []config.Value{{Kind: config.ValueSecretReference, Text: "age://TOKEN"}}}
 	if first, second := serverExecutionFingerprint(ageServer, nil, "/workspace", configured), serverExecutionFingerprint(ageServer, nil, "/workspace", changed); first == second {
 		t.Fatal("selected age identities did not change MCP execution fingerprint")
 	}
 
-	plainMatches := []lspMatch{{Definition: config.LSP{Name: "plain", Stdio: config.Stdio{Command: "lsp"}}}}
+	plainMatches := []lspMatch{{Definition: config.LSP{Name: "plain", Stdio: config.Stdio{Command: literalValue("lsp")}}}}
 	if first, second := matchedLSPExecutionFingerprint(plainMatches, nil, "/workspace", configured), matchedLSPExecutionFingerprint(plainMatches, nil, "/workspace", changed); first != second {
 		t.Fatal("unused age identities changed LSP execution fingerprint")
 	}
-	ageMatches := []lspMatch{{Definition: config.LSP{Name: "age", Stdio: config.Stdio{Command: "lsp", Env: []config.Environment{{Name: "TOKEN", Value: config.Value{Kind: config.ValueSecretReference, Text: "age://TOKEN"}}}}}}}
+	ageMatches := []lspMatch{{Definition: config.LSP{Name: "age", Stdio: config.Stdio{Command: literalValue("lsp"), Env: []config.Environment{{Name: "TOKEN", Value: config.Value{Kind: config.ValueSecretReference, Text: "age://TOKEN"}}}}}}}
 	if first, second := matchedLSPExecutionFingerprint(ageMatches, nil, "/workspace", configured), matchedLSPExecutionFingerprint(ageMatches, nil, "/workspace", changed); first == second {
 		t.Fatal("selected age identities did not change LSP execution fingerprint")
 	}

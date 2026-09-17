@@ -277,6 +277,10 @@ func run(ctx context.Context, opts options, positionals []string, parseErr error
 	if runtimeErr != nil {
 		return nil, runtimeErr
 	}
+	server, appErr := materializeServer(server, providerContext)
+	if appErr != nil {
+		return nil, appErr
+	}
 	selectedValues := serverSecretValues(server)
 	secretStores, storesErr := selectedSecretStores(providerContext.CWD, providerContext.Configs, providerContext.Discovered, server.Scope, providerContext.GlobalRoot, selectedValues)
 	if storesErr != nil {
@@ -986,7 +990,7 @@ func makeTarget(server config.Server, root *config.Root, callerCWD string, looku
 }
 
 func makeHTTPTarget(transport config.HTTP, lookup func(string) (string, bool)) (connectionTarget, []string, *appError) {
-	endpoint, err := url.Parse(transport.Endpoint)
+	endpoint, err := url.Parse(transport.Endpoint.Text)
 	if err != nil {
 		return connectionTarget{}, nil, configurationError("invalid_http_endpoint", err.Error(), "correct the configured HTTP endpoint")
 	}
@@ -1117,7 +1121,7 @@ func makeStdioCommand(stdio config.Stdio, root *config.Root, callerCWD string, l
 			secrets = append(secrets, value.Text)
 		}
 	}
-	command := exec.Command(stdio.Command, arguments...)
+	command := exec.Command(stdio.Command.Text, arguments...)
 	command.Env = env
 	if root != nil {
 		command.Dir = resolveRoot(*root)
