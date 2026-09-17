@@ -120,6 +120,78 @@ func TestLSPStaticHelpDoesNotRequireConfiguration(t *testing.T) {
 	}
 }
 
+func TestLSPStatusOmitsProviderInitializeOutputWithOptions(t *testing.T) {
+	capabilities := &lspclient.Capabilities{
+		PositionEncoding: "utf-16",
+		TextDocumentSync: "full",
+		Hover:            true,
+	}
+	definition := config.LSP{
+		Name:                  "fixture",
+		InitializationOptions: &config.JSONValue{Raw: []byte(`"utf-16"`)},
+	}
+	envelope := makeLSPStatusEnvelope(
+		[]config.LSP{definition},
+		invocationContext{ProjectRoot: "/work", GlobalRoot: "/global"},
+		"",
+		map[string]lspRuntimeStatus{
+			"fixture": {Status: "ready", ServerName: "utf-16", ServerVersion: "full", Capabilities: capabilities},
+		},
+	)
+
+	runtime := envelope.LSP.Providers[0].Runtime
+	if runtime.ServerName != "" || runtime.ServerVersion != "" || runtime.Capabilities != nil {
+		t.Fatalf("provider-controlled initialize output remained in status: %#v", runtime)
+	}
+}
+
+func TestRedactLSPProviderRunSuppressesProtectedTypedScalars(t *testing.T) {
+	numberRedactor := newRedactor(nil, io.Discard)
+	numberRedactor.ProtectJSON([]byte(`12`))
+	numberResult := lspProviderRun{
+		Locations: []lspclient.Location{
+			{Path: "/protected.go", Range: lspclient.Range{Start: lspclient.Point{Line: 12}}},
+			{Path: "/ordinary.go", Range: lspclient.Range{Start: lspclient.Point{Line: 13}}},
+		},
+		Hovers: []lspclient.Hover{
+			{Range: &lspclient.Range{Start: lspclient.Point{Column: 12}}},
+			{Content: []lspclient.HoverBlock{{Text: "ordinary"}}},
+		},
+		Symbols: []lspclient.Symbol{
+			{Name: "protected", Kind: 12},
+			{Name: "ordinary", Kind: 13, Children: []lspclient.Symbol{{Name: "protected-child", Kind: 12}, {Name: "ordinary-child", Kind: 14}}},
+		},
+	}
+	redactLSPProviderRun(&numberResult, numberRedactor)
+	if len(numberResult.Locations) != 1 || numberResult.Locations[0].Path != "/ordinary.go" || len(numberResult.Hovers) != 1 || len(numberResult.Symbols) != 1 || numberResult.Symbols[0].Name != "ordinary" || len(numberResult.Symbols[0].Children) != 1 || numberResult.Symbols[0].Children[0].Name != "ordinary-child" {
+		t.Fatalf("numeric scalar result filtering = %#v", numberResult)
+	}
+
+	boolRedactor := newRedactor(nil, io.Discard)
+	boolRedactor.ProtectJSON([]byte(`true`))
+	boolResult := lspProviderRun{
+		Signatures: []lspclient.Signature{{Label: "protected", Active: true}, {Label: "ordinary", Active: false}},
+		Symbols:    []lspclient.Symbol{{Name: "protected", Deprecated: true}, {Name: "ordinary", Deprecated: false}},
+	}
+	redactLSPProviderRun(&boolResult, boolRedactor)
+	if len(boolResult.Signatures) != 1 || boolResult.Signatures[0].Label != "ordinary" || len(boolResult.Symbols) != 1 || boolResult.Symbols[0].Name != "ordinary" {
+		t.Fatalf("boolean scalar result filtering = %#v", boolResult)
+	}
+
+	countRedactor := newRedactor(nil, io.Discard)
+	countRedactor.ProtectJSON([]byte(`1`))
+	countResult := lspProviderRun{Locations: []lspclient.Location{{Path: "/ordinary.go", Range: lspclient.Range{Start: lspclient.Point{Line: 2}, End: lspclient.Point{Line: 3}}}}}
+	redactLSPProviderRun(&countResult, countRedactor)
+	value, appErr := aggregateLSPResults(lspDefinition, "/work/main.go", []lspMatch{{Definition: config.LSP{Name: "fixture"}}}, []lspProviderRun{countResult})
+	if appErr != nil {
+		t.Fatal(appErr)
+	}
+	envelope := value.(lspEnvelope)
+	if len(envelope.LSP.Locations) != 1 || envelope.LSP.Providers[0].Locations != nil {
+		t.Fatalf("protected provider count remained visible: %#v", envelope)
+	}
+}
+
 func TestLSPMCPServerEscapesRemainReachable(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
 	source, err := os.ReadFile(helperConfig(t, "", ""))
@@ -218,7 +290,7 @@ func TestAggregateLSPInspectionResults(t *testing.T) {
 		t.Fatal(appErr)
 	}
 	hover := hoverValue.(lspHoverEnvelope)
-	if !hover.LSP.Partial || len(hover.LSP.Hovers) != 1 || hover.LSP.Hovers[0].Provider != "first" || hover.LSP.Providers[0].Hovers != 1 || hover.LSP.Providers[1].Status != "failed" {
+	if !hover.LSP.Partial || len(hover.LSP.Hovers) != 1 || hover.LSP.Hovers[0].Provider != "first" || hover.LSP.Providers[0].Hovers == nil || *hover.LSP.Providers[0].Hovers != 1 || hover.LSP.Providers[1].Status != "failed" {
 		t.Fatalf("hover=%#v", hover)
 	}
 
@@ -248,7 +320,7 @@ func TestAggregateLSPSignatureResults(t *testing.T) {
 		t.Fatal(appErr)
 	}
 	envelope := value.(lspSignatureEnvelope)
-	if !envelope.LSP.Partial || len(envelope.LSP.Signatures) != 1 || envelope.LSP.Signatures[0].Provider != "first" || !envelope.LSP.Signatures[0].Parameters[0].Active || envelope.LSP.Providers[0].Signatures != 1 || envelope.LSP.Providers[1].Status != "failed" {
+	if !envelope.LSP.Partial || len(envelope.LSP.Signatures) != 1 || envelope.LSP.Signatures[0].Provider != "first" || !envelope.LSP.Signatures[0].Parameters[0].Active || envelope.LSP.Providers[0].Signatures == nil || *envelope.LSP.Providers[0].Signatures != 1 || envelope.LSP.Providers[1].Status != "failed" {
 		t.Fatalf("signatures=%#v", envelope)
 	}
 	_, appErr = aggregateLSPSignatureResults(lspRequest{Operation: lspSignatureHelp}, "/work/main.go", matches, []lspProviderRun{{Unsupported: true}, {Unsupported: true}})

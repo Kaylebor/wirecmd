@@ -293,6 +293,12 @@ lsp "typescript" {
     implementation-id "optional-metadata"
     selector language-id="typescript" pattern="**/*.ts"
     selector language-id="typescriptreact" pattern="**/*.tsx"
+    initialization-options (template)#"""
+    {
+      "workspace": "typescript",
+      "root": "${wirecmd.project-root}"
+    }
+    """#
     stdio "language-server" {
         arg "--stdio"
         env SERVER_MODE="workspace"
@@ -310,7 +316,25 @@ capabilities. A global LSP definition matches only files beneath the global
 root; it does not treat the invocation project as its workspace.
 
 Wirecmd does not derive language IDs, executable names, launch arguments, or
-initialization options.
+initialization options. `initialization-options` accepts exactly one KDL string
+containing one strict JSON value. Objects, arrays, strings, numbers, booleans,
+and explicit `null` are valid. A stronger declaration replaces the whole value;
+omission inherits a weaker declaration and omits `initializationOptions` when
+none exists. Documents are never deep-merged.
+
+Annotate the JSON string with `(template)` to expand context references inside
+JSON string values only. Object names, numbers, and structure are not template
+destinations, and secret references are not supported inside the document.
+Untemplated JSON is forwarded unchanged to LSP initialization. Materialized
+options participate in retained-instance identity but are omitted from status,
+logs, diagnostics, errors, and IPC metadata. To preserve that boundary even
+when a language server echoes its input, Wirecmd suppresses child stderr and
+uses sanitized provider-error messages for definitions with initialization
+options. It also omits the provider-reported server name and version from
+`lsp status` for those definitions because a server can reflect initialization
+data through either field. Successful provider result fields are redacted when
+the complete field is a semantically equivalent JSON value; ordinary language
+content containing JSON fragments is not treated as a secret.
 
 ## Secret references
 

@@ -53,3 +53,14 @@ func TestUnavailableContext(t *testing.T) {
 		t.Fatalf("Expand() error = %v", err)
 	}
 }
+
+func TestFragmentsAllowNoReferences(t *testing.T) {
+	hasReference, err := ValidateFragment("literal")
+	if err != nil || hasReference {
+		t.Fatalf("ValidateFragment() = %v, %v", hasReference, err)
+	}
+	got, hasReference, err := ExpandFragment("cost $$5", Context{})
+	if err != nil || hasReference || got != "cost $5" {
+		t.Fatalf("ExpandFragment() = %q, %v, %v", got, hasReference, err)
+	}
+}

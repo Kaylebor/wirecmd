@@ -22,6 +22,7 @@ import (
 
 var (
 	ErrStart                    = errors.New("LSP process could not be started")
+	ErrInitialize               = errors.New("LSP server initialization failed")
 	ErrCapabilityUnavailable    = errors.New("LSP server does not advertise the requested capability")
 	ErrEncodingUnsupported      = errors.New("LSP server selected an unsupported position encoding")
 	ErrResultUnsupported        = errors.New("LSP server returned an unsupported location result")
@@ -278,9 +279,14 @@ type pipe struct {
 func (p *pipe) Close() error { return p.close() }
 
 // Start launches and initializes exactly the configured LSP command.
-func Start(ctx context.Context, command Command, workspace, version string) (*Session, error) {
+func Start(ctx context.Context, command Command, workspace, version string, initializationOptions []byte) (*Session, error) {
 	cmd := exec.CommandContext(ctx, command.Path, command.Args...)
 	cmd.Dir, cmd.Env, cmd.Stderr = command.Dir, command.Env, command.Stderr
+	if initializationOptions != nil {
+		// An initialized server is authorized to receive this private document,
+		// but its stderr is not a safe channel for reproducing it in Wirecmd logs.
+		cmd.Stderr = io.Discard
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("%w: open stdin: %v", ErrStart, err)
@@ -304,7 +310,10 @@ func Start(ctx context.Context, command Command, workspace, version string) (*Se
 		return b
 	}}
 	client := &rejectingClient{}
-	_, conn, server := protocol.NewClient(ctx, client, jsonrpc2.NewStream(transport))
+	ctx = protocol.WithClient(ctx, client)
+	conn := jsonrpc2.NewConn(jsonrpc2.NewStream(transport), jsonrpc2.WithCodec(lspCodec{}))
+	conn.Go(ctx, protocol.Handlers(protocol.ClientHandler(client, jsonrpc2.MethodNotFoundHandler)))
+	server := protocol.ServerDispatcher(conn)
 	rootURI := uri.File(workspace)
 	pid := int32(os.Getpid())
 	falseValue := false
@@ -366,9 +375,18 @@ func Start(ctx context.Context, command Command, workspace, version string) (*Se
 			General: &protocol.GeneralClientCapabilities{PositionEncodings: []protocol.PositionEncodingKind{protocol.PositionEncodingKindUTF16}},
 		},
 	}
+	if initializationOptions != nil {
+		params.InitializationOptions = rawInitializationOptions(initializationOptions)
+	}
 	initialized, err := server.Initialize(ctx, params)
 	if err != nil {
 		abortProcess(conn, cmd)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, fmt.Errorf("initialize LSP server: %w", err)
+		}
+		if initializationOptions != nil {
+			return nil, fmt.Errorf("initialize LSP server: %w", ErrInitialize)
+		}
 		return nil, fmt.Errorf("initialize LSP server: %w", err)
 	}
 	if err := server.Initialized(ctx, &protocol.InitializedParams{}); err != nil {
@@ -405,6 +423,62 @@ func Start(ctx context.Context, command Command, workspace, version string) (*Se
 		status.ServerVersion = value
 	}
 	return &Session{cmd: cmd, stdin: stdin, stdout: stdout, conn: conn, server: server, client: client, syncKind: syncKind, openClose: openClose, documents: map[string]*document{}, ctx: ctx, status: status}, nil
+}
+
+func rawInitializationOptions(raw []byte) protocol.LSPAny {
+	return append(protocol.LSPAny(nil), raw...)
+}
+
+// lspCodec preserves the configured initializationOptions token verbatim while
+// retaining the protocol SDK's union-aware codec for every other payload.
+type lspCodec struct{}
+
+func (lspCodec) Marshal(value any) ([]byte, error) {
+	switch value := value.(type) {
+	case jsonrpc2.RawMessage:
+		if value == nil {
+			return []byte("null"), nil
+		}
+		return value, nil
+	case *jsonrpc2.RawMessage:
+		if value == nil || *value == nil {
+			return []byte("null"), nil
+		}
+		return *value, nil
+	case *protocol.InitializeParams:
+		return marshalInitializeParams(value)
+	default:
+		return protocol.Marshal(value)
+	}
+}
+
+func (lspCodec) Unmarshal(data []byte, value any) error {
+	if raw, ok := value.(*jsonrpc2.RawMessage); ok {
+		*raw = append((*raw)[:0], data...)
+		return nil
+	}
+	return protocol.Unmarshal(data, value)
+}
+
+func marshalInitializeParams(params *protocol.InitializeParams) ([]byte, error) {
+	if params == nil || params.InitializationOptions == nil {
+		return protocol.Marshal(params)
+	}
+	withoutOptions := *params
+	withoutOptions.InitializationOptions = nil
+	encoded, err := protocol.Marshal(&withoutOptions)
+	if err != nil {
+		return nil, err
+	}
+	if len(encoded) == 0 || encoded[len(encoded)-1] != '}' {
+		return nil, fmt.Errorf("encode initialize parameters")
+	}
+	result := make([]byte, 0, len(encoded)+len(params.InitializationOptions)+26)
+	result = append(result, encoded[:len(encoded)-1]...)
+	result = append(result, `,"initializationOptions":`...)
+	result = append(result, params.InitializationOptions...)
+	result = append(result, '}')
+	return result, nil
 }
 
 func abortProcess(conn jsonrpc2.Conn, cmd *exec.Cmd) {

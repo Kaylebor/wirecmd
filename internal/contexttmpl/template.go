@@ -48,6 +48,22 @@ func Expand(input string, context Context) (string, error) {
 	return result, nil
 }
 
+// ValidateFragment checks template syntax while allowing a fragment with no
+// references. The result reports whether at least one context reference was
+// present. It is used by structured formats whose individual strings may be
+// literals while the enclosing document is a template.
+func ValidateFragment(input string) (bool, error) {
+	_, references, err := expand(input, nil)
+	return references != 0, err
+}
+
+// ExpandFragment expands one template fragment while allowing it to contain no
+// references. The result reports whether at least one reference was expanded.
+func ExpandFragment(input string, context Context) (string, bool, error) {
+	result, references, err := expand(input, &context)
+	return result, references != 0, err
+}
+
 func expand(input string, context *Context) (string, int, error) {
 	result := make([]byte, 0, len(input))
 	references := 0

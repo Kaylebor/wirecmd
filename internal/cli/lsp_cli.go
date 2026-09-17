@@ -65,7 +65,7 @@ type lspLocation struct {
 type lspProviderOutcome struct {
 	Name      string     `json:"name"`
 	Status    string     `json:"status"`
-	Locations int        `json:"locations"`
+	Locations *int       `json:"locations,omitempty"`
 	Error     *errorBody `json:"error,omitempty"`
 }
 
@@ -97,7 +97,7 @@ type lspHoverEntry struct {
 type lspHoverProviderOutcome struct {
 	Name   string     `json:"name"`
 	Status string     `json:"status"`
-	Hovers int        `json:"hovers"`
+	Hovers *int       `json:"hovers,omitempty"`
 	Error  *errorBody `json:"error,omitempty"`
 }
 
@@ -138,7 +138,7 @@ type lspSignature struct {
 type lspSignatureProviderOutcome struct {
 	Name       string     `json:"name"`
 	Status     string     `json:"status"`
-	Signatures int        `json:"signatures"`
+	Signatures *int       `json:"signatures,omitempty"`
 	Error      *errorBody `json:"error,omitempty"`
 }
 
@@ -174,7 +174,7 @@ type lspSymbol struct {
 type lspSymbolProviderOutcome struct {
 	Name    string     `json:"name"`
 	Status  string     `json:"status"`
-	Symbols int        `json:"symbols"`
+	Symbols *int       `json:"symbols,omitempty"`
 	Error   *errorBody `json:"error,omitempty"`
 }
 
@@ -235,12 +235,16 @@ type lspMatch struct {
 }
 
 type lspProviderRun struct {
-	Locations   []lspclient.Location
-	Hovers      []lspclient.Hover
-	Signatures  []lspclient.Signature
-	Symbols     []lspclient.Symbol
-	Err         *appError
-	Unsupported bool
+	Locations           []lspclient.Location
+	Hovers              []lspclient.Hover
+	Signatures          []lspclient.Signature
+	Symbols             []lspclient.Symbol
+	Err                 *appError
+	Unsupported         bool
+	OmitLocationsCount  bool
+	OmitHoversCount     bool
+	OmitSignaturesCount bool
+	OmitSymbolsCount    bool
 }
 
 func isLSPNavigation(operation string) bool {
@@ -387,7 +391,8 @@ Wirecmd routes file operations to every configured LSP selector matching the
 file; workspace-symbols queries every configured provider.
 Normal calls retain sessions through the daemon; --direct uses one-shot
 processes. The bare lsp command is native help. Use wirecmd mcp lsp to reach a
-configured MCP server named lsp.
+configured MCP server named lsp. LSP definitions may pass one strict JSON
+initialization-options value; status never displays that document.
 `
 }
 
@@ -707,10 +712,11 @@ func runDirectLSPMatches(ctx context.Context, workspace, file string, request ls
 				return
 			}
 			redactor := newRedactor(secrets, lockedErr)
+			protectLSPInitializationOptions(redactor, match.Definition)
 			defer redactor.FlushTo(lockedErr)
-			session, err := lspclient.Start(ctx, lspclient.Command{Path: command.Path, Args: command.Args[1:], Env: command.Env, Dir: command.Dir, Stderr: redactor}, match.Context.Root, buildinfo.Version())
+			session, err := lspclient.Start(ctx, lspclient.Command{Path: command.Path, Args: command.Args[1:], Env: command.Env, Dir: command.Dir, Stderr: redactor}, match.Context.Root, buildinfo.Version(), initializationOptions(match.Definition))
 			if err != nil {
-				results[index].Err = lspOperationError(err, "initialize").redacted(redactor)
+				results[index].Err = sanitizeLSPError(lspOperationError(err, "initialize").redacted(redactor), match.Definition, "initialize")
 				return
 			}
 			defer session.Close()
@@ -720,7 +726,7 @@ func runDirectLSPMatches(ctx context.Context, workspace, file string, request ls
 				return
 			}
 			if err != nil {
-				results[index].Err = lspOperationError(err, request.Operation).redacted(redactor)
+				results[index].Err = sanitizeLSPError(lspOperationError(err, request.Operation).redacted(redactor), match.Definition, request.Operation)
 				return
 			}
 			redactLSPProviderRun(&results[index], redactor)
@@ -730,17 +736,77 @@ func runDirectLSPMatches(ctx context.Context, workspace, file string, request ls
 	return aggregateLSPRequestResults(request, workspace, file, matches, results)
 }
 
+func initializationOptions(definition config.LSP) []byte {
+	if definition.InitializationOptions == nil {
+		return nil
+	}
+	return definition.InitializationOptions.Raw
+}
+
+func protectLSPInitializationOptions(redactor *redactor, definition config.LSP) {
+	if definition.InitializationOptions != nil {
+		redactor.ProtectJSON(definition.InitializationOptions.Raw)
+	}
+}
+
+func sanitizeLSPError(appErr *appError, definition config.LSP, operation string) *appError {
+	if appErr == nil || definition.InitializationOptions == nil {
+		return appErr
+	}
+	providerFailureCode := "lsp_" + strings.ReplaceAll(operation, "-", "_") + "_failed"
+	result := *appErr
+	if appErr.code == providerFailureCode {
+		result.message = "the LSP provider failed during " + operation
+		result.action = "inspect the language server independently, correct its configuration, then retry"
+		result.details = nil
+		return &result
+	}
+	switch appErr.code {
+	case "lsp_encoding_unsupported":
+		result.message = "the LSP server selected an unsupported position encoding"
+	case "lsp_result_unsupported":
+		result.message = "the LSP server returned an unsupported result"
+	case "lsp_server_request_unsupported":
+		result.message = "the LSP server made an unsupported client request"
+	default:
+		return appErr
+	}
+	result.details = nil
+	return &result
+}
+
 func redactLSPProviderRun(result *lspProviderRun, redactor *redactor) {
+	locations := result.Locations[:0]
+	for locationIndex := range result.Locations {
+		location := &result.Locations[locationIndex]
+		if protectedLSPRange(location.Range, redactor) {
+			continue
+		}
+		location.Path = redactor.RedactPath(location.Path)
+		locations = append(locations, *location)
+	}
+	result.Locations = locations
+	hovers := result.Hovers[:0]
 	for hoverIndex := range result.Hovers {
-		for contentIndex := range result.Hovers[hoverIndex].Content {
-			content := &result.Hovers[hoverIndex].Content[contentIndex]
+		hover := &result.Hovers[hoverIndex]
+		if hover.Range != nil && protectedLSPRange(*hover.Range, redactor) {
+			continue
+		}
+		for contentIndex := range hover.Content {
+			content := &hover.Content[contentIndex]
 			content.Kind = redactor.Redact(content.Kind)
 			content.Text = redactor.Redact(content.Text)
 			content.Language = redactor.Redact(content.Language)
 		}
+		hovers = append(hovers, *hover)
 	}
+	result.Hovers = hovers
+	signatures := result.Signatures[:0]
 	for signatureIndex := range result.Signatures {
 		signature := &result.Signatures[signatureIndex]
+		if protectedLSPSignature(*signature, redactor) {
+			continue
+		}
 		signature.Label = redactor.Redact(signature.Label)
 		if signature.Documentation != nil {
 			signature.Documentation.Kind = redactor.Redact(signature.Documentation.Kind)
@@ -754,16 +820,62 @@ func redactLSPProviderRun(result *lspProviderRun, redactor *redactor) {
 				parameter.Documentation.Text = redactor.Redact(parameter.Documentation.Text)
 			}
 		}
+		signatures = append(signatures, *signature)
 	}
+	result.Signatures = signatures
+	symbols := result.Symbols[:0]
 	for symbolIndex := range result.Symbols {
-		redactLSPSymbol(&result.Symbols[symbolIndex], redactor)
+		symbol := &result.Symbols[symbolIndex]
+		if protectedLSPSymbol(*symbol, redactor) {
+			continue
+		}
+		redactLSPSymbol(symbol, redactor)
+		symbols = append(symbols, *symbol)
 	}
+	result.Symbols = symbols
+	result.OmitLocationsCount = redactor.matchesProtectedJSONInt(len(result.Locations))
+	result.OmitHoversCount = redactor.matchesProtectedJSONInt(len(result.Hovers))
+	result.OmitSignaturesCount = redactor.matchesProtectedJSONInt(len(result.Signatures))
+	result.OmitSymbolsCount = redactor.matchesProtectedJSONInt(len(result.Symbols))
+}
+
+func visibleLSPCount(value int, omit bool) *int {
+	if omit {
+		return nil
+	}
+	return &value
+}
+
+func protectedLSPRange(value lspclient.Range, redactor *redactor) bool {
+	return redactor.matchesProtectedJSONUint32(value.Start.Line) ||
+		redactor.matchesProtectedJSONUint32(value.Start.Column) ||
+		redactor.matchesProtectedJSONUint32(value.End.Line) ||
+		redactor.matchesProtectedJSONUint32(value.End.Column)
+}
+
+func protectedLSPSignature(value lspclient.Signature, redactor *redactor) bool {
+	if redactor.matchesProtectedJSONScalar(value.Active) {
+		return true
+	}
+	for _, parameter := range value.Parameters {
+		if redactor.matchesProtectedJSONScalar(parameter.Active) {
+			return true
+		}
+	}
+	return false
+}
+
+func protectedLSPSymbol(value lspclient.Symbol, redactor *redactor) bool {
+	return redactor.matchesProtectedJSONUint32(value.Kind) ||
+		redactor.matchesProtectedJSONScalar(value.Deprecated) ||
+		protectedLSPRange(value.Range, redactor) ||
+		value.SelectionRange != nil && protectedLSPRange(*value.SelectionRange, redactor)
 }
 
 func redactLSPSymbol(symbol *lspclient.Symbol, redactor *redactor) {
 	symbol.Name = redactor.Redact(symbol.Name)
 	symbol.KindName = redactor.Redact(symbol.KindName)
-	symbol.Path = redactor.Redact(symbol.Path)
+	symbol.Path = redactor.RedactPath(symbol.Path)
 	if symbol.Detail != nil {
 		value := redactor.Redact(*symbol.Detail)
 		symbol.Detail = &value
@@ -772,9 +884,16 @@ func redactLSPSymbol(symbol *lspclient.Symbol, redactor *redactor) {
 		value := redactor.Redact(*symbol.ContainerName)
 		symbol.ContainerName = &value
 	}
+	children := symbol.Children[:0]
 	for index := range symbol.Children {
-		redactLSPSymbol(&symbol.Children[index], redactor)
+		child := &symbol.Children[index]
+		if protectedLSPSymbol(*child, redactor) {
+			continue
+		}
+		redactLSPSymbol(child, redactor)
+		children = append(children, *child)
 	}
+	symbol.Children = children
 }
 
 func callLSPRequest(ctx context.Context, session *lspclient.Session, file string, request lspRequest, languageID string, result *lspProviderRun) error {
@@ -846,7 +965,7 @@ func aggregateLSPSignatureResults(request lspRequest, file string, matches []lsp
 			}
 		default:
 			outcome.Status = "ok"
-			outcome.Signatures = len(results[index].Signatures)
+			outcome.Signatures = visibleLSPCount(len(results[index].Signatures), results[index].OmitSignaturesCount)
 			successes++
 			for _, signature := range results[index].Signatures {
 				signatures = append(signatures, cliLSPSignature(match.Definition.Name, signature))
@@ -904,7 +1023,7 @@ func aggregateLSPResults(operation, file string, matches []lspMatch, results []l
 			}
 		default:
 			outcome.Status = "ok"
-			outcome.Locations = len(results[index].Locations)
+			outcome.Locations = visibleLSPCount(len(results[index].Locations), results[index].OmitLocationsCount)
 			successes++
 			for _, location := range results[index].Locations {
 				locations = append(locations, lspLocation{Provider: match.Definition.Name, Path: location.Path, Range: lspRange{Start: lspPosition{Line: int(location.Range.Start.Line), Column: int(location.Range.Start.Column)}, End: lspPosition{Line: int(location.Range.End.Line), Column: int(location.Range.End.Column)}}})
@@ -941,7 +1060,7 @@ func aggregateLSPHoverResults(request lspRequest, file string, matches []lspMatc
 			}
 		default:
 			outcome.Status = "ok"
-			outcome.Hovers = len(results[index].Hovers)
+			outcome.Hovers = visibleLSPCount(len(results[index].Hovers), results[index].OmitHoversCount)
 			successes++
 			for _, hover := range results[index].Hovers {
 				entry := lspHoverEntry{Provider: match.Definition.Name, Contents: make([]lspHoverContent, len(hover.Content))}
@@ -986,7 +1105,7 @@ func aggregateLSPSymbolResults(request lspRequest, workspace, file string, match
 			}
 		default:
 			outcome.Status = "ok"
-			outcome.Symbols = len(results[index].Symbols)
+			outcome.Symbols = visibleLSPCount(len(results[index].Symbols), results[index].OmitSymbolsCount)
 			successes++
 			for _, symbol := range results[index].Symbols {
 				symbols = append(symbols, cliLSPSymbol(match.Definition.Name, symbol))
@@ -1080,6 +1199,15 @@ func makeLSPStatusEnvelope(definitions []config.LSP, context invocationContext, 
 		state := lspRuntimeStatus{Status: "not_checked"}
 		if value, ok := runtime[definition.Name]; ok {
 			state = value
+		}
+		// A server may reflect arbitrary initialization data through serverInfo or
+		// through otherwise-valid capability enums. Keep provider-controlled
+		// initialize output out of the status channel whenever a document was
+		// supplied.
+		if definition.InitializationOptions != nil {
+			state.ServerName = ""
+			state.ServerVersion = ""
+			state.Capabilities = nil
 		}
 		providers = append(providers, lspDefinitionStatus{Name: definition.Name, Scope: string(definition.Scope), Root: root, ImplementationID: definition.ImplementationID, Executable: definition.Stdio.Command.Text, Selectors: selectors, Runtime: state})
 	}

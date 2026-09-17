@@ -1,9 +1,90 @@
 package config
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
+
+func TestParseLSPInitializationOptions(t *testing.T) {
+	for name, raw := range map[string]string{
+		"object":  `{"feature":true}`,
+		"array":   `[1,"two"]`,
+		"string":  `"value"`,
+		"number":  `123456789012345678901234567890`,
+		"boolean": `true`,
+		"null":    `null`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			source, err := ParseString("options.kdl", `wirecmd { lsp "primary" { initialization-options #"`+raw+`"# } }`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if source.LSPs[0].InitializationOptions == nil || !bytes.Equal(source.LSPs[0].InitializationOptions.Raw, []byte(raw)) || source.LSPs[0].InitializationOptions.Template {
+				t.Fatalf("initialization options = %#v", source.LSPs[0].InitializationOptions)
+			}
+		})
+	}
+}
+
+func TestLSPInitializationOptionsComposeByReplacement(t *testing.T) {
+	base, err := ParseString("base.kdl", `wirecmd { lsp "primary" { initialization-options #"{"base": true}"#; selector language-id="go"; stdio "gopls" } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inherited, err := ParseString("inherited.kdl", `wirecmd { lsp "primary" { implementation-id "same-options" } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replaced, err := ParseString("replaced.kdl", `wirecmd { lsp "primary" { initialization-options "null" } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	composed, err := Compose(base, inherited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(composed.LSPs[0].InitializationOptions.Raw); got != `{"base": true}` {
+		t.Fatalf("inherited initialization options = %s", got)
+	}
+	composed, err = Compose(base, replaced)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(composed.LSPs[0].InitializationOptions.Raw); got != "null" || composed.LSPs[0].InitializationOptions.File != "replaced.kdl" {
+		t.Fatalf("replaced initialization options = %#v", composed.LSPs[0].InitializationOptions)
+	}
+}
+
+func TestParseLSPInitializationOptionsTemplate(t *testing.T) {
+	source, err := ParseString("template.kdl", `wirecmd { lsp "primary" { initialization-options (template)#"{"root":"${wirecmd.project-root}","literal":"$$5"}"# } }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value := source.LSPs[0].InitializationOptions; value == nil || !value.Template {
+		t.Fatalf("initialization options = %#v", value)
+	}
+}
+
+func TestParseRejectsInvalidLSPInitializationOptions(t *testing.T) {
+	for name, node := range map[string]string{
+		"duplicate node":   `initialization-options "null"; initialization-options "true"`,
+		"duplicate key":    `initialization-options #"{"key":1,"key":2}"#`,
+		"trailing":         `initialization-options #"null true"#`,
+		"secret":           `initialization-options (secret)"env://OPTIONS"`,
+		"unknown type":     `initialization-options (other)"null"`,
+		"literal template": `initialization-options (template)#"{"value":"literal"}"#`,
+		"key template":     `initialization-options (template)#"{"${wirecmd.cwd}":"literal"}"#`,
+		"malformed":        `initialization-options (template)#"{"value":"$wirecmd.cwd"}"#`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseString("invalid.kdl", `wirecmd { lsp "primary" { `+node+` } }`)
+			if err == nil || strings.Contains(err.Error(), `{"key"`) {
+				t.Fatalf("ParseString() error = %v", err)
+			}
+		})
+	}
+}
 
 func TestParseAndComposeLSPSelectors(t *testing.T) {
 	base, err := ParseString("base.kdl", `wirecmd {

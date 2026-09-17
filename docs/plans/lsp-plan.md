@@ -158,7 +158,7 @@ selected execution configuration, daemon generation, and sensitive startup
 identity. Status retains the invocation project root at top level and reports
 each provider's scope and resolved root.
 The LSP slice introduced private daemon protocol version 6; the current client
-and daemon use version 14 after adding schema-aware trailing help, native LSP
+and daemon use version 15 after adding schema-aware trailing help, native LSP
 inspection and signature-help requests, MCP resources, age resolution, shared
 invocation context, scope-separated provider inputs, and daemon-side context
 materialization. Status
@@ -196,9 +196,9 @@ values. Materialized startup values participate in execution and retained
 identity, and `lsp status` reports the resolved executable without starting a
 provider.
 
-The same plan accepts arbitrary strict JSON `initialization-options` as a
-separate implementation change. That document owns its JSON composition,
-template, privacy, and qualification contract.
+The same plan's arbitrary strict JSON `initialization-options` contract is now
+implemented. That document owns its JSON composition, template, privacy, and
+qualification contract.
 
 ## Deferred work
 

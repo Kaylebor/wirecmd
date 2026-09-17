@@ -32,7 +32,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-const daemonProtocol = 14
+const daemonProtocol = 15
 
 type daemonAdmin struct {
 	command string
@@ -303,7 +303,15 @@ func semanticLSPExecution(definition config.LSP) any {
 	for _, selector := range definition.Selectors {
 		selectors = append(selectors, []any{selector.LanguageID, selector.Pattern})
 	}
-	return map[string]any{"name": definition.Name, "scope": definition.Scope, "selectors": selectors, "command": semanticValue(definition.Stdio.Command), "args": args, "env": env}
+	return map[string]any{"name": definition.Name, "scope": definition.Scope, "selectors": selectors, "initialization_options": semanticJSONValue(definition.InitializationOptions), "command": semanticValue(definition.Stdio.Command), "args": args, "env": env}
+}
+
+func semanticJSONValue(value *config.JSONValue) any {
+	if value == nil {
+		return nil
+	}
+	digest := sha256.Sum256(value.Raw)
+	return []any{value.Template, hex.EncodeToString(digest[:])}
 }
 
 func executionFingerprint(server config.Server, root *config.Root, cwd string) string {
@@ -1351,7 +1359,7 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 					d.markBroken(instance)
 					mapped = transportError("lsp_instance_unavailable", broken.Error(), "run wirecmd daemon reload or restart the daemon").redacted(instance.redactor)
 				}
-				results[index].Err = mapped
+				results[index].Err = sanitizeLSPError(mapped, match.Definition, request.LSPOperation)
 				return
 			}
 			redactLSPProviderRun(&results[index], instance.redactor)
@@ -1518,14 +1526,15 @@ func (d *daemon) startLSPInstance(entry *poolEntry, key string, definition confi
 	var started *retainedInstance
 	if appErr == nil {
 		redactor := newRedactor(secrets, d.stderr)
+		protectLSPInitializationOptions(redactor, definition)
 		workspace := cwd
 		if root != nil {
 			workspace = resolveRoot(*root)
 		}
-		session, err := lspclient.Start(d.ctx, lspclient.Command{Path: command.Path, Args: command.Args[1:], Env: command.Env, Dir: command.Dir, Stderr: redactor}, workspace, buildinfo.Version())
+		session, err := lspclient.Start(d.ctx, lspclient.Command{Path: command.Path, Args: command.Args[1:], Env: command.Env, Dir: command.Dir, Stderr: redactor}, workspace, buildinfo.Version(), initializationOptions(definition))
 		if err != nil {
 			redactor.FlushTo(d.stderr)
-			appErr = lspOperationError(err, "initialize").redacted(redactor)
+			appErr = sanitizeLSPError(lspOperationError(err, "initialize").redacted(redactor), definition, "initialize")
 		} else {
 			started = &retainedInstance{lspSession: session, redactor: redactor, lspName: definition.Name, lspWorkspace: workspace, lspExecution: lspExecutionFingerprint(definition, root, cwd), lspGeneration: generation}
 		}

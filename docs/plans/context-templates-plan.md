@@ -1,7 +1,6 @@
 # Context Templates and LSP Initialization Options
 
-Status: accepted; context templates implemented first, LSP initialization
-options follow in a separate reviewed change
+Status: implemented in two reviewed changes
 
 ## Purpose
 
@@ -51,7 +50,7 @@ protocol for this phase is 14.
 
 ## LSP initialization options
 
-The follow-up change adds one optional LSP child:
+An LSP definition may add one optional child:
 
 ```kdl
 initialization-options #"""
@@ -72,8 +71,10 @@ references only inside JSON string values through token-level transformation;
 object names, numbers, and structure remain unchanged. Secret references are
 not supported. The document is never printed or included verbatim in errors,
 status, logs, diagnostics, fingerprints, or IPC, while its materialized value
-does participate in execution and retained identity. The private daemon
-protocol for this phase is 15.
+does participate in execution and retained identity. A successful
+provider-controlled result field that is itself semantically equivalent JSON
+is redacted; ordinary language content containing a JSON fragment is not
+treated as secret material. The private daemon protocol for this phase is 15.
 
 Strict JSON validation rejects invalid UTF-8, duplicate object names, trailing
 values, and malformed syntax. The already pinned

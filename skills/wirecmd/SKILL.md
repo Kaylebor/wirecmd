@@ -91,11 +91,17 @@ the executable, arguments, environment, and selector language IDs:
 lsp "primary" {
     implementation-id "optional-stable-metadata"
     selector language-id="your-language-id"
+    initialization-options (template)#"{"root":"${wirecmd.project-root}"}"#
     stdio "your-language-server" {
         arg "--server-specific-option"
     }
 }
 ```
+
+`initialization-options` is one arbitrary strict JSON value. Omission sends no
+member; explicit JSON `null` is sent. With `(template)`, only JSON string values
+expand the three Wirecmd context references. Do not place secrets in the JSON,
+expect object-key expansion or deep merge, or expect the document in status.
 
 Selectors optionally accept a provider-root-relative `pattern`, defaulting to
 `**/*`. Matching definitions are queried concurrently and their locations are

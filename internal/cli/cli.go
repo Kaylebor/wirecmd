@@ -2313,9 +2313,11 @@ func writeJSON(writer io.Writer, value any) {
 }
 
 // redactor keeps at most the suffix that could start a secret spanning the
-// next write. It is intentionally only used for known resolved secret values.
+// next write. It protects known resolved secret values and whole provider
+// fields that reproduce explicitly registered JSON documents.
 type redactor struct {
 	secrets            []string
+	protectedJSON      []any
 	endpoint           string
 	endpointQuery      string
 	endpointQueryParts []string
@@ -2331,6 +2333,9 @@ func newRedactor(values []string, writer io.Writer) *redactor {
 }
 
 func (r *redactor) Redact(value string) string {
+	if r.matchesProtectedJSON(value) {
+		return "[REDACTED]"
+	}
 	if r.endpoint != "" {
 		value = strings.ReplaceAll(value, r.endpoint, r.safeEndpoint)
 		value = strings.ReplaceAll(value, r.endpointQuery, "[REDACTED]")
