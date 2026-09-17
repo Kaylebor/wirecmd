@@ -80,3 +80,18 @@ func TestRedactorProtectJSONDoesNotMatchEmptyPathComponents(t *testing.T) {
 		t.Fatalf("absolute path was redacted by empty string root: %q", got)
 	}
 }
+
+func TestRedactorProtectJSONMatchesDecodedStringAcrossPathComponents(t *testing.T) {
+	for _, protected := range []string{`"private/token"`, `"private\\token"`} {
+		redactor := newRedactor(nil, nil)
+		redactor.ProtectJSON([]byte(protected))
+
+		if got := redactor.RedactPath("/workspace/private/token/result.go"); got != "[REDACTED]" {
+			t.Fatalf("RedactPath() = %q for %s, want [REDACTED]", got, protected)
+		}
+		ordinary := "/workspace/xprivate/tokenx/result.go"
+		if got := redactor.RedactPath(ordinary); got != ordinary {
+			t.Fatalf("RedactPath() = %q for boundary-mismatched path, want %q", got, ordinary)
+		}
+	}
+}

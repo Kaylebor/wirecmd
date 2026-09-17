@@ -48,6 +48,16 @@ func (r *redactor) RedactPath(value string) string {
 	if redacted := r.Redact(value); redacted != value {
 		return redacted
 	}
+	valueComponents := splitPathComponents(value)
+	for _, protected := range r.protectedJSON {
+		decoded, ok := protected.(string)
+		if !ok || decoded == "" {
+			continue
+		}
+		if containsComponentSequence(valueComponents, splitPathComponents(decoded)) {
+			return "[REDACTED]"
+		}
+	}
 	for start := 0; start < len(value); start++ {
 		if start > 0 && value[start-1] != '/' && value[start-1] != '\\' {
 			continue
@@ -55,11 +65,6 @@ func (r *redactor) RedactPath(value string) string {
 		end := start
 		for end < len(value) && value[end] != '/' && value[end] != '\\' {
 			end++
-		}
-		for _, protected := range r.protectedJSON {
-			if decoded, ok := protected.(string); ok && decoded != "" && decoded == value[start:end] {
-				return "[REDACTED]"
-			}
 		}
 		decoder := json.NewDecoder(strings.NewReader(value[start:]))
 		decoder.UseNumber()
@@ -78,6 +83,31 @@ func (r *redactor) RedactPath(value string) string {
 		}
 	}
 	return value
+}
+
+func splitPathComponents(value string) []string {
+	return strings.FieldsFunc(value, func(character rune) bool {
+		return character == '/' || character == '\\'
+	})
+}
+
+func containsComponentSequence(value, protected []string) bool {
+	if len(protected) == 0 || len(protected) > len(value) {
+		return false
+	}
+	for start := 0; start <= len(value)-len(protected); start++ {
+		matched := true
+		for offset := range protected {
+			if value[start+offset] != protected[offset] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 func comparableJSON(raw []byte) (any, bool) {
