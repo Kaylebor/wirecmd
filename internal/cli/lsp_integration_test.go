@@ -212,6 +212,38 @@ env WIRECMD_LSP_ECHO_REQUEST_ERROR="1"
 	}
 }
 
+func TestLSPInitializationOptionsAreRedactedFromValidationErrors(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
+	startTestDaemon(t)
+	workspace := t.TempDir()
+	input := filepath.Join(workspace, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(workspace, "config.kdl")
+	writeSource(t, configPath, fmt.Sprintf(`wirecmd {
+root %s
+lsp "fixture" {
+selector language-id="fixture"
+initialization-options #"{"private":"never-print-validation"}"#
+stdio %s {
+arg "-test.run=TestCLILSPHelperProcess"
+env WIRECMD_LSP_ECHO_INIT_ENCODING="1"
+}
+}
+}
+`, strconv.Quote(workspace), strconv.Quote(os.Args[0])))
+	for _, prefix := range [][]string{{"--direct"}, {}} {
+		args := append(append([]string{}, prefix...), "--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2")
+		code, output, stderr := invoke(t, args)
+		appErr := decodeOutput(t, output)["error"].(map[string]any)
+		if code != exitProtocol || appErr["code"] != "lsp_encoding_unsupported" || strings.Contains(output, "never-print-validation") || strings.Contains(stderr, "never-print-validation") {
+			t.Fatalf("validation-error initialization-options redaction %v: code=%d stdout=%q stderr=%q", prefix, code, output, stderr)
+		}
+	}
+}
+
 func TestLSPInspectionDirectAndDaemon(t *testing.T) {
 	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
 	runtime := testRuntimeDirectory(t)
@@ -1028,6 +1060,17 @@ func (server cliLSPServer) Initialize(_ context.Context, params *protocol.Initia
 			WorkspaceSymbolProvider: protocol.Boolean(true),
 			TextDocumentSync:        &protocol.TextDocumentSyncOptions{OpenClose: &open, Change: &kind},
 		}
+	}
+	if os.Getenv("WIRECMD_LSP_ECHO_INIT_ENCODING") == "1" {
+		server.initializationOptions.mu.Lock()
+		raw := append([]byte(nil), server.initializationOptions.raw...)
+		server.initializationOptions.mu.Unlock()
+		var decoded any
+		if err := json.Unmarshal(raw, &decoded); err != nil {
+			return nil, fmt.Errorf("decode initialization options for position encoding")
+		}
+		pretty, _ := json.MarshalIndent(decoded, "", "  ")
+		capabilities.PositionEncoding = protocol.PositionEncodingKind(pretty)
 	}
 	serverName, serverVersion := "wirecmd-test-lsp", "test"
 	if os.Getenv("WIRECMD_LSP_ECHO_INIT_SERVER_INFO") == "1" {

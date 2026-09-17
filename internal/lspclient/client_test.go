@@ -3,6 +3,7 @@ package lspclient
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
@@ -199,6 +201,15 @@ func TestStartPreservesInitializationErrorsWithoutPrivateOptions(t *testing.T) {
 	_, err := Start(context.Background(), helperCommand("initialize-error"), t.TempDir(), "test", nil)
 	if err == nil || !strings.Contains(err.Error(), "actionable initialization failure") {
 		t.Fatalf("Start() error = %v", err)
+	}
+}
+
+func TestStartPreservesCancellationWithInitializationOptions(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := Start(ctx, helperCommand("slow-initialize"), t.TempDir(), "test", []byte(`{"private":true}`))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Start() error = %v, want deadline exceeded", err)
 	}
 }
 
@@ -511,7 +522,11 @@ type fakeServer struct {
 	changed   *sync.Cond
 }
 
-func (s *fakeServer) Initialize(_ context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
+func (s *fakeServer) Initialize(ctx context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
+	if s.mode == "slow-initialize" {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if s.mode == "initialize-error" {
 		return nil, fmt.Errorf("actionable initialization failure")
 	}

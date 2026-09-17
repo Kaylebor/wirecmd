@@ -750,12 +750,23 @@ func sanitizeLSPError(appErr *appError, definition config.LSP, operation string)
 		return appErr
 	}
 	providerFailureCode := "lsp_" + strings.ReplaceAll(operation, "-", "_") + "_failed"
-	if appErr.code != providerFailureCode {
+	result := *appErr
+	if appErr.code == providerFailureCode {
+		result.message = "the LSP provider failed during " + operation
+		result.action = "inspect the language server independently, correct its configuration, then retry"
+		result.details = nil
+		return &result
+	}
+	switch appErr.code {
+	case "lsp_encoding_unsupported":
+		result.message = "the LSP server selected an unsupported position encoding"
+	case "lsp_result_unsupported":
+		result.message = "the LSP server returned an unsupported result"
+	case "lsp_server_request_unsupported":
+		result.message = "the LSP server made an unsupported client request"
+	default:
 		return appErr
 	}
-	result := *appErr
-	result.message = "the LSP provider failed during " + operation
-	result.action = "inspect the language server independently, correct its configuration, then retry"
 	result.details = nil
 	return &result
 }
