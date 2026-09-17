@@ -744,6 +744,7 @@ func sanitizeLSPError(appErr *appError, definition config.LSP, operation string)
 	}
 	result := *appErr
 	result.message = "the LSP provider failed during " + operation
+	result.action = "inspect the language server independently, correct its configuration, then retry"
 	result.details = nil
 	return &result
 }

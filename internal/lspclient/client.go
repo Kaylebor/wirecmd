@@ -381,7 +381,10 @@ func Start(ctx context.Context, command Command, workspace, version string, init
 	initialized, err := server.Initialize(ctx, params)
 	if err != nil {
 		abortProcess(conn, cmd)
-		return nil, fmt.Errorf("initialize LSP server: %w", ErrInitialize)
+		if initializationOptions != nil {
+			return nil, fmt.Errorf("initialize LSP server: %w", ErrInitialize)
+		}
+		return nil, fmt.Errorf("initialize LSP server: %w", err)
 	}
 	if err := server.Initialized(ctx, &protocol.InitializedParams{}); err != nil {
 		abortProcess(conn, cmd)

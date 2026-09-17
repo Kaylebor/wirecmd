@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -192,6 +193,13 @@ func TestStartForwardsInitializationOptionsRawValue(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
+}
+
+func TestStartPreservesInitializationErrorsWithoutPrivateOptions(t *testing.T) {
+	_, err := Start(context.Background(), helperCommand("initialize-error"), t.TempDir(), "test", nil)
+	if err == nil || !strings.Contains(err.Error(), "actionable initialization failure") {
+		t.Fatalf("Start() error = %v", err)
+	}
 }
 
 func TestUnsupportedServerRequestIsReportedWhenDefinitionFails(t *testing.T) {
@@ -504,6 +512,9 @@ type fakeServer struct {
 }
 
 func (s *fakeServer) Initialize(_ context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
+	if s.mode == "initialize-error" {
+		return nil, fmt.Errorf("actionable initialization failure")
+	}
 	if s.mode == "initialization-options" {
 		want := []byte(" {\n  \"large\": 123456789012345678901234567890,\n  \"path\": \"/tmp/a\\\\b\",\n  \"escaped\": \"\\u0061\"\n} ")
 		if !bytes.Equal(params.InitializationOptions, bytes.TrimSpace(want)) {

@@ -181,6 +181,10 @@ env WIRECMD_LSP_ECHO_REQUEST_ERROR="1"
 		if code != exitProtocol || strings.Contains(output, "never-print-request") || strings.Contains(stderr, "never-print-request") || strings.Contains(output, `\u006eever-print-request`) || strings.Contains(stderr, `\u006eever-print-request`) {
 			t.Fatalf("request-error initialization-options redaction %v: code=%d stdout=%q stderr=%q", prefix, code, output, stderr)
 		}
+		action := decodeOutput(t, output)["error"].(map[string]any)["action"]
+		if action != "inspect the language server independently, correct its configuration, then retry" {
+			t.Fatalf("request-error recovery action %v = %v", prefix, action)
+		}
 	}
 }
 
