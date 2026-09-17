@@ -106,6 +106,7 @@ initialization-options (template)#"{"root":"${wirecmd.project-root}","large":123
 stdio %s {
 arg "-test.run=TestCLILSPHelperProcess"
 env WIRECMD_LSP_EXPECT_INITIALIZATION_OPTIONS=%s
+env WIRECMD_LSP_ECHO_INIT_SERVER_INFO="1"
 }
 }
 }
@@ -119,6 +120,17 @@ env WIRECMD_LSP_EXPECT_INITIALIZATION_OPTIONS=%s
 		}
 		args := append(append([]string{}, prefix...), "--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2")
 		mustInvokeLSP(t, args)
+	}
+	status := mustInvokeLSP(t, []string{"--config", configPath, "lsp", "status", "--file", input})
+	if strings.Contains(status, "initialization-only") {
+		t.Fatal("retained LSP status exposed initialization options through serverInfo")
+	}
+	runtime := decodeOutput(t, status)["lsp"].(map[string]any)["providers"].([]any)[0].(map[string]any)["runtime"].(map[string]any)
+	if _, ok := runtime["server_name"]; ok {
+		t.Fatalf("retained LSP status exposed provider-controlled server name: %#v", runtime)
+	}
+	if _, ok := runtime["server_version"]; ok {
+		t.Fatalf("retained LSP status exposed provider-controlled server version: %#v", runtime)
 	}
 }
 
@@ -1005,7 +1017,16 @@ func (server cliLSPServer) Initialize(_ context.Context, params *protocol.Initia
 			TextDocumentSync:        &protocol.TextDocumentSyncOptions{OpenClose: &open, Change: &kind},
 		}
 	}
-	return &protocol.InitializeResult{Capabilities: capabilities, ServerInfo: protocol.ServerInfo{Name: "wirecmd-test-lsp", Version: protocol.NewOptional("test")}}, nil
+	serverName, serverVersion := "wirecmd-test-lsp", "test"
+	if os.Getenv("WIRECMD_LSP_ECHO_INIT_SERVER_INFO") == "1" {
+		var decoded any
+		if err := json.Unmarshal(params.InitializationOptions, &decoded); err != nil {
+			return nil, fmt.Errorf("decode initialization options for server info")
+		}
+		pretty, _ := json.MarshalIndent(decoded, "", "  ")
+		serverName, serverVersion = string(pretty), string(pretty)
+	}
+	return &protocol.InitializeResult{Capabilities: capabilities, ServerInfo: protocol.ServerInfo{Name: serverName, Version: protocol.NewOptional(serverVersion)}}, nil
 }
 
 func (server cliLSPServer) Hover(_ context.Context, params *protocol.HoverParams) (*protocol.Hover, error) {

@@ -1100,6 +1100,14 @@ func makeLSPStatusEnvelope(definitions []config.LSP, context invocationContext, 
 		if value, ok := runtime[definition.Name]; ok {
 			state = value
 		}
+		// A server may reflect arbitrary initialization data through serverInfo.
+		// Keep provider-controlled identity out of the status channel whenever an
+		// initialization document was supplied; the capability summary remains
+		// safe because it contains only Wirecmd-normalized booleans and enums.
+		if definition.InitializationOptions != nil {
+			state.ServerName = ""
+			state.ServerVersion = ""
+		}
 		providers = append(providers, lspDefinitionStatus{Name: definition.Name, Scope: string(definition.Scope), Root: root, ImplementationID: definition.ImplementationID, Executable: definition.Stdio.Command.Text, Selectors: selectors, Runtime: state})
 	}
 	return lspStatusEnvelope{OK: true, LSP: lspStatusResult{Operation: lspStatus, Workspace: context.ProjectRoot, File: file, Providers: providers}}

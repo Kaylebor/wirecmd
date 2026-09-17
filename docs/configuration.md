@@ -330,7 +330,9 @@ options participate in retained-instance identity but are omitted from status,
 logs, diagnostics, errors, and IPC metadata. To preserve that boundary even
 when a language server echoes its input, Wirecmd suppresses child stderr and
 uses sanitized provider-error messages for definitions with initialization
-options.
+options. It also omits the provider-reported server name and version from
+`lsp status` for those definitions because a server can reflect initialization
+data through either field.
 
 ## Secret references
 
