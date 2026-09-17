@@ -1164,11 +1164,22 @@ func (d *daemon) executeLSP(ctx context.Context, request daemonRequest, cached *
 		if request.LSPFile != "" && !filepath.IsAbs(request.LSPFile) {
 			return errorReplyWithWarnings(invocationError("lsp_file_invalid", "daemon LSP status requires an absolute file", "use the Wirecmd CLI"), warnings)
 		}
-		definitions, appErr := materializeLSPDefinitions(cached.config.LSPs, providerContext)
+		definitions, appErr := materializeLSPStatusDefinitions(cached.config.LSPs, providerContext)
 		if appErr != nil {
 			return errorReplyWithWarnings(appErr, warnings)
 		}
-		return resultReply(makeLSPStatusEnvelope(definitions, providerContext, request.LSPFile, d.lspRuntimeStatuses(definitions, providerContext, generation)), warnings)
+		// Status displays only the resolved executable. Full best-effort
+		// materialization is used solely to identify an exactly matching retained
+		// instance; unavailable unused context leaves the provider disconnected.
+		runtimeDefinitions := make([]config.LSP, 0, len(cached.config.LSPs))
+		for _, definition := range cached.config.LSPs {
+			materialized, materializeErr := materializeLSP(definition, providerContext)
+			if materializeErr == nil {
+				runtimeDefinitions = append(runtimeDefinitions, materialized)
+			}
+		}
+		runtime := d.lspRuntimeStatuses(runtimeDefinitions, providerContext, generation)
+		return resultReply(makeLSPStatusEnvelope(definitions, providerContext, request.LSPFile, runtime), warnings)
 	}
 	if !isLSPNavigation(request.LSPOperation) && !isLSPInspection(request.LSPOperation) {
 		return errorReplyWithWarnings(invocationError("lsp_request_invalid", "daemon LSP request has an unsupported operation", "use a compatible Wirecmd CLI"), warnings)

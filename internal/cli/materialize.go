@@ -158,3 +158,15 @@ func materializeLSPDefinitions(definitions []config.LSP, context invocationConte
 	}
 	return result, nil
 }
+
+func materializeLSPStatusDefinitions(definitions []config.LSP, context invocationContext) ([]config.LSP, *appError) {
+	result := append([]config.LSP(nil), definitions...)
+	for index := range result {
+		command, appErr := materializeValue(result[index].Stdio.Command, context)
+		if appErr != nil {
+			return nil, appErr
+		}
+		result[index].Stdio.Command = command
+	}
+	return result, nil
+}

@@ -452,7 +452,7 @@ func runLSPCommand(ctx context.Context, opts options, request lspRequest, _ io.R
 		file = canonicalPath(file)
 	}
 	if request.Operation == lspStatus {
-		definitions, materializeErr := materializeLSPDefinitions(cfg.LSPs, providerContext)
+		definitions, materializeErr := materializeLSPStatusDefinitions(cfg.LSPs, providerContext)
 		if materializeErr != nil {
 			return nil, materializeErr
 		}

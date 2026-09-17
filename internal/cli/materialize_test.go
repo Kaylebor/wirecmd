@@ -164,6 +164,60 @@ func TestDirectLSPStatusReportsMaterializedExecutableWithoutStartingIt(t *testin
 	}
 }
 
+func TestLSPStatusDoesNotMaterializeUnusedInputs(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	t.Setenv("HOME", "")
+	t.Setenv("XDG_CONFIG_HOME", "relative")
+	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
+	startTestDaemon(t)
+	workspace := t.TempDir()
+	input := filepath.Join(workspace, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(workspace, "config.kdl")
+	writeSource(t, configPath, `wirecmd {
+        root `+strconv.Quote(workspace)+`
+        lsp "available" {
+            selector language-id="fixture" pattern="**/*.go"
+            stdio `+strconv.Quote(os.Args[0])+` {
+                arg "-test.run=TestCLILSPHelperProcess"
+            }
+        }
+        lsp "unavailable" {
+            selector language-id="typescript" pattern="**/*.ts"
+            stdio "never-started" {
+                arg (template)"${wirecmd.global-root}/unused"
+                env UNUSED=(template)"${wirecmd.global-root}"
+            }
+        }
+    }`)
+	definitionArgs := []string{"--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2"}
+	if code, output, stderr := invoke(t, definitionArgs); code != exitOK || stderr != "" {
+		t.Fatalf("start retained provider: code=%d stdout=%s stderr=%q", code, output, stderr)
+	}
+	for _, prefix := range [][]string{{"--direct"}, nil} {
+		args := append(prefix, "--config", configPath, "lsp", "status", "--file", input)
+		code, output, stderr := invoke(t, args)
+		if code != exitOK || stderr != "" {
+			t.Fatalf("%v: code=%d stdout=%s stderr=%q", prefix, code, output, stderr)
+		}
+		providers := decodeOutput(t, output)["lsp"].(map[string]any)["providers"].([]any)
+		if got := providers[1].(map[string]any)["executable"]; got != "never-started" {
+			t.Fatalf("%v: executable = %#v", prefix, got)
+		}
+		availableStatus := providers[0].(map[string]any)["runtime"].(map[string]any)["status"]
+		unavailableStatus := providers[1].(map[string]any)["runtime"].(map[string]any)["status"]
+		wantAvailable := "not_checked"
+		if prefix == nil {
+			wantAvailable = "connected"
+		}
+		if availableStatus != wantAvailable || unavailableStatus != "not_checked" {
+			t.Fatalf("%v: runtime statuses = %#v", prefix, providers)
+		}
+	}
+}
+
 func TestContextTemplatesReachStdioChildInDirectAndDaemonModes(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
 	cwd, err := os.Getwd()
