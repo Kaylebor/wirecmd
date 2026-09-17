@@ -293,7 +293,7 @@ lsp "typescript" {
     implementation-id "optional-metadata"
     selector language-id="typescript" pattern="**/*.ts"
     selector language-id="typescriptreact" pattern="**/*.tsx"
-    initialization-options #"""
+    initialization-options (template)#"""
     {
       "workspace": "typescript",
       "root": "${wirecmd.project-root}"

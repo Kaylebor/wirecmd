@@ -37,7 +37,7 @@ func TestLSPDefinitionDirectAndDaemon(t *testing.T) {
 	args := []string{"--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2"}
 	invalidArgs := []string{"--config", configPath, "lsp", "definition", "--file", filepath.Join(workspace, "missing.go"), "--line", "1", "--column", "1"}
 	badExecutableConfig := filepath.Join(workspace, "bad-executable.kdl")
-	writeSource(t, badExecutableConfig, fmt.Sprintf("wirecmd {\nroot %s\nlsp \"fixture\" {\nselector language-id=\"fixture\"\nstdio \"/wirecmd/does-not-exist\"\n}\n}\n", strconv.Quote(workspace)))
+	writeSource(t, badExecutableConfig, fmt.Sprintf("wirecmd {\nroot %s\nlsp \"fixture\" {\nselector language-id=\"fixture\"\ninitialization-options #\"{\"private\":true}\"#\nstdio \"/wirecmd/does-not-exist\"\n}\n}\n", strconv.Quote(workspace)))
 	code, output, stderr := invoke(t, []string{"--direct", "--config", badExecutableConfig, "lsp", "status", "--file", input})
 	if code != exitOK || stderr != "" || decodeOutput(t, output)["lsp"].(map[string]any)["providers"].([]any)[0].(map[string]any)["runtime"].(map[string]any)["status"] != "not_checked" {
 		t.Fatalf("direct status started or resolved the executable: code=%d stdout=%s stderr=%q", code, output, stderr)
@@ -46,6 +46,11 @@ func TestLSPDefinitionDirectAndDaemon(t *testing.T) {
 	code, output, stderr = invoke(t, directInvalid)
 	if code != exitInvocation || stderr != "" || decodeOutput(t, output)["error"].(map[string]any)["code"] != "lsp_position_invalid" {
 		t.Fatalf("direct invalid input started executable resolution: code=%d stdout=%s stderr=%q", code, output, stderr)
+	}
+	code, output, stderr = invoke(t, []string{"--direct", "--config", badExecutableConfig, "lsp", "definition", "--file", input, "--line", "1", "--column", "1"})
+	localError := decodeOutput(t, output)["error"].(map[string]any)
+	if code != exitTransport || stderr != "" || localError["code"] != "lsp_instance_unavailable" || localError["action"] != "correct the configured LSP executable or environment" {
+		t.Fatalf("direct local startup error was over-sanitized: code=%d stdout=%s stderr=%q", code, output, stderr)
 	}
 	code, output, stderr = invoke(t, invalidArgs)
 	if code != exitInvocation || stderr != "" || decodeOutput(t, output)["error"].(map[string]any)["code"] != "lsp_position_invalid" {
@@ -107,6 +112,7 @@ stdio %s {
 arg "-test.run=TestCLILSPHelperProcess"
 env WIRECMD_LSP_EXPECT_INITIALIZATION_OPTIONS=%s
 env WIRECMD_LSP_ECHO_INIT_SERVER_INFO="1"
+env WIRECMD_LSP_ECHO_INIT_SUCCESS="1"
 }
 }
 }
@@ -120,6 +126,11 @@ env WIRECMD_LSP_ECHO_INIT_SERVER_INFO="1"
 		}
 		args := append(append([]string{}, prefix...), "--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2")
 		mustInvokeLSP(t, args)
+		hoverArgs := append(append([]string{}, prefix...), "--config", configPath, "lsp", "hover", "--file", input, "--line", "1", "--column", "2")
+		hover := mustInvokeLSP(t, hoverArgs)
+		if strings.Contains(hover, "initialization-only") || !strings.Contains(hover, "[REDACTED]") {
+			t.Fatalf("successful LSP response exposed initialization options %v: %s", prefix, hover)
+		}
 	}
 	status := mustInvokeLSP(t, []string{"--config", configPath, "lsp", "status", "--file", input})
 	if strings.Contains(status, "initialization-only") {
@@ -1032,6 +1043,12 @@ func (server cliLSPServer) Initialize(_ context.Context, params *protocol.Initia
 func (server cliLSPServer) Hover(_ context.Context, params *protocol.HoverParams) (*protocol.Hover, error) {
 	if server.fail {
 		return nil, fmt.Errorf("provider failed")
+	}
+	if os.Getenv("WIRECMD_LSP_ECHO_INIT_SUCCESS") == "1" {
+		server.initializationOptions.mu.Lock()
+		raw := string(server.initializationOptions.raw)
+		server.initializationOptions.mu.Unlock()
+		return &protocol.Hover{Contents: &protocol.MarkupContent{Kind: protocol.MarkupKindMarkdown, Value: raw}, Range: &protocol.Range{Start: params.Position, End: params.Position}}, nil
 	}
 	return &protocol.Hover{Contents: &protocol.MarkupContent{Kind: protocol.MarkupKindMarkdown, Value: "**hover** " + server.provider}, Range: &protocol.Range{Start: params.Position, End: params.Position}}, nil
 }

@@ -708,6 +708,7 @@ func runDirectLSPMatches(ctx context.Context, workspace, file string, request ls
 				return
 			}
 			redactor := newRedactor(secrets, lockedErr)
+			protectLSPInitializationOptions(redactor, match.Definition)
 			defer redactor.FlushTo(lockedErr)
 			session, err := lspclient.Start(ctx, lspclient.Command{Path: command.Path, Args: command.Args[1:], Env: command.Env, Dir: command.Dir, Stderr: redactor}, match.Context.Root, buildinfo.Version(), initializationOptions(match.Definition))
 			if err != nil {
@@ -738,8 +739,18 @@ func initializationOptions(definition config.LSP) []byte {
 	return definition.InitializationOptions.Raw
 }
 
+func protectLSPInitializationOptions(redactor *redactor, definition config.LSP) {
+	if definition.InitializationOptions != nil {
+		redactor.ProtectSecrets(string(definition.InitializationOptions.Raw))
+	}
+}
+
 func sanitizeLSPError(appErr *appError, definition config.LSP, operation string) *appError {
 	if appErr == nil || definition.InitializationOptions == nil {
+		return appErr
+	}
+	providerFailureCode := "lsp_" + strings.ReplaceAll(operation, "-", "_") + "_failed"
+	if appErr.code != providerFailureCode {
 		return appErr
 	}
 	result := *appErr

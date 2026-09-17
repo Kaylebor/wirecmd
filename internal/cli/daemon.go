@@ -1526,6 +1526,7 @@ func (d *daemon) startLSPInstance(entry *poolEntry, key string, definition confi
 	var started *retainedInstance
 	if appErr == nil {
 		redactor := newRedactor(secrets, d.stderr)
+		protectLSPInitializationOptions(redactor, definition)
 		workspace := cwd
 		if root != nil {
 			workspace = resolveRoot(*root)
