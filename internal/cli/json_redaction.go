@@ -58,6 +58,10 @@ func (r *redactor) matchesProtectedJSONUint32(value uint32) bool {
 	return r.matchesProtectedJSONScalar(json.Number(strconv.FormatUint(uint64(value), 10)))
 }
 
+func (r *redactor) matchesProtectedJSONInt(value int) bool {
+	return r.matchesProtectedJSONScalar(json.Number(strconv.Itoa(value)))
+}
+
 // RedactPath also detects a protected JSON value occupying one complete path
 // component. This covers file URI normalization without treating JSON-looking
 // fragments embedded in ordinary filenames as protected values.

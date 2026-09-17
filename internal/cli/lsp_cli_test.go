@@ -177,6 +177,19 @@ func TestRedactLSPProviderRunSuppressesProtectedTypedScalars(t *testing.T) {
 	if len(boolResult.Signatures) != 1 || boolResult.Signatures[0].Label != "ordinary" || len(boolResult.Symbols) != 1 || boolResult.Symbols[0].Name != "ordinary" {
 		t.Fatalf("boolean scalar result filtering = %#v", boolResult)
 	}
+
+	countRedactor := newRedactor(nil, io.Discard)
+	countRedactor.ProtectJSON([]byte(`1`))
+	countResult := lspProviderRun{Locations: []lspclient.Location{{Path: "/ordinary.go", Range: lspclient.Range{Start: lspclient.Point{Line: 2}, End: lspclient.Point{Line: 3}}}}}
+	redactLSPProviderRun(&countResult, countRedactor)
+	value, appErr := aggregateLSPResults(lspDefinition, "/work/main.go", []lspMatch{{Definition: config.LSP{Name: "fixture"}}}, []lspProviderRun{countResult})
+	if appErr != nil {
+		t.Fatal(appErr)
+	}
+	envelope := value.(lspEnvelope)
+	if len(envelope.LSP.Locations) != 1 || envelope.LSP.Providers[0].Locations != nil {
+		t.Fatalf("protected provider count remained visible: %#v", envelope)
+	}
 }
 
 func TestLSPMCPServerEscapesRemainReachable(t *testing.T) {
@@ -277,7 +290,7 @@ func TestAggregateLSPInspectionResults(t *testing.T) {
 		t.Fatal(appErr)
 	}
 	hover := hoverValue.(lspHoverEnvelope)
-	if !hover.LSP.Partial || len(hover.LSP.Hovers) != 1 || hover.LSP.Hovers[0].Provider != "first" || hover.LSP.Providers[0].Hovers != 1 || hover.LSP.Providers[1].Status != "failed" {
+	if !hover.LSP.Partial || len(hover.LSP.Hovers) != 1 || hover.LSP.Hovers[0].Provider != "first" || hover.LSP.Providers[0].Hovers == nil || *hover.LSP.Providers[0].Hovers != 1 || hover.LSP.Providers[1].Status != "failed" {
 		t.Fatalf("hover=%#v", hover)
 	}
 
@@ -307,7 +320,7 @@ func TestAggregateLSPSignatureResults(t *testing.T) {
 		t.Fatal(appErr)
 	}
 	envelope := value.(lspSignatureEnvelope)
-	if !envelope.LSP.Partial || len(envelope.LSP.Signatures) != 1 || envelope.LSP.Signatures[0].Provider != "first" || !envelope.LSP.Signatures[0].Parameters[0].Active || envelope.LSP.Providers[0].Signatures != 1 || envelope.LSP.Providers[1].Status != "failed" {
+	if !envelope.LSP.Partial || len(envelope.LSP.Signatures) != 1 || envelope.LSP.Signatures[0].Provider != "first" || !envelope.LSP.Signatures[0].Parameters[0].Active || envelope.LSP.Providers[0].Signatures == nil || *envelope.LSP.Providers[0].Signatures != 1 || envelope.LSP.Providers[1].Status != "failed" {
 		t.Fatalf("signatures=%#v", envelope)
 	}
 	_, appErr = aggregateLSPSignatureResults(lspRequest{Operation: lspSignatureHelp}, "/work/main.go", matches, []lspProviderRun{{Unsupported: true}, {Unsupported: true}})

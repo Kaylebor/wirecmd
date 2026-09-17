@@ -228,7 +228,7 @@ func TestPrettyLSPHoverIsReadableAndTerminalSafe(t *testing.T) {
 			{Kind: "markdown", Text: "**literal**\n\x1b[2J"},
 			{Kind: "code", Language: "go", Text: "func main() {}"},
 		}}},
-		Providers: []lspHoverProviderOutcome{{Name: "first", Status: "ok", Hovers: 1}, {Name: "second", Status: "unsupported"}},
+		Providers: []lspHoverProviderOutcome{{Name: "first", Status: "ok", Hovers: visibleLSPCount(1, false)}, {Name: "second", Status: "unsupported"}},
 	}}
 	var output bytes.Buffer
 	writeOutput(&output, value, presentation{pretty: true})

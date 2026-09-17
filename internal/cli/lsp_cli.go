@@ -65,7 +65,7 @@ type lspLocation struct {
 type lspProviderOutcome struct {
 	Name      string     `json:"name"`
 	Status    string     `json:"status"`
-	Locations int        `json:"locations"`
+	Locations *int       `json:"locations,omitempty"`
 	Error     *errorBody `json:"error,omitempty"`
 }
 
@@ -97,7 +97,7 @@ type lspHoverEntry struct {
 type lspHoverProviderOutcome struct {
 	Name   string     `json:"name"`
 	Status string     `json:"status"`
-	Hovers int        `json:"hovers"`
+	Hovers *int       `json:"hovers,omitempty"`
 	Error  *errorBody `json:"error,omitempty"`
 }
 
@@ -138,7 +138,7 @@ type lspSignature struct {
 type lspSignatureProviderOutcome struct {
 	Name       string     `json:"name"`
 	Status     string     `json:"status"`
-	Signatures int        `json:"signatures"`
+	Signatures *int       `json:"signatures,omitempty"`
 	Error      *errorBody `json:"error,omitempty"`
 }
 
@@ -174,7 +174,7 @@ type lspSymbol struct {
 type lspSymbolProviderOutcome struct {
 	Name    string     `json:"name"`
 	Status  string     `json:"status"`
-	Symbols int        `json:"symbols"`
+	Symbols *int       `json:"symbols,omitempty"`
 	Error   *errorBody `json:"error,omitempty"`
 }
 
@@ -235,12 +235,16 @@ type lspMatch struct {
 }
 
 type lspProviderRun struct {
-	Locations   []lspclient.Location
-	Hovers      []lspclient.Hover
-	Signatures  []lspclient.Signature
-	Symbols     []lspclient.Symbol
-	Err         *appError
-	Unsupported bool
+	Locations           []lspclient.Location
+	Hovers              []lspclient.Hover
+	Signatures          []lspclient.Signature
+	Symbols             []lspclient.Symbol
+	Err                 *appError
+	Unsupported         bool
+	OmitLocationsCount  bool
+	OmitHoversCount     bool
+	OmitSignaturesCount bool
+	OmitSymbolsCount    bool
 }
 
 func isLSPNavigation(operation string) bool {
@@ -829,6 +833,17 @@ func redactLSPProviderRun(result *lspProviderRun, redactor *redactor) {
 		symbols = append(symbols, *symbol)
 	}
 	result.Symbols = symbols
+	result.OmitLocationsCount = redactor.matchesProtectedJSONInt(len(result.Locations))
+	result.OmitHoversCount = redactor.matchesProtectedJSONInt(len(result.Hovers))
+	result.OmitSignaturesCount = redactor.matchesProtectedJSONInt(len(result.Signatures))
+	result.OmitSymbolsCount = redactor.matchesProtectedJSONInt(len(result.Symbols))
+}
+
+func visibleLSPCount(value int, omit bool) *int {
+	if omit {
+		return nil
+	}
+	return &value
 }
 
 func protectedLSPRange(value lspclient.Range, redactor *redactor) bool {
@@ -950,7 +965,7 @@ func aggregateLSPSignatureResults(request lspRequest, file string, matches []lsp
 			}
 		default:
 			outcome.Status = "ok"
-			outcome.Signatures = len(results[index].Signatures)
+			outcome.Signatures = visibleLSPCount(len(results[index].Signatures), results[index].OmitSignaturesCount)
 			successes++
 			for _, signature := range results[index].Signatures {
 				signatures = append(signatures, cliLSPSignature(match.Definition.Name, signature))
@@ -1008,7 +1023,7 @@ func aggregateLSPResults(operation, file string, matches []lspMatch, results []l
 			}
 		default:
 			outcome.Status = "ok"
-			outcome.Locations = len(results[index].Locations)
+			outcome.Locations = visibleLSPCount(len(results[index].Locations), results[index].OmitLocationsCount)
 			successes++
 			for _, location := range results[index].Locations {
 				locations = append(locations, lspLocation{Provider: match.Definition.Name, Path: location.Path, Range: lspRange{Start: lspPosition{Line: int(location.Range.Start.Line), Column: int(location.Range.Start.Column)}, End: lspPosition{Line: int(location.Range.End.Line), Column: int(location.Range.End.Column)}}})
@@ -1045,7 +1060,7 @@ func aggregateLSPHoverResults(request lspRequest, file string, matches []lspMatc
 			}
 		default:
 			outcome.Status = "ok"
-			outcome.Hovers = len(results[index].Hovers)
+			outcome.Hovers = visibleLSPCount(len(results[index].Hovers), results[index].OmitHoversCount)
 			successes++
 			for _, hover := range results[index].Hovers {
 				entry := lspHoverEntry{Provider: match.Definition.Name, Contents: make([]lspHoverContent, len(hover.Content))}
@@ -1090,7 +1105,7 @@ func aggregateLSPSymbolResults(request lspRequest, workspace, file string, match
 			}
 		default:
 			outcome.Status = "ok"
-			outcome.Symbols = len(results[index].Symbols)
+			outcome.Symbols = visibleLSPCount(len(results[index].Symbols), results[index].OmitSymbolsCount)
 			successes++
 			for _, symbol := range results[index].Symbols {
 				symbols = append(symbols, cliLSPSymbol(match.Definition.Name, symbol))
