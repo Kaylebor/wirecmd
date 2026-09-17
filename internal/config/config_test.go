@@ -36,7 +36,7 @@ func TestParseAndComposeOneSource(t *testing.T) {
 	if server.ScopeProvenance != (Provenance{File: "testdata/valid.kdl", Path: `wirecmd.mcp["memory"].scope`}) {
 		t.Fatalf("scope provenance = %#v", server.ScopeProvenance)
 	}
-	if server.Stdio.Command != "go" || server.Stdio.CommandProvenance != (Provenance{File: "testdata/valid.kdl", Path: `wirecmd.mcp["memory"].stdio`}) {
+	if server.Stdio.Command.Text != "go" || server.Stdio.CommandProvenance != (Provenance{File: "testdata/valid.kdl", Path: `wirecmd.mcp["memory"].stdio`}) {
 		t.Fatalf("command = %#v", server.Stdio)
 	}
 	if got, want := valueTexts(server.Stdio.Args), []string{"run", "./cmd/memory"}; !sameStrings(got, want) {
@@ -141,7 +141,7 @@ func TestComposeMergesPartialSourcesAndRetainsProvenance(t *testing.T) {
 	if memory.Scope != ScopeWorkspace || memory.ScopeProvenance.File != "base.kdl" {
 		t.Fatalf("scope = %#v", memory)
 	}
-	if memory.Stdio.Command != "memory-local" || memory.Stdio.CommandProvenance.File != "local.kdl" {
+	if memory.Stdio.Command.Text != "memory-local" || memory.Stdio.CommandProvenance.File != "local.kdl" {
 		t.Fatalf("command = %#v", memory.Stdio)
 	}
 	if got, want := valueTexts(memory.Stdio.Args), []string{"serve"}; !sameStrings(got, want) {
@@ -348,7 +348,7 @@ func TestLoadEffectiveUsesOrderedPathsAndIdentifiesFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadEffective() error = %v", err)
 	}
-	if got := config.Servers[0].Stdio.Command; got != "local" {
+	if got := config.Servers[0].Stdio.Command.Text; got != "local" {
 		t.Fatalf("command = %q, want local", got)
 	}
 	if _, err := LoadEffective(nil); err == nil || !strings.Contains(err.Error(), "at least one config file") {
@@ -488,7 +488,7 @@ func TestComposeHTTPTransportAndProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	remote := config.Servers[0]
-	if remote.HTTP == nil || remote.HTTP.Endpoint != "https://example.test/mcp?tenant=base" {
+	if remote.HTTP == nil || remote.HTTP.Endpoint.Text != "https://example.test/mcp?tenant=base" {
 		t.Fatalf("HTTP = %#v", remote.HTTP)
 	}
 	if remote.HTTP.Provenance.File != "partial.kdl" || remote.HTTP.EndpointProvenance.File != "base.kdl" {
@@ -503,7 +503,7 @@ func TestComposeHTTPTransportAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.Servers[0].HTTP != nil || config.Servers[0].Stdio.Command != "replacement" {
+	if config.Servers[0].HTTP != nil || config.Servers[0].Stdio.Command.Text != "replacement" {
 		t.Fatalf("stdio replacement = %#v", config.Servers[0])
 	}
 
@@ -515,7 +515,7 @@ func TestComposeHTTPTransportAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.Servers[0].HTTP == nil || config.Servers[0].HTTP.Endpoint != "https://example.test/replacement" || config.Servers[0].Stdio.Provenance != (Provenance{}) {
+	if config.Servers[0].HTTP == nil || config.Servers[0].HTTP.Endpoint.Text != "https://example.test/replacement" || config.Servers[0].Stdio.Provenance != (Provenance{}) {
 		t.Fatalf("http replacement = %#v", config.Servers[0])
 	}
 }
@@ -586,7 +586,7 @@ func TestComposeHTTPFieldsRetainsOrderAndProvenance(t *testing.T) {
 	if http == nil {
 		t.Fatal("HTTP configuration is nil")
 	}
-	if got, want := http.Endpoint, "https://example.test/mcp?base=1"; got != want {
+	if got, want := http.Endpoint.Text, "https://example.test/mcp?base=1"; got != want {
 		t.Fatalf("endpoint = %q, want %q", got, want)
 	}
 	if got, want := httpFieldNames(http.Query), []string{"tenant", "empty", "added"}; !sameStrings(got, want) {
@@ -653,7 +653,7 @@ func TestComposeSSETransportRetainsHTTPFieldValuesAndProvenance(t *testing.T) {
 	if sse == nil || sse.Kind != HTTPTransportSSE {
 		t.Fatalf("SSE = %#v", sse)
 	}
-	if sse.Endpoint != "https://example.test/events?base=1" || sse.EndpointProvenance.File != "base.kdl" || sse.Provenance.File != "local.kdl" {
+	if sse.Endpoint.Text != "https://example.test/events?base=1" || sse.EndpointProvenance.File != "base.kdl" || sse.Provenance.File != "local.kdl" {
 		t.Fatalf("SSE endpoint/provenance = %#v", sse)
 	}
 	if got, want := httpFieldNames(sse.Query), []string{"tenant", "token"}; !sameStrings(got, want) {
@@ -718,7 +718,7 @@ func TestComposeTransportSwitchDoesNotInheritHTTPValuesOrOAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	transport := effective.Servers[0].HTTP
-	if transport == nil || transport.Kind != HTTPTransportSSE || transport.Endpoint != "https://example.test/events" || transport.OAuth != nil {
+	if transport == nil || transport.Kind != HTTPTransportSSE || transport.Endpoint.Text != "https://example.test/events" || transport.OAuth != nil {
 		t.Fatalf("HTTP to SSE switch = %#v", transport)
 	}
 	if got, want := httpFieldNames(transport.Query), []string{"retained"}; !sameStrings(got, want) {
@@ -739,7 +739,7 @@ func TestComposeTransportSwitchDoesNotInheritHTTPValuesOrOAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	transport = effective.Servers[0].HTTP
-	if transport == nil || transport.Kind != HTTPTransportHTTP || transport.Endpoint != "https://example.test/replacement" || len(transport.Query) != 0 || len(transport.Headers) != 0 || transport.OAuth != nil {
+	if transport == nil || transport.Kind != HTTPTransportHTTP || transport.Endpoint.Text != "https://example.test/replacement" || len(transport.Query) != 0 || len(transport.Headers) != 0 || transport.OAuth != nil {
 		t.Fatalf("SSE to HTTP switch = %#v", transport)
 	}
 }
@@ -758,7 +758,7 @@ func TestSSEConfigurationRejectsOAuth(t *testing.T) {
 	}
 
 	scope := ScopeWorkspace
-	endpoint := "https://example.test/events"
+	endpoint := Value{Text: "https://example.test/events"}
 	direct := &Source{Servers: []ServerSource{{
 		Name:  "events",
 		Scope: &scope,
@@ -860,10 +860,10 @@ func TestComposeOAuthConfigurationAndProvenance(t *testing.T) {
 	if oauth == nil {
 		t.Fatal("OAuth = nil")
 	}
-	if oauth.ClientID != "local-client" || oauth.ClientIDProvenance.File != "local.kdl" {
+	if oauth.ClientID.Text != "local-client" || oauth.ClientIDProvenance.File != "local.kdl" {
 		t.Fatalf("client ID = %#v", oauth)
 	}
-	if oauth.RedirectURI != "http://localhost:8766/callback" || oauth.RedirectURIProvenance.File != "local.kdl" {
+	if oauth.RedirectURI.Text != "http://localhost:8766/callback" || oauth.RedirectURIProvenance.File != "local.kdl" {
 		t.Fatalf("redirect URI = %#v", oauth)
 	}
 	if oauth.ClientSecret == nil || oauth.ClientSecret.Kind != ValueSecretReference || oauth.ClientSecret.Text != "env://BASE_SECRET" || oauth.ClientSecret.File != "base.kdl" {

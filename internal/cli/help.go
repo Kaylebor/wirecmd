@@ -419,6 +419,9 @@ Workspace calls share a resolved project root. MCP and LSP definitions may use
 scope "global" for global lifecycle ownership; global stdio and LSP providers
 require Wirecmd's global configuration directory. Configuration may disable the
 optional Git project signal with the KDL 2 setting git-root #false.
+Provider inputs can opt into canonical call paths with (template) and
+${wirecmd.cwd}, ${wirecmd.project-root}, or ${wirecmd.global-root}; expansion
+is explicit and single-pass.
 Normal capability calls are daemon-backed and never fall back to --direct.
 
 Start here:

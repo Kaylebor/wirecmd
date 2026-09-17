@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Kaylebor/wirecmd/internal/contexttmpl"
 	secretref "github.com/Kaylebor/wirecmd/internal/secrets"
 	"github.com/bmatcuk/doublestar/v4"
 	kdl "github.com/njreid/gokdl2"
@@ -27,13 +28,13 @@ const (
 	ScopeGlobal Scope = "global"
 )
 
-// ValueKind distinguishes public literals from references whose resolved value
-// must be treated as sensitive.
+// ValueKind distinguishes literals from values resolved at invocation time.
 type ValueKind uint8
 
 const (
 	ValueLiteral ValueKind = iota
 	ValueSecretReference
+	ValueTemplate
 )
 
 // Provenance identifies the configuration source and semantic location that
@@ -43,9 +44,7 @@ type Provenance struct {
 	Path string
 }
 
-// Value is a textual literal or an annotated secret reference. Text is the
-// literal text for ValueLiteral and the unresolved reference for
-// ValueSecretReference.
+// Value is a textual literal, secret reference, or context template.
 type Value struct {
 	Kind ValueKind
 	Text string
@@ -55,6 +54,11 @@ type Value struct {
 // IsSecret reports whether the value is an unresolved secret reference.
 func (v Value) IsSecret() bool {
 	return v.Kind == ValueSecretReference
+}
+
+// IsTemplate reports whether the value requires invocation-context expansion.
+func (v Value) IsTemplate() bool {
+	return v.Kind == ValueTemplate
 }
 
 // ResolvedValue is a value ready for a destination. Sensitive marks values
@@ -73,7 +77,7 @@ type Environment struct {
 
 // Stdio describes one complete local command transport.
 type Stdio struct {
-	Command           string
+	Command           Value
 	CommandProvenance Provenance
 	Args              []Value
 	Env               []Environment
@@ -102,7 +106,7 @@ const (
 // HTTP describes one complete HTTP-family transport.
 type HTTP struct {
 	Kind               HTTPTransportKind
-	Endpoint           string
+	Endpoint           Value
 	EndpointProvenance Provenance
 	Query              []HTTPField
 	Headers            []HTTPField
@@ -113,10 +117,10 @@ type HTTP struct {
 // OAuth describes a complete preregistered OAuth client for an HTTP server.
 // When OAuth is nil, execution may use dynamic client registration instead.
 type OAuth struct {
-	ClientID              string
+	ClientID              Value
 	ClientIDProvenance    Provenance
 	ClientSecret          *Value
-	RedirectURI           string
+	RedirectURI           Value
 	RedirectURIProvenance Provenance
 	Provenance
 }
@@ -225,7 +229,7 @@ type LSPSelector struct {
 // StdioSource is a potentially partial stdio layer. A non-empty Args slice
 // replaces inherited arguments; Env entries merge by name.
 type StdioSource struct {
-	Command           *string
+	Command           *Value
 	CommandProvenance Provenance
 	Args              []Value
 	Env               []Environment
@@ -237,7 +241,7 @@ type StdioSource struct {
 // from a weaker layer of the same kind.
 type HTTPSource struct {
 	Kind               HTTPTransportKind
-	Endpoint           *string
+	Endpoint           *Value
 	EndpointProvenance Provenance
 	Query              []HTTPField
 	Headers            []HTTPField
@@ -248,10 +252,10 @@ type HTTPSource struct {
 // OAuthSource is a potentially partial preregistered OAuth client layer.
 // ClientSecret is optional even in a complete OAuth configuration.
 type OAuthSource struct {
-	ClientID              *string
+	ClientID              *Value
 	ClientIDProvenance    Provenance
 	ClientSecret          *Value
-	RedirectURI           *string
+	RedirectURI           *Value
 	RedirectURIProvenance Provenance
 	Provenance
 }
@@ -625,11 +629,13 @@ func validate(config *Config) error {
 			if server.HTTP.Kind != HTTPTransportHTTP && server.HTTP.Kind != HTTPTransportSSE {
 				return validationError(server.HTTP.Provenance, path+".http", "unsupported HTTP transport %q", server.HTTP.Kind)
 			}
-			if server.HTTP.Endpoint == "" {
+			if server.HTTP.Endpoint.Text == "" {
 				return validationError(server.HTTP.Provenance, transportPath, "endpoint is required")
 			}
-			if err := validateHTTPEndpoint(server.HTTP.Endpoint); err != nil {
-				return validationError(server.HTTP.EndpointProvenance, transportPath, "%v", err)
+			if !server.HTTP.Endpoint.IsTemplate() {
+				if err := validateHTTPEndpoint(server.HTTP.Endpoint.Text); err != nil {
+					return validationError(server.HTTP.EndpointProvenance, transportPath, "%v", err)
+				}
 			}
 			if err := validateHTTPHeaders(server.HTTP.Headers); err != nil {
 				return validationError(err.Provenance, err.Path, "%s", err.Message)
@@ -641,21 +647,23 @@ func validate(config *Config) error {
 				if hasHTTPHeader(server.HTTP.Headers, "authorization") {
 					return validationError(server.HTTP.OAuth.Provenance, transportPath+".oauth", "oauth cannot be combined with an Authorization header")
 				}
-				if server.HTTP.OAuth.ClientID == "" {
+				if server.HTTP.OAuth.ClientID.Text == "" {
 					return validationError(server.HTTP.OAuth.Provenance, transportPath+".oauth.client-id", "client-id is required")
 				}
-				if server.HTTP.OAuth.RedirectURI == "" {
+				if server.HTTP.OAuth.RedirectURI.Text == "" {
 					return validationError(server.HTTP.OAuth.Provenance, transportPath+".oauth.redirect-uri", "redirect-uri is required")
 				}
-				if err := validateOAuthRedirectURI(server.HTTP.OAuth.RedirectURI); err != nil {
-					return validationError(server.HTTP.OAuth.RedirectURIProvenance, transportPath+".oauth.redirect-uri", "%v", err)
+				if !server.HTTP.OAuth.RedirectURI.IsTemplate() {
+					if err := validateOAuthRedirectURI(server.HTTP.OAuth.RedirectURI.Text); err != nil {
+						return validationError(server.HTTP.OAuth.RedirectURIProvenance, transportPath+".oauth.redirect-uri", "%v", err)
+					}
 				}
 			}
 		} else {
 			if server.Stdio.Provenance == (Provenance{}) {
 				return validationError(server.Provenance, path+".stdio", "stdio, http, or sse is required")
 			}
-			if server.Stdio.Command == "" {
+			if server.Stdio.Command.Text == "" {
 				return validationError(server.Stdio.Provenance, path+".stdio", "executable is required")
 			}
 		}
@@ -686,7 +694,7 @@ func validate(config *Config) error {
 		if lsp.Stdio.Provenance == (Provenance{}) {
 			return validationError(lsp.Provenance, path+".stdio", "stdio is required")
 		}
-		if lsp.Stdio.Command == "" {
+		if lsp.Stdio.Command.Text == "" {
 			return validationError(lsp.Stdio.Provenance, path+".stdio", "executable is required")
 		}
 	}
@@ -795,6 +803,29 @@ func validateOAuthRedirectURI(raw string) error {
 		return fmt.Errorf("redirect-uri port must be between 1 and 65535")
 	}
 	return nil
+}
+
+// ValidateMaterializedServer checks destinations whose syntax can only be
+// validated after invocation-context templates have been expanded.
+func ValidateMaterializedServer(server Server) (string, error) {
+	if server.HTTP == nil {
+		if server.Stdio.Command.Text == "" {
+			return "executable", fmt.Errorf("executable is required")
+		}
+		return "", nil
+	}
+	if err := validateHTTPEndpoint(server.HTTP.Endpoint.Text); err != nil {
+		return "endpoint", err
+	}
+	if server.HTTP.OAuth != nil {
+		if server.HTTP.OAuth.ClientID.Text == "" {
+			return "client-id", fmt.Errorf("client-id is required")
+		}
+		if err := validateOAuthRedirectURI(server.HTTP.OAuth.RedirectURI.Text); err != nil {
+			return "redirect-uri", err
+		}
+	}
+	return "", nil
 }
 
 func validationError(provenance Provenance, path, format string, args ...any) error {
@@ -1147,7 +1178,7 @@ func parseHTTP(file string, node *document.Node, serverPath string, kind HTTPTra
 	}
 	source := HTTPSource{Kind: kind, Provenance: provenance(file, path)}
 	if len(node.Arguments) == 1 {
-		endpoint, err := literalText(node.Arguments[0], path)
+		endpoint, err := parseProviderValue(node.Arguments[0], provenance(file, path), false)
 		if err != nil {
 			return HTTPSource{}, err
 		}
@@ -1214,7 +1245,7 @@ func parseOAuth(file string, node *document.Node, httpPath string) (OAuthSource,
 			if source.ClientID != nil {
 				return OAuthSource{}, fmt.Errorf("%s.client-id: duplicate client-id", path)
 			}
-			value, err := parseLiteral(child, path+".client-id")
+			value, err := parseSingleProviderValue(file, child, path+".client-id", false)
 			if err != nil {
 				return OAuthSource{}, err
 			}
@@ -1233,7 +1264,7 @@ func parseOAuth(file string, node *document.Node, httpPath string) (OAuthSource,
 			if source.RedirectURI != nil {
 				return OAuthSource{}, fmt.Errorf("%s.redirect-uri: duplicate redirect-uri", path)
 			}
-			value, err := parseLiteral(child, path+".redirect-uri")
+			value, err := parseSingleProviderValue(file, child, path+".redirect-uri", false)
 			if err != nil {
 				return OAuthSource{}, err
 			}
@@ -1302,7 +1333,7 @@ func parseStdio(file string, node *document.Node, serverPath string) (StdioSourc
 
 	stdio := StdioSource{Provenance: provenance(file, path)}
 	if len(node.Arguments) == 1 {
-		command, err := literalText(node.Arguments[0], path)
+		command, err := parseProviderValue(node.Arguments[0], provenance(file, path), false)
 		if err != nil {
 			return StdioSource{}, err
 		}
@@ -1346,6 +1377,16 @@ func parseSingleValue(file string, node *document.Node, path string) (Value, err
 	return parseValue(node.Arguments[0], provenance(file, path))
 }
 
+func parseSingleProviderValue(file string, node *document.Node, path string, secret bool) (Value, error) {
+	if err := plainNode(node, path); err != nil {
+		return Value{}, err
+	}
+	if len(node.Arguments) != 1 || len(node.Children) != 0 {
+		return Value{}, fmt.Errorf("%s: expected one value", path)
+	}
+	return parseProviderValue(node.Arguments[0], provenance(file, path), secret)
+}
+
 func parseEnvironment(file string, node *document.Node, stdioPath string) (Environment, error) {
 	path := stdioPath + ".env"
 	if node.Type != "" || len(node.Arguments) != 0 || node.Properties.Len() != 1 || len(node.Children) != 0 {
@@ -1363,6 +1404,10 @@ func parseEnvironment(file string, node *document.Node, stdioPath string) (Envir
 }
 
 func parseValue(value *document.Value, p Provenance) (Value, error) {
+	return parseProviderValue(value, p, true)
+}
+
+func parseProviderValue(value *document.Value, p Provenance, secret bool) (Value, error) {
 	text, ok := value.Value.(string)
 	if !ok {
 		return Value{}, fmt.Errorf("%s: expected a text value", p.Path)
@@ -1372,10 +1417,18 @@ func parseValue(value *document.Value, p Provenance) (Value, error) {
 	case "":
 		return Value{Kind: ValueLiteral, Text: text, Provenance: p}, nil
 	case "secret":
+		if !secret {
+			return Value{}, fmt.Errorf("%s: unsupported value annotation %q", p.Path, value.Type)
+		}
 		if _, err := secretref.ParseReference(text); err != nil {
 			return Value{}, fmt.Errorf("%s: secret reference must use SCHEME://LOCATOR", p.Path)
 		}
 		return Value{Kind: ValueSecretReference, Text: text, Provenance: p}, nil
+	case "template":
+		if err := contexttmpl.Validate(text); err != nil {
+			return Value{}, fmt.Errorf("%s: invalid template: %v", p.Path, err)
+		}
+		return Value{Kind: ValueTemplate, Text: text, Provenance: p}, nil
 	default:
 		return Value{}, fmt.Errorf("%s: unsupported value annotation %q", p.Path, value.Type)
 	}

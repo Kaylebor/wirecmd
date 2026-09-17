@@ -16,6 +16,9 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Global scope for MCP and LSP definitions, with global-root defaults,
   cross-project retained reuse, explicit LSP status, and scope-separated age
   secret resolution. Omitted scope continues to default to `workspace`.
+- Explicit context templates for provider inputs, exposing canonical caller
+  CWD, project root, and global Wirecmd root without introducing a general
+  template language or secret interpolation.
 
 ### Changed
 

@@ -121,6 +121,14 @@ for a provider whose lifecycle and default root belong to Wirecmd's global
 configuration directory rather than the current project. Global HTTP providers
 can be context-free; global stdio MCP and LSP providers require that directory.
 
+Provider inputs can explicitly materialize call context with `(template)` and
+`${wirecmd.cwd}`, `${wirecmd.project-root}`, or `${wirecmd.global-root}`. This
+works in stdio executable, argument, and environment values, HTTP/SSE and OAuth
+values, and the corresponding LSP stdio fields. Templates are single-pass and
+do not interpolate secrets or change Wirecmd control fields. See the
+[configuration reference](docs/configuration.md#context-templates) for the
+exact syntax and lifecycle effects.
+
 See the [configuration reference](docs/configuration.md) for the complete KDL
 surface, discovery and trust rules, transports, secrets, OAuth, and LSP setup.
 
@@ -171,6 +179,8 @@ contacts the daemon, resolves secrets, or opens OAuth.
 - [LSP plan](docs/plans/lsp-plan.md): native navigation and inspection contract.
 - [Scope and context plan](docs/plans/scope-context-plan.md): project-root
   resolution, workspace and global ownership, and scope-separated secrets.
+- [Context templates and LSP initialization options](docs/plans/context-templates-plan.md):
+  explicit context materialization and the accepted initialization JSON contract.
 - [Output contract](docs/plans/output-plan.md): terminal, JSON, and color behavior.
 - [Onboarding and completion](docs/plans/onboarding-plan.md): help and Fish
   completion contracts.

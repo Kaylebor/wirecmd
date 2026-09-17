@@ -97,7 +97,7 @@ func newOAuthRuntime(httpConfig config.HTTP, endpoint string, clientSecret strin
 	}
 	redirect := ""
 	if httpConfig.OAuth != nil {
-		redirect = httpConfig.OAuth.RedirectURI
+		redirect = httpConfig.OAuth.RedirectURI.Text
 	} else if found && runtime.payload.Config.RedirectURL != "" {
 		redirect = runtime.payload.Config.RedirectURL
 	}
@@ -198,7 +198,7 @@ func (r *oauthRuntime) Handler(httpConfig config.HTTP, clientSecret string) (mcp
 	registration := "dynamic"
 	if httpConfig.OAuth != nil {
 		registration = "preregistered"
-		credentials := &oauthex.ClientCredentials{ClientID: httpConfig.OAuth.ClientID}
+		credentials := &oauthex.ClientCredentials{ClientID: httpConfig.OAuth.ClientID.Text}
 		if clientSecret != "" {
 			credentials.ClientSecretAuth = &oauthex.ClientSecretAuth{ClientSecret: clientSecret}
 		}
@@ -455,7 +455,7 @@ func oauthCredentialIdentity(httpConfig config.HTTP, endpoint, clientSecret stri
 	registration := "dynamic"
 	clientID := ""
 	if httpConfig.OAuth != nil {
-		registration, clientID = "preregistered", httpConfig.OAuth.ClientID
+		registration, clientID = "preregistered", httpConfig.OAuth.ClientID.Text
 	}
 	canonical, err := json.Marshal(struct {
 		Version      int    `json:"version"`

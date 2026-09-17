@@ -158,9 +158,10 @@ selected execution configuration, daemon generation, and sensitive startup
 identity. Status retains the invocation project root at top level and reports
 each provider's scope and resolved root.
 The LSP slice introduced private daemon protocol version 6; the current client
-and daemon use version 13 after adding schema-aware trailing help, native LSP
+and daemon use version 14 after adding schema-aware trailing help, native LSP
 inspection and signature-help requests, MCP resources, age resolution, shared
-invocation context, and scope-separated provider inputs. Status
+invocation context, scope-separated provider inputs, and daemon-side context
+materialization. Status
 reports configured definitions, selectors, optional implementation metadata,
 executable, selector matches, and already-observed runtime identity and
 capabilities without starting a process.
@@ -187,13 +188,25 @@ Earlier validation notes may show the pre-rename KDL collection spelling
 `server`; those historical commands remain unchanged and do not describe the
 current contract.
 
+## Context materialization and accepted initialization follow-up
+
+The [context templates plan](context-templates-plan.md) permits explicit
+invocation-path references in LSP stdio executable, argument, and environment
+values. Materialized startup values participate in execution and retained
+identity, and `lsp status` reports the resolved executable without starting a
+provider.
+
+The same plan accepts arbitrary strict JSON `initialization-options` as a
+separate implementation change. That document owns its JSON composition,
+template, privacy, and qualification contract.
+
 ## Deferred work
 
 - Diagnostics, rename, code actions, and mutating operations.
 - Symbol resolution, indexing/completeness guarantees, and workspace settings.
 - Routing policy beyond selector matching and automatic provider fan-out.
-- `initializationOptions`, arbitrary KDL structured values, templates, and
-  language-specific settings.
+- Arbitrary KDL-to-JSON mapping, workspace settings, and language-specific
+  settings beyond the accepted initialization-options JSON string.
 - Language/server catalogs, executable discovery, presets, installation, and
   generated command lines.
 - Unsaved buffers, file watching, dynamic registration, workspace

@@ -625,6 +625,39 @@ func TestLSPNavigationOperations(t *testing.T) {
 	}
 }
 
+func TestLSPContextTemplateDirectDaemonParity(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	runtime := testRuntimeDirectory(t)
+	t.Setenv("XDG_RUNTIME_DIR", runtime)
+	startTestDaemon(t)
+	workspace := t.TempDir()
+	workspace = canonicalPath(workspace)
+	t.Setenv("WIRECMD_LSP_EXPECT_CONTEXT", workspace)
+	input := filepath.Join(workspace, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(workspace, "config.kdl")
+	writeSource(t, configPath, fmt.Sprintf(`wirecmd {
+root %s
+lsp "fixture" {
+  selector language-id="fixture"
+  stdio %s {
+    arg "-test.run=TestCLILSPHelperProcess"
+    env WIRECMD_LSP_CONTEXT=(template)"${wirecmd.project-root}"
+  }
+}
+}
+`, strconv.Quote(workspace), strconv.Quote(os.Args[0])))
+	args := []string{"--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2"}
+	for _, prefix := range [][]string{{"--direct"}, nil} {
+		code, output, stderr := invoke(t, append(prefix, args...))
+		if code != exitOK || stderr != "" {
+			t.Fatalf("%v: code=%d stdout=%s stderr=%q", prefix, code, output, stderr)
+		}
+	}
+}
+
 func TestLSPProviderFailureContracts(t *testing.T) {
 	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
 	runtime := testRuntimeDirectory(t)
@@ -771,6 +804,9 @@ type cliLSPServer struct {
 }
 
 func (server cliLSPServer) Initialize(_ context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
+	if expected := os.Getenv("WIRECMD_LSP_EXPECT_CONTEXT"); expected != "" && os.Getenv("WIRECMD_LSP_CONTEXT") != expected {
+		return nil, fmt.Errorf("materialized context does not match expected project root")
+	}
 	if expected := os.Getenv("WIRECMD_LSP_EXPECT_WORKSPACE"); expected != "" {
 		cwd, err := os.Getwd()
 		if err != nil {

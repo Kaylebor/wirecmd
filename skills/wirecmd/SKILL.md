@@ -50,6 +50,15 @@ run from `$XDG_CONFIG_HOME/wirecmd` (or `~/.config/wirecmd`) and return
 providers do not require it and can reuse across projects. Global LSP selectors
 and initialization stay rooted there, never in an arbitrary caller project.
 
+Provider-consumed strings may opt into call context with `(template)` and
+exactly `${wirecmd.cwd}`, `${wirecmd.project-root}`, or
+`${wirecmd.global-root}`. `$$` emits a literal dollar and expansion is
+single-pass. Use templates only for MCP/LSP stdio executable, arguments, and
+environment, or HTTP/SSE and OAuth values; do not suggest them for names,
+scope, roots, selectors, implementation metadata, or age identities. A
+context-dependent global provider may correctly use separate retained
+instances when materialized startup values differ.
+
 Manage trust explicitly when a workspace is not yet approved:
 
 ```sh
@@ -125,8 +134,8 @@ requires UTF-16 support.
 
 The bare `lsp` form is native help. A configured MCP server named `lsp` remains
 callable through `wirecmd mcp lsp`. Do not assume any language/server catalog,
-initialization options, unsaved-buffer support, mutating operations, or dynamic
-completion.
+initialization options until the accepted follow-up is implemented,
+unsaved-buffer support, mutating operations, or dynamic completion.
 
 ## Configure HTTP values
 
@@ -152,15 +161,16 @@ http "https://example.test/mcp" {
 }
 ```
 
-Unannotated values are literals. Secret references use either
+Unannotated values are literals. Context templates use `(template)` and the
+three fixed references documented above. Secret references use either
 `(secret)"env://NAME"` or `(secret)"age://NAME"`. `env` reads the invoking
 CLI environment; `age` reads the configured encrypted store only when the
 selected server executes. Query names are case-sensitive; header names are
 case-insensitive. A stronger source replaces a matching key without moving it
 and appends new keys. Existing endpoint query parameters are preserved unless a
 structural query entry has the same key. The `Authorization` value is complete,
-for example `Bearer ...`. Templates and dynamic per-request headers are not
-part of this slice. HTTP and MCP transport-owned headers are reserved and
+for example `Bearer ...`. Dynamic per-request headers are not part of this
+slice. HTTP and MCP transport-owned headers are reserved and
 rejected; see the [HTTP values plan](../../docs/plans/http-values-plan.md) for the
 complete list.
 

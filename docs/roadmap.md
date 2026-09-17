@@ -16,6 +16,7 @@ The governing documents are the [product thesis](product-thesis.md),
 [MCP resources plan](plans/resources-plan.md),
 [age secrets plan](plans/age-secrets-plan.md),
 [scope and invocation context plan](plans/scope-context-plan.md),
+[context templates and LSP initialization options plan](plans/context-templates-plan.md),
 [release-readiness contract](release-readiness.md), and
 [macOS qualification plan](plans/macos-plan.md). The
 [documentation index](README.md) routes contributors to authoritative milestone
@@ -70,20 +71,21 @@ are scope-separated. Its complete contract and qualification matrix are in the
 [scope and invocation context plan](plans/scope-context-plan.md). It does not
 introduce public context variables or templating.
 
+Explicit context templates are the next accepted, unreleased layer. Provider
+inputs may opt into canonical caller CWD, project-root, and global-root values;
+the complete contract is in the
+[context templates plan](plans/context-templates-plan.md). Arbitrary LSP
+initialization JSON follows as its own reviewed PR using that mechanism.
+
 ## Decision queue
 
 ### 1. LSP runtime configuration prerequisite
 
-Do not begin an LSP diagnostics slice before determining a server-neutral
-representation for `initializationOptions`, workspace settings, and related
-structured values in KDL. Also determine how Wirecmd observes asynchronous or
-indefinitely running LSP behavior without assuming a particular language
-server.
-
-This requires a synchronous design decision before an implementation plan. Do
-not hardcode a server catalog, infer language servers from executables or
-extensions, introduce another configuration format, or select a generic
-KDL-to-JSON/template mechanism without explicit deliberation.
+The accepted initialization-options contract uses one strict arbitrary JSON
+value, with context expansion limited to JSON string values. Its implementation
+must land after generic context templates. Workspace settings and asynchronous
+or indefinitely running LSP behavior remain undecided and must not be inferred
+from this narrow configuration facility.
 
 ### 2. Candidate LSP diagnostics and later edit-oriented operations
 

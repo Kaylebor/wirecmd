@@ -157,6 +157,46 @@ Global `age://` references read only the global encrypted store. Workspace
 references retain the trusted workspace-to-global store lookup order. Mixed
 scope operations keep their secret batches and retained metadata separate.
 
+## Context templates
+
+Provider-consumed strings can opt into three invocation-context references:
+
+- `${wirecmd.cwd}`: the canonical directory of this Wirecmd call;
+- `${wirecmd.project-root}`: the resolved canonical project root; and
+- `${wirecmd.global-root}`: Wirecmd's resolved global configuration path,
+  whether or not that directory currently exists.
+
+Use the `(template)` annotation explicitly:
+
+```kdl
+wirecmd {
+    mcp "project-aware" {
+        stdio (template)"${wirecmd.global-root}/bin/server" {
+            arg (template)"--workspace=${wirecmd.project-root}"
+            env CALLER_DIR=(template)"${wirecmd.cwd}"
+        }
+    }
+}
+```
+
+`$$` produces one literal `$`. Expansion is single-pass: text introduced by a
+resolved value is never expanded again. Unknown or malformed references and
+templates with no references are configuration errors. `(template)` and
+`(secret)` cannot be combined.
+
+Templates are supported for MCP and LSP stdio executables, arguments, and
+environment values; HTTP and SSE endpoints, query values, and header values;
+and OAuth client IDs, client secrets, and redirect URIs. They are deliberately
+not supported in Wirecmd control fields such as names, scope, `root`,
+`git-root`, selectors, implementation metadata, or age identity paths.
+
+Materialized values are validated like equivalent literals. They also
+participate in retained-instance identity: a `${wirecmd.cwd}` or
+`${wirecmd.project-root}` reference may deliberately split otherwise-global
+instances when its resolved value differs. Static listing and completion do
+not expand templates; `lsp status` resolves only the executable it reports and
+does not start the provider.
+
 ## MCP definitions
 
 An MCP definition is named with `mcp "NAME"` and must select exactly one
@@ -274,7 +314,8 @@ initialization options.
 
 ## Secret references
 
-Textual destination values are literals unless annotated as a secret:
+Textual destination values are literals unless annotated as a context template
+or secret. Secret references use:
 
 ```kdl
 env PUBLIC_MODE="development"

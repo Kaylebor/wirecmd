@@ -72,10 +72,14 @@ the secret material itself is neither logged nor persisted as identity data.
 
 ## Deferred scope
 
-This slice does not add OAuth flows, templated or dynamically composed values,
+This slice did not add OAuth flows, templated or dynamically composed values,
 dynamic per-request headers, retries, custom MCP transports, or a new
 configuration format. The official Go MCP SDK remains the owner of protocol and
 HTTP session behavior.
+
+Explicit invocation-context templates were later accepted by the
+[context templates plan](context-templates-plan.md); that plan supersedes only
+this historical template deferral.
 
 ## Acceptance record
 

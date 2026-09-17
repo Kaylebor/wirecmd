@@ -219,7 +219,7 @@ func TestSDKOAuthDCRPersistsAndReusesToken(t *testing.T) {
 	}))
 	defer server.Close()
 	baseURL = server.URL
-	httpConfig := config.HTTP{Endpoint: baseURL + "/mcp"}
+	httpConfig := config.HTTP{Endpoint: literalValue(baseURL + "/mcp")}
 	target, _, appErr := makeHTTPTarget(httpConfig, func(string) (string, bool) { return "", false })
 	if appErr != nil {
 		t.Fatal(appErr)
@@ -275,7 +275,7 @@ func TestSDKOAuthDCRPersistsAndReusesToken(t *testing.T) {
 func TestOAuthFixtureDCRValidatesSDKRequests(t *testing.T) {
 	useTestOAuthStore(t, &testKeyring{})
 	fixture := newOAuthFixture(t, oauthFixtureOptions{IssuerInCallback: true})
-	httpConfig := config.HTTP{Endpoint: fixture.Server.URL + "/mcp"}
+	httpConfig := config.HTTP{Endpoint: literalValue(fixture.Server.URL + "/mcp")}
 	target, _, appErr := makeHTTPTarget(httpConfig, func(string) (string, bool) { return "", false })
 	if appErr != nil {
 		t.Fatal(appErr)
@@ -312,7 +312,7 @@ func TestOAuthFixturePreregisteredClients(t *testing.T) {
 			}
 			redirect := "http://" + probe.Addr().String() + "/callback"
 			_ = probe.Close()
-			httpConfig := config.HTTP{Endpoint: fixture.Server.URL + "/mcp", OAuth: &config.OAuth{ClientID: "fixture-client", RedirectURI: redirect}}
+			httpConfig := config.HTTP{Endpoint: literalValue(fixture.Server.URL + "/mcp"), OAuth: &config.OAuth{ClientID: literalValue("fixture-client"), RedirectURI: literalValue(redirect)}}
 			if test.secret != "" {
 				httpConfig.OAuth.ClientSecret = &config.Value{Kind: config.ValueSecretReference, Text: "env://FIXTURE_CLIENT_SECRET"}
 			}
@@ -342,7 +342,7 @@ func TestOAuthFixtureProviderDenialAndRefreshFailureMapToAuthentication(t *testi
 	t.Run("provider denial", func(t *testing.T) {
 		useTestOAuthStore(t, &testKeyring{})
 		fixture := newOAuthFixture(t, oauthFixtureOptions{Deny: true, IssuerInCallback: true})
-		httpConfig := config.HTTP{Endpoint: fixture.Server.URL + "/mcp"}
+		httpConfig := config.HTTP{Endpoint: literalValue(fixture.Server.URL + "/mcp")}
 		target, _, appErr := makeHTTPTarget(httpConfig, func(string) (string, bool) { return "", false })
 		if appErr != nil {
 			t.Fatal(appErr)
@@ -361,7 +361,7 @@ func TestOAuthFixtureProviderDenialAndRefreshFailureMapToAuthentication(t *testi
 	t.Run("refresh invalid grant", func(t *testing.T) {
 		useTestOAuthStore(t, &testKeyring{})
 		fixture := newOAuthFixture(t, oauthFixtureOptions{IssuerInCallback: true})
-		httpConfig := config.HTTP{Endpoint: fixture.Server.URL + "/mcp"}
+		httpConfig := config.HTTP{Endpoint: literalValue(fixture.Server.URL + "/mcp")}
 		target, _, appErr := makeHTTPTarget(httpConfig, func(string) (string, bool) { return "", false })
 		if appErr != nil {
 			t.Fatal(appErr)
@@ -415,7 +415,7 @@ func TestOAuthFixtureProviderDenialAndRefreshFailureMapToAuthentication(t *testi
 func TestOAuthFixtureLegacyMetadataFallback(t *testing.T) {
 	useTestOAuthStore(t, &testKeyring{})
 	fixture := newOAuthFixture(t, oauthFixtureOptions{LegacyASMetadata: true})
-	httpConfig := config.HTTP{Endpoint: fixture.Server.URL + "/mcp"}
+	httpConfig := config.HTTP{Endpoint: literalValue(fixture.Server.URL + "/mcp")}
 	target, _, appErr := makeHTTPTarget(httpConfig, func(string) (string, bool) { return "", false })
 	if appErr != nil {
 		t.Fatal(appErr)
@@ -434,7 +434,7 @@ func TestOAuthFixtureLegacyMetadataFallback(t *testing.T) {
 func TestOAuthFixtureOriginAndLegacyFallbackWithoutMetadataHint(t *testing.T) {
 	useTestOAuthStore(t, &testKeyring{})
 	fixture := newOAuthFixture(t, oauthFixtureOptions{OmitMetadataHint: true, PRMNotFound: true, LegacyASMetadata: true})
-	httpConfig := config.HTTP{Endpoint: fixture.Server.URL + "/mcp"}
+	httpConfig := config.HTTP{Endpoint: literalValue(fixture.Server.URL + "/mcp")}
 	target, _, appErr := makeHTTPTarget(httpConfig, func(string) (string, bool) { return "", false })
 	if appErr != nil {
 		t.Fatal(appErr)
@@ -462,7 +462,7 @@ func TestOAuthFixtureStateAndIssuerFailuresMapToProtocolError(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			useTestOAuthStore(t, &testKeyring{})
 			fixture := newOAuthFixture(t, test.options)
-			httpConfig := config.HTTP{Endpoint: fixture.Server.URL + "/mcp"}
+			httpConfig := config.HTTP{Endpoint: literalValue(fixture.Server.URL + "/mcp")}
 			target, _, appErr := makeHTTPTarget(httpConfig, func(string) (string, bool) { return "", false })
 			if appErr != nil {
 				t.Fatal(appErr)
@@ -488,13 +488,13 @@ func TestOAuthRuntimeStoreContentionPrecedesCallbackBinding(t *testing.T) {
 	}
 	redirect := "http://" + probe.Addr().String() + "/callback"
 	_ = probe.Close()
-	httpConfig := config.HTTP{Endpoint: "https://mcp.example/mcp", OAuth: &config.OAuth{ClientID: "fixture-client", RedirectURI: redirect}}
-	first, appErr := newOAuthRuntime(httpConfig, httpConfig.Endpoint, "", true, true, nil)
+	httpConfig := config.HTTP{Endpoint: literalValue("https://mcp.example/mcp"), OAuth: &config.OAuth{ClientID: literalValue("fixture-client"), RedirectURI: literalValue(redirect)}}
+	first, appErr := newOAuthRuntime(httpConfig, httpConfig.Endpoint.Text, "", true, true, nil)
 	if appErr != nil {
 		t.Fatal(appErr)
 	}
 	defer first.Close()
-	second, appErr := newOAuthRuntime(httpConfig, httpConfig.Endpoint, "", true, true, nil)
+	second, appErr := newOAuthRuntime(httpConfig, httpConfig.Endpoint.Text, "", true, true, nil)
 	if appErr != nil {
 		t.Fatal(appErr)
 	}
@@ -571,7 +571,7 @@ func TestStaticAuthorizationAndServerListingDoNotUseKeyring(t *testing.T) {
 func TestOAuthFixtureMalformedMetadataMapsToProtocolFailure(t *testing.T) {
 	useTestOAuthStore(t, &testKeyring{})
 	fixture := newOAuthFixture(t, oauthFixtureOptions{MalformedPRM: true})
-	httpConfig := config.HTTP{Endpoint: fixture.Server.URL + "/mcp"}
+	httpConfig := config.HTTP{Endpoint: literalValue(fixture.Server.URL + "/mcp")}
 	target, _, appErr := makeHTTPTarget(httpConfig, func(string) (string, bool) { return "", false })
 	if appErr != nil {
 		t.Fatal(appErr)
@@ -595,8 +595,8 @@ func TestOAuthCallbackRejectsBadRequestsAndClosesOnCancellation(t *testing.T) {
 	}
 	redirect := "http://" + probe.Addr().String() + "/callback"
 	_ = probe.Close()
-	httpConfig := config.HTTP{Endpoint: "https://mcp.example/mcp", OAuth: &config.OAuth{ClientID: "fixture-client", RedirectURI: redirect}}
-	runtime, appErr := newOAuthRuntime(httpConfig, httpConfig.Endpoint, "", true, true, nil)
+	httpConfig := config.HTTP{Endpoint: literalValue("https://mcp.example/mcp"), OAuth: &config.OAuth{ClientID: literalValue("fixture-client"), RedirectURI: literalValue(redirect)}}
+	runtime, appErr := newOAuthRuntime(httpConfig, httpConfig.Endpoint.Text, "", true, true, nil)
 	if appErr != nil {
 		t.Fatal(appErr)
 	}
@@ -734,7 +734,7 @@ func TestOAuthFixtureExplicitLoginReusesRegistrationAndReplacesCredential(t *tes
 		isInteractiveTerminal, openAuthorizationURL = previousTerminal, previousOpen
 	})
 
-	identity, err := oauthCredentialIdentity(config.HTTP{Endpoint: fixture.Server.URL + "/mcp"}, fixture.Server.URL+"/mcp", "")
+	identity, err := oauthCredentialIdentity(config.HTTP{Endpoint: literalValue(fixture.Server.URL + "/mcp")}, fixture.Server.URL+"/mcp", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -955,14 +955,14 @@ func TestDaemonOAuthFlowLockPrecedesFixedCallbackBind(t *testing.T) {
 	}
 	redirect := "http://" + probe.Addr().String() + "/callback"
 	_ = probe.Close()
-	httpConfig := config.HTTP{Endpoint: "https://mcp.example/mcp", OAuth: &config.OAuth{ClientID: "client", RedirectURI: redirect}}
+	httpConfig := config.HTTP{Endpoint: literalValue("https://mcp.example/mcp"), OAuth: &config.OAuth{ClientID: literalValue("client"), RedirectURI: literalValue(redirect)}}
 	d := &daemon{authFlows: map[string]struct{}{}}
-	first, appErr := newOAuthRuntime(httpConfig, httpConfig.Endpoint, "", true, true, func(string) {})
+	first, appErr := newOAuthRuntime(httpConfig, httpConfig.Endpoint.Text, "", true, true, func(string) {})
 	if appErr != nil {
 		t.Fatal(appErr)
 	}
 	defer first.Close()
-	second, appErr := newOAuthRuntime(httpConfig, httpConfig.Endpoint, "", true, true, func(string) {})
+	second, appErr := newOAuthRuntime(httpConfig, httpConfig.Endpoint.Text, "", true, true, func(string) {})
 	if appErr != nil {
 		t.Fatal(appErr)
 	}
