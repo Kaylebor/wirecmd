@@ -851,18 +851,10 @@ func protectedLSPSignature(value lspclient.Signature, redactor *redactor) bool {
 }
 
 func protectedLSPSymbol(value lspclient.Symbol, redactor *redactor) bool {
-	if redactor.matchesProtectedJSONUint32(value.Kind) ||
+	return redactor.matchesProtectedJSONUint32(value.Kind) ||
 		redactor.matchesProtectedJSONScalar(value.Deprecated) ||
 		protectedLSPRange(value.Range, redactor) ||
-		value.SelectionRange != nil && protectedLSPRange(*value.SelectionRange, redactor) {
-		return true
-	}
-	for _, child := range value.Children {
-		if protectedLSPSymbol(child, redactor) {
-			return true
-		}
-	}
-	return false
+		value.SelectionRange != nil && protectedLSPRange(*value.SelectionRange, redactor)
 }
 
 func redactLSPSymbol(symbol *lspclient.Symbol, redactor *redactor) {
@@ -877,9 +869,16 @@ func redactLSPSymbol(symbol *lspclient.Symbol, redactor *redactor) {
 		value := redactor.Redact(*symbol.ContainerName)
 		symbol.ContainerName = &value
 	}
+	children := symbol.Children[:0]
 	for index := range symbol.Children {
-		redactLSPSymbol(&symbol.Children[index], redactor)
+		child := &symbol.Children[index]
+		if protectedLSPSymbol(*child, redactor) {
+			continue
+		}
+		redactLSPSymbol(child, redactor)
+		children = append(children, *child)
 	}
+	symbol.Children = children
 }
 
 func callLSPRequest(ctx context.Context, session *lspclient.Session, file string, request lspRequest, languageID string, result *lspProviderRun) error {

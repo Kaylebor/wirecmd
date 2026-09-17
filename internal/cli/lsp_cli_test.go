@@ -157,10 +157,13 @@ func TestRedactLSPProviderRunSuppressesProtectedTypedScalars(t *testing.T) {
 			{Range: &lspclient.Range{Start: lspclient.Point{Column: 12}}},
 			{Content: []lspclient.HoverBlock{{Text: "ordinary"}}},
 		},
-		Symbols: []lspclient.Symbol{{Name: "protected", Kind: 12}, {Name: "ordinary", Kind: 13}},
+		Symbols: []lspclient.Symbol{
+			{Name: "protected", Kind: 12},
+			{Name: "ordinary", Kind: 13, Children: []lspclient.Symbol{{Name: "protected-child", Kind: 12}, {Name: "ordinary-child", Kind: 14}}},
+		},
 	}
 	redactLSPProviderRun(&numberResult, numberRedactor)
-	if len(numberResult.Locations) != 1 || numberResult.Locations[0].Path != "/ordinary.go" || len(numberResult.Hovers) != 1 || len(numberResult.Symbols) != 1 || numberResult.Symbols[0].Name != "ordinary" {
+	if len(numberResult.Locations) != 1 || numberResult.Locations[0].Path != "/ordinary.go" || len(numberResult.Hovers) != 1 || len(numberResult.Symbols) != 1 || numberResult.Symbols[0].Name != "ordinary" || len(numberResult.Symbols[0].Children) != 1 || numberResult.Symbols[0].Children[0].Name != "ordinary-child" {
 		t.Fatalf("numeric scalar result filtering = %#v", numberResult)
 	}
 
