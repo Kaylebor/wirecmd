@@ -42,3 +42,16 @@ func TestRedactorProtectJSONComparesUnboundedExponentsExactly(t *testing.T) {
 		t.Fatalf("distinct unbounded number was redacted: %q", got)
 	}
 }
+
+func TestRedactorProtectJSONDetectsCompletePathComponents(t *testing.T) {
+	redactor := newRedactor(nil, io.Discard)
+	redactor.ProtectJSON([]byte(`{"private":"x"}`))
+
+	if got := redactor.RedactPath(`/workspace/{"private":"x"}/result.go`); got != "[REDACTED]" {
+		t.Fatalf("protected JSON path component = %q", got)
+	}
+	ordinary := `/workspace/prefix-{"private":"x"}/result.go`
+	if got := redactor.RedactPath(ordinary); got != ordinary {
+		t.Fatalf("embedded filename fragment was redacted: %q", got)
+	}
+}

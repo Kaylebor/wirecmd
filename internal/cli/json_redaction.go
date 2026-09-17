@@ -36,6 +36,36 @@ func (r *redactor) matchesProtectedJSON(value string) bool {
 	return false
 }
 
+// RedactPath also detects a protected JSON value occupying one complete path
+// component. This covers file URI normalization without treating JSON-looking
+// fragments embedded in ordinary filenames as protected values.
+func (r *redactor) RedactPath(value string) string {
+	if redacted := r.Redact(value); redacted != value {
+		return redacted
+	}
+	for start := 0; start < len(value); start++ {
+		if start > 0 && value[start-1] != '/' && value[start-1] != '\\' {
+			continue
+		}
+		decoder := json.NewDecoder(strings.NewReader(value[start:]))
+		decoder.UseNumber()
+		var candidate any
+		if err := decoder.Decode(&candidate); err != nil {
+			continue
+		}
+		end := start + int(decoder.InputOffset())
+		if end < len(value) && value[end] != '/' && value[end] != '\\' {
+			continue
+		}
+		for _, protected := range r.protectedJSON {
+			if equalJSON(protected, candidate) {
+				return "[REDACTED]"
+			}
+		}
+	}
+	return value
+}
+
 func comparableJSON(raw []byte) (any, bool) {
 	if !jsontext.Value(raw).IsValid() {
 		return nil, false

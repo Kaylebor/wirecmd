@@ -772,6 +772,9 @@ func sanitizeLSPError(appErr *appError, definition config.LSP, operation string)
 }
 
 func redactLSPProviderRun(result *lspProviderRun, redactor *redactor) {
+	for locationIndex := range result.Locations {
+		result.Locations[locationIndex].Path = redactor.RedactPath(result.Locations[locationIndex].Path)
+	}
 	for hoverIndex := range result.Hovers {
 		for contentIndex := range result.Hovers[hoverIndex].Content {
 			content := &result.Hovers[hoverIndex].Content[contentIndex]
@@ -804,7 +807,7 @@ func redactLSPProviderRun(result *lspProviderRun, redactor *redactor) {
 func redactLSPSymbol(symbol *lspclient.Symbol, redactor *redactor) {
 	symbol.Name = redactor.Redact(symbol.Name)
 	symbol.KindName = redactor.Redact(symbol.KindName)
-	symbol.Path = redactor.Redact(symbol.Path)
+	symbol.Path = redactor.RedactPath(symbol.Path)
 	if symbol.Detail != nil {
 		value := redactor.Redact(*symbol.Detail)
 		symbol.Detail = &value

@@ -244,6 +244,37 @@ env WIRECMD_LSP_ECHO_INIT_ENCODING="1"
 	}
 }
 
+func TestLSPInitializationOptionsAreRedactedFromNavigationPaths(t *testing.T) {
+	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
+	t.Setenv("XDG_RUNTIME_DIR", testRuntimeDirectory(t))
+	startTestDaemon(t)
+	workspace := t.TempDir()
+	input := filepath.Join(workspace, "input.go")
+	if err := os.WriteFile(input, []byte("call()\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(workspace, "config.kdl")
+	writeSource(t, configPath, fmt.Sprintf(`wirecmd {
+root %s
+lsp "fixture" {
+selector language-id="fixture"
+initialization-options #"{"private":"never-print-location"}"#
+stdio %s {
+arg "-test.run=TestCLILSPHelperProcess"
+env WIRECMD_LSP_ECHO_INIT_LOCATION="1"
+}
+}
+}
+`, strconv.Quote(workspace), strconv.Quote(os.Args[0])))
+	for _, prefix := range [][]string{{"--direct"}, {}} {
+		args := append(append([]string{}, prefix...), "--config", configPath, "lsp", "definition", "--file", input, "--line", "1", "--column", "2")
+		output := mustInvokeLSP(t, args)
+		if strings.Contains(output, "never-print-location") || !strings.Contains(output, "[REDACTED]") {
+			t.Fatalf("navigation-path initialization-options redaction %v: %s", prefix, output)
+		}
+	}
+}
+
 func TestLSPInspectionDirectAndDaemon(t *testing.T) {
 	t.Setenv("WIRECMD_CLI_LSP_HELPER", "1")
 	runtime := testRuntimeDirectory(t)
@@ -1156,6 +1187,12 @@ func (server cliLSPServer) Definition(_ context.Context, params *protocol.Defini
 		}
 		pretty, _ := json.MarshalIndent(decoded, "", "  ")
 		return nil, fmt.Errorf("definition rejected initialization options %s", pretty)
+	}
+	if os.Getenv("WIRECMD_LSP_ECHO_INIT_LOCATION") == "1" {
+		server.initializationOptions.mu.Lock()
+		raw := string(server.initializationOptions.raw)
+		server.initializationOptions.mu.Unlock()
+		return &protocol.Location{URI: uri.File(filepath.Join(os.TempDir(), raw)), Range: protocol.Range{}}, nil
 	}
 	if server.mode == "exit-on-definition" {
 		os.Exit(0)
