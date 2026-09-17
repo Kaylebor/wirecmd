@@ -60,14 +60,13 @@ Physical Apple Silicon qualification of Secure Enclave-backed age resolution
 remains pending; v0.4.0 was explicitly published first to provide the tagged
 build for that test, so no physical-device qualification is claimed yet.
 
-## Current development
+## Unreleased on main
 
-The accepted scope and invocation-context milestone is implemented on the
-development branch. MCP and LSP definitions may now use `scope "global"` as
-well as the default `workspace` scope. Global lifecycle ownership, provider
-roots, retained identity, LSP status, and age resolution are scope-separated;
-the feature is not part of the v0.4.0 release. Its complete contract and
-qualification matrix are in the
+The accepted scope and invocation-context milestone is implemented on `main`
+but is not part of the v0.4.0 release. MCP and LSP definitions may use
+`scope "global"` as well as the default `workspace` scope. Global lifecycle
+ownership, provider roots, retained identity, LSP status, and age resolution
+are scope-separated. Its complete contract and qualification matrix are in the
 [scope and invocation context plan](plans/scope-context-plan.md). It does not
 introduce public context variables or templating.
 

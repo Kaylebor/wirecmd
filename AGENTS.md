@@ -116,7 +116,7 @@ processes, or universal service manager.
 - [The development guide](docs/development.md) defines repository workflow,
   verification, dependency decisions, review, and change hygiene.
 - [Release readiness](docs/release-readiness.md) owns qualification, versioning,
-  changelog curation, tagging, and publication.
+  release-time changelog curation, tagging, and publication.
 
 Read the applicable accepted plan before changing a specialized feature.
 Files under `docs/notes/` are evidence and working material, never requirements
@@ -129,8 +129,12 @@ resolve the product conflict rather than selecting the convenient interpretation
   external publication, or material expansion of an accepted contract.
 - Do not commit or push unless explicitly requested. Never commit credentials,
   generated artifacts, local runtime state, or test tokens.
-- Feature PRs do not edit `CHANGELOG.md`; release preparation owns changelog
-  curation under the release-readiness contract.
+- Every non-release PR updates `[Unreleased]` in `CHANGELOG.md` as part of the
+  same reviewed change. Release preparation curates those accumulated entries
+  into a versioned release under the release-readiness contract.
+- Treat `main` as a merge target, not a working branch. Perform ordinary code,
+  test, and documentation work on a `codex/` branch and return it through the
+  reviewed pull-request path.
 - Verify changes proportionally and use independent review for consequential
   behavior, architecture, security, concurrency, and release decisions.
 - After opening or updating a PR, leave it unmerged for at least five minutes,

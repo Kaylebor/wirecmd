@@ -7,6 +7,28 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A shared invocation-context model that resolves one canonical project root
+  from explicit configuration, the nearest workspace configuration, optional
+  Git discovery, and trusted fallbacks. The new top-level `git-root` setting
+  can disable Git discovery.
+- Global scope for MCP and LSP definitions, with global-root defaults,
+  cross-project retained reuse, explicit LSP status, and scope-separated age
+  secret resolution. Omitted scope continues to default to `workspace`.
+
+### Changed
+
+- Workspace-scoped MCP and LSP startup, LSP selection and initialization,
+  retained ownership, fingerprints, and age metadata now consistently use the
+  resolved canonical project root.
+- Expanded and reorganized the documentation around a dedicated index,
+  contributor workflow, product thesis, configuration reference, accepted
+  plans, and non-authoritative working notes.
+- Updated the contributor workflow so ordinary changes reach merge-only
+  `main` through reviewed pull requests and every non-release PR maintains its
+  own `[Unreleased]` changelog entry.
+
 ## [0.4.0] - 2026-09-15
 
 ### Added

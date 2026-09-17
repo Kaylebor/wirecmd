@@ -48,9 +48,9 @@ Linux and both macOS CI jobs before merge.
 - Record reproducible evidence and obtain independent lifecycle/security/
   overengineering review.
 - Keep the SDK bump independently reviewable. Do not tag or release from the
-  feature branch.
+  feature PR.
 - Inspect stable SDK release notes and repeat qualification/review before merge;
   merging remains a separate maintainer action.
 
 Unrelated dependencies, templates, wider pools, new protocol primitives and
-SSE OAuth integration are outside this branch.
+SSE OAuth integration are outside this milestone.

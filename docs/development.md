@@ -109,9 +109,14 @@ authorizes it for that PR.
   runtime state, or test tokens. Never expose secrets in logs or reports.
 - Keep unrelated user changes intact. Preview the final diff and use
   non-destructive Git commands.
-- Feature PRs never edit `CHANGELOG.md`. Release preparation freezes unrelated
-  feature merges, curates `[Unreleased]`, and publishes that change through its
-  own reviewed PR as defined by release readiness.
+- Every non-release PR adds or amends an accurate `[Unreleased]` entry in
+  `CHANGELOG.md` as part of the same reviewed change. Release preparation
+  freezes unrelated merges, curates those accumulated entries into a versioned
+  release, and publishes that change through its own reviewed PR as defined by
+  release readiness.
+- Treat `main` as a merge-only target. Branch ordinary code, test, and
+  documentation work from current `main`, and return it through the reviewed
+  pull-request path rather than committing directly to `main`.
 - Tags and GitHub Releases are separate explicit maintainer actions. CI success
   or a merged release-preparation PR does not authorize either one.
 
