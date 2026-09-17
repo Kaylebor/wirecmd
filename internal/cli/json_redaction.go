@@ -57,7 +57,7 @@ func (r *redactor) RedactPath(value string) string {
 			end++
 		}
 		for _, protected := range r.protectedJSON {
-			if decoded, ok := protected.(string); ok && decoded == value[start:end] {
+			if decoded, ok := protected.(string); ok && decoded != "" && decoded == value[start:end] {
 				return "[REDACTED]"
 			}
 		}

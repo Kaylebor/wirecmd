@@ -70,3 +70,13 @@ func TestRedactorProtectJSONDetectsDecodedStringRoots(t *testing.T) {
 		t.Fatalf("decoded string path component = %q", got)
 	}
 }
+
+func TestRedactorProtectJSONDoesNotMatchEmptyPathComponents(t *testing.T) {
+	redactor := newRedactor(nil, io.Discard)
+	redactor.ProtectJSON([]byte(`""`))
+
+	path := "/workspace/result.go"
+	if got := redactor.RedactPath(path); got != path {
+		t.Fatalf("absolute path was redacted by empty string root: %q", got)
+	}
+}
