@@ -772,19 +772,37 @@ func sanitizeLSPError(appErr *appError, definition config.LSP, operation string)
 }
 
 func redactLSPProviderRun(result *lspProviderRun, redactor *redactor) {
+	locations := result.Locations[:0]
 	for locationIndex := range result.Locations {
-		result.Locations[locationIndex].Path = redactor.RedactPath(result.Locations[locationIndex].Path)
+		location := &result.Locations[locationIndex]
+		if protectedLSPRange(location.Range, redactor) {
+			continue
+		}
+		location.Path = redactor.RedactPath(location.Path)
+		locations = append(locations, *location)
 	}
+	result.Locations = locations
+	hovers := result.Hovers[:0]
 	for hoverIndex := range result.Hovers {
-		for contentIndex := range result.Hovers[hoverIndex].Content {
-			content := &result.Hovers[hoverIndex].Content[contentIndex]
+		hover := &result.Hovers[hoverIndex]
+		if hover.Range != nil && protectedLSPRange(*hover.Range, redactor) {
+			continue
+		}
+		for contentIndex := range hover.Content {
+			content := &hover.Content[contentIndex]
 			content.Kind = redactor.Redact(content.Kind)
 			content.Text = redactor.Redact(content.Text)
 			content.Language = redactor.Redact(content.Language)
 		}
+		hovers = append(hovers, *hover)
 	}
+	result.Hovers = hovers
+	signatures := result.Signatures[:0]
 	for signatureIndex := range result.Signatures {
 		signature := &result.Signatures[signatureIndex]
+		if protectedLSPSignature(*signature, redactor) {
+			continue
+		}
 		signature.Label = redactor.Redact(signature.Label)
 		if signature.Documentation != nil {
 			signature.Documentation.Kind = redactor.Redact(signature.Documentation.Kind)
@@ -798,10 +816,53 @@ func redactLSPProviderRun(result *lspProviderRun, redactor *redactor) {
 				parameter.Documentation.Text = redactor.Redact(parameter.Documentation.Text)
 			}
 		}
+		signatures = append(signatures, *signature)
 	}
+	result.Signatures = signatures
+	symbols := result.Symbols[:0]
 	for symbolIndex := range result.Symbols {
-		redactLSPSymbol(&result.Symbols[symbolIndex], redactor)
+		symbol := &result.Symbols[symbolIndex]
+		if protectedLSPSymbol(*symbol, redactor) {
+			continue
+		}
+		redactLSPSymbol(symbol, redactor)
+		symbols = append(symbols, *symbol)
 	}
+	result.Symbols = symbols
+}
+
+func protectedLSPRange(value lspclient.Range, redactor *redactor) bool {
+	return redactor.matchesProtectedJSONUint32(value.Start.Line) ||
+		redactor.matchesProtectedJSONUint32(value.Start.Column) ||
+		redactor.matchesProtectedJSONUint32(value.End.Line) ||
+		redactor.matchesProtectedJSONUint32(value.End.Column)
+}
+
+func protectedLSPSignature(value lspclient.Signature, redactor *redactor) bool {
+	if redactor.matchesProtectedJSONScalar(value.Active) {
+		return true
+	}
+	for _, parameter := range value.Parameters {
+		if redactor.matchesProtectedJSONScalar(parameter.Active) {
+			return true
+		}
+	}
+	return false
+}
+
+func protectedLSPSymbol(value lspclient.Symbol, redactor *redactor) bool {
+	if redactor.matchesProtectedJSONUint32(value.Kind) ||
+		redactor.matchesProtectedJSONScalar(value.Deprecated) ||
+		protectedLSPRange(value.Range, redactor) ||
+		value.SelectionRange != nil && protectedLSPRange(*value.SelectionRange, redactor) {
+		return true
+	}
+	for _, child := range value.Children {
+		if protectedLSPSymbol(child, redactor) {
+			return true
+		}
+	}
+	return false
 }
 
 func redactLSPSymbol(symbol *lspclient.Symbol, redactor *redactor) {

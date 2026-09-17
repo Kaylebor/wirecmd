@@ -145,6 +145,37 @@ func TestLSPStatusOmitsProviderInitializeOutputWithOptions(t *testing.T) {
 	}
 }
 
+func TestRedactLSPProviderRunSuppressesProtectedTypedScalars(t *testing.T) {
+	numberRedactor := newRedactor(nil, io.Discard)
+	numberRedactor.ProtectJSON([]byte(`12`))
+	numberResult := lspProviderRun{
+		Locations: []lspclient.Location{
+			{Path: "/protected.go", Range: lspclient.Range{Start: lspclient.Point{Line: 12}}},
+			{Path: "/ordinary.go", Range: lspclient.Range{Start: lspclient.Point{Line: 13}}},
+		},
+		Hovers: []lspclient.Hover{
+			{Range: &lspclient.Range{Start: lspclient.Point{Column: 12}}},
+			{Content: []lspclient.HoverBlock{{Text: "ordinary"}}},
+		},
+		Symbols: []lspclient.Symbol{{Name: "protected", Kind: 12}, {Name: "ordinary", Kind: 13}},
+	}
+	redactLSPProviderRun(&numberResult, numberRedactor)
+	if len(numberResult.Locations) != 1 || numberResult.Locations[0].Path != "/ordinary.go" || len(numberResult.Hovers) != 1 || len(numberResult.Symbols) != 1 || numberResult.Symbols[0].Name != "ordinary" {
+		t.Fatalf("numeric scalar result filtering = %#v", numberResult)
+	}
+
+	boolRedactor := newRedactor(nil, io.Discard)
+	boolRedactor.ProtectJSON([]byte(`true`))
+	boolResult := lspProviderRun{
+		Signatures: []lspclient.Signature{{Label: "protected", Active: true}, {Label: "ordinary", Active: false}},
+		Symbols:    []lspclient.Symbol{{Name: "protected", Deprecated: true}, {Name: "ordinary", Deprecated: false}},
+	}
+	redactLSPProviderRun(&boolResult, boolRedactor)
+	if len(boolResult.Signatures) != 1 || boolResult.Signatures[0].Label != "ordinary" || len(boolResult.Symbols) != 1 || boolResult.Symbols[0].Name != "ordinary" {
+		t.Fatalf("boolean scalar result filtering = %#v", boolResult)
+	}
+}
+
 func TestLSPMCPServerEscapesRemainReachable(t *testing.T) {
 	t.Setenv("GO_WIRECMD_HELPER", "1")
 	source, err := os.ReadFile(helperConfig(t, "", ""))

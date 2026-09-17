@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"math/big"
+	"strconv"
 	"strings"
 
 	"github.com/go-json-experiment/json/jsontext"
@@ -39,6 +40,22 @@ func (r *redactor) matchesProtectedJSON(value string) bool {
 		}
 	}
 	return false
+}
+
+func (r *redactor) matchesProtectedJSONScalar(value any) bool {
+	for _, protected := range r.protectedJSON {
+		switch protected.(type) {
+		case nil, bool, json.Number:
+			if equalJSON(protected, value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (r *redactor) matchesProtectedJSONUint32(value uint32) bool {
+	return r.matchesProtectedJSONScalar(json.Number(strconv.FormatUint(uint64(value), 10)))
 }
 
 // RedactPath also detects a protected JSON value occupying one complete path
