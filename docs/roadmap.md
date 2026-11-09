@@ -119,6 +119,17 @@ semantics and could eventually front native LSP operations or translate
 supported older upstream MCPs, but it must not drive a generic proxy framework
 or weaken the shell-first product boundary.
 
+### 5. Candidate exec secret injection
+
+One future exploration is running a configured command with secrets
+materialized into the child process, so a shell agent can use a credential
+without the value entering its own shell or context. The open questions are
+whether a command-execution family is in scope, who may define such a profile
+given directory-based workspace trust, the default policy for caller-supplied
+arguments, and how it relates to the deferred secret-file templating item. The
+non-authoritative [exec secrets proposal](notes/exec-secrets-proposal.md)
+records the illustrative shape and decisions; it is not an accepted contract.
+
 ## Completed external compatibility trigger
 
 Stable official Go SDK v1.8.0 exposes

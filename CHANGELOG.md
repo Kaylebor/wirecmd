@@ -7,6 +7,12 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Added a non-authoritative proposal note for injecting secrets into a
+  configured command, and recorded it as a candidate in the roadmap decision
+  queue. No behavior or accepted contract changes.
+
 ## [0.5.0] - 2026-09-17
 
 ### Added
