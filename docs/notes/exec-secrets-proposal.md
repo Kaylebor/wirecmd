@@ -138,10 +138,15 @@ environment. Options:
 
 Identity files are user-managed and never read by Wirecmd. If the identity is
 an ordinary readable file, a same-user caller can run `age` itself and bypass
-Wirecmd entirely. Hardware-backed identities (TPM PIN, Secure Enclave) already
-require local authorization per resolve, which is the out-of-band approval step
-an agent cannot grant. The proposal recommends them for any profile holding a
-sensitive secret, and the documentation should say so.
+Wirecmd entirely. The age secrets plan says hardware-backed identities (TPM,
+Secure Enclave) may request local authorization during resolution. It does not
+say every such identity prompts on each decrypt, since that depends on how the
+identity is created (for example a TPM PIN or a Touch ID access-control
+setting). A per-use prompt is the out-of-band approval step an agent cannot
+grant, so the proposal recommends hardware-backed identities for any profile
+holding a sensitive secret. Before relying on that, the documentation should
+specify which identity setups guarantee a prompt per resolve, and qualification
+should verify it.
 
 ## Non-goals
 
